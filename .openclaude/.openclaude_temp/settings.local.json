@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C \"C:/Users/Asiimwe Mark Amooti/Desktop/skuli/\" log --oneline -5)",
+      "Bash(npm view:*)",
+      "Bash(npx create-next-app@latest . --typescript --tailwind --eslint --app --src-dir=false --import-alias=\"@/*\" --use-npm --no-turbopack)",
+      "Bash(mv .openclaude ../.openclaude_temp)"
+    ]
+  }
+}

@@ -1,0 +1,5 @@
+[functions.auto-absence-sms]
+verify_jwt = false
+
+[functions.auto-absence-sms.cron]
+schedule = "0 6 * * *"

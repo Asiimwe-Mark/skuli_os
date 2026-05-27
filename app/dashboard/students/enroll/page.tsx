@@ -1,0 +1,1018 @@
+"use client";
+
+import { useEffect, useState, useRef, useCallback } from "react";
+import { motion, AnimatePresence } from "framer-motion";
+import { useRouter } from "next/navigation";
+import { useSchoolStore } from "@/store/school";
+import { createBrowserClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils/cn";
+import { formatDate } from "@/lib/utils/dates";
+import { normalizePhone, isValidUgandaPhone } from "@/lib/utils/phone";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { useToast } from "@/components/ui/use-toast";
+import {
+  User,
+  Phone,
+  GraduationCap,
+  ClipboardCheck,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  CheckCircle2,
+  Upload,
+  Camera,
+  UserPlus,
+} from "lucide-react";
+import type { Class, Term, AcademicYear } from "@/types";
+
+const fadeInUp = {
+  initial: { opacity: 0, y: 20 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -20 },
+};
+
+const slideVariants = {
+  enter: (direction: number) => ({
+    x: direction > 0 ? 300 : -300,
+    opacity: 0,
+  }),
+  center: { x: 0, opacity: 1 },
+  exit: (direction: number) => ({
+    x: direction > 0 ? -300 : 300,
+    opacity: 0,
+  }),
+};
+
+interface PersonalInfo {
+  full_name: string;
+  date_of_birth: string;
+  gender: string;
+  photo_url: string;
+}
+
+interface ParentInfo {
+  parent_name: string;
+  parent_phone: string;
+  parent_email: string;
+  parent_relationship: string;
+  parent_nid: string;
+}
+
+interface AcademicPlacement {
+  class_id: string;
+  enrollment_date: string;
+  admission_number: string;
+  auto_generate: boolean;
+}
+
+const STEPS = [
+  { label: "Personal Info", icon: User },
+  { label: "Parent/Guardian", icon: Phone },
+  { label: "Academic Placement", icon: GraduationCap },
+  { label: "Review & Submit", icon: ClipboardCheck },
+];
+
+const RELATIONSHIPS = ["Father", "Mother", "Guardian", "Uncle", "Aunt", "Grandparent", "Sibling", "Other"];
+
+export default function EnrollPage() {
+  const router = useRouter();
+  const { school, currentTerm, currentAcademicYear } = useSchoolStore();
+  const supabase = createBrowserClient();
+  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [step, setStep] = useState(0);
+  const [direction, setDirection] = useState(1);
+  const [saving, setSaving] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [createdStudent, setCreatedStudent] = useState<{
+    id: string;
+    admission_number: string;
+    full_name: string;
+  } | null>(null);
+
+  const [classes, setClasses] = useState<Class[]>([]);
+  const [terms, setTerms] = useState<(Term & { academic_years?: AcademicYear })[]>([]);
+
+  const [personal, setPersonal] = useState<PersonalInfo>({
+    full_name: "",
+    date_of_birth: "",
+    gender: "",
+    photo_url: "",
+  });
+
+  const [parent, setParent] = useState<ParentInfo>({
+    parent_name: "",
+    parent_phone: "",
+    parent_email: "",
+    parent_relationship: "",
+    parent_nid: "",
+  });
+
+  const [academic, setAcademic] = useState<AcademicPlacement>({
+    class_id: "",
+    enrollment_date: new Date().toISOString().split("T")[0],
+    admission_number: "",
+    auto_generate: true,
+  });
+
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    async function loadData() {
+      if (!school) return;
+
+      const { data: classData } = await supabase
+        .from("classes")
+        .select("*")
+        .eq("school_id", school.id)
+        .eq("is_deleted", false)
+        .order("name");
+
+      if (classData) setClasses(classData);
+
+      const { data: termData } = await supabase
+        .from("terms")
+        .select("*, academic_years(*)")
+        .eq("school_id", school.id)
+        .order("start_date", { ascending: false });
+
+      if (termData) setTerms(termData);
+
+      // Auto-generate admission number
+      const { count } = await supabase
+        .from("students")
+        .select("*", { count: "exact", head: true })
+        .eq("school_id", school.id);
+
+      const nextNum = (count || 0) + 1;
+      const prefix = school.school_code || "STU";
+      setAcademic((a) => ({
+        ...a,
+        admission_number: `${prefix}-${String(nextNum).padStart(4, "0")}`,
+      }));
+    }
+
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [school]);
+
+  function validateStep(s: number): boolean {
+    const newErrors: Record<string, string> = {};
+
+    if (s === 0) {
+      if (!personal.full_name.trim()) newErrors.full_name = "Full name is required";
+      if (!personal.gender) newErrors.gender = "Gender is required";
+    }
+
+    if (s === 1) {
+      if (!parent.parent_name.trim()) newErrors.parent_name = "Parent name is required";
+      if (!parent.parent_phone.trim()) {
+        newErrors.parent_phone = "Phone number is required";
+      } else if (!isValidUgandaPhone(parent.parent_phone)) {
+        newErrors.parent_phone = "Enter a valid Uganda phone number (e.g. 07XXXXXXXX)";
+      }
+      if (parent.parent_email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(parent.parent_email)) {
+        newErrors.parent_email = "Enter a valid email address";
+      }
+    }
+
+    if (s === 2) {
+      if (!academic.class_id) newErrors.class_id = "Select a class";
+      if (!academic.enrollment_date) newErrors.enrollment_date = "Enrollment date is required";
+      if (!academic.auto_generate && !academic.admission_number.trim()) {
+        newErrors.admission_number = "Admission number is required";
+      }
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  }
+
+  function nextStep() {
+    if (!validateStep(step)) return;
+    setDirection(1);
+    setStep((s) => Math.min(s + 1, 3));
+  }
+
+  function prevStep() {
+    setDirection(-1);
+    setStep((s) => Math.max(s - 1, 0));
+  }
+
+  async function compressImage(file: File): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX_WIDTH = 800;
+        let { width, height } = img;
+        if (width > MAX_WIDTH) {
+          height = (height * MAX_WIDTH) / width;
+          width = MAX_WIDTH;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(img, 0, 0, width, height);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error("Compression failed"))),
+          "image/jpeg",
+          0.85
+        );
+      };
+      img.onerror = () => reject(new Error("Invalid image"));
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  function handleFileSelected(file: File) {
+    if (!file.type.startsWith("image/")) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast({ title: "File too large", description: "Max 5MB.", variant: "destructive" });
+      return;
+    }
+    setPhotoFile(file);
+    const previewUrl = URL.createObjectURL(file);
+    setPersonal((p) => ({ ...p, photo_url: previewUrl }));
+  }
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) handleFileSelected(file);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function uploadPhoto(studentId: string): Promise<string | null> {
+    if (!photoFile || !school) return null;
+    setUploadingPhoto(true);
+    try {
+      const compressed = await compressImage(photoFile);
+      const filePath = `${school.id}/${studentId}.jpg`;
+      const { error } = await supabase.storage
+        .from("student-photos")
+        .upload(filePath, compressed, { contentType: "image/jpeg", upsert: true });
+      if (error) throw error;
+      const { data: urlData } = supabase.storage
+        .from("student-photos")
+        .getPublicUrl(filePath);
+      return urlData.publicUrl;
+    } catch {
+      toast({ title: "Photo upload failed", variant: "destructive" });
+      return null;
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  async function handleSubmit() {
+    if (!school) return;
+    setSaving(true);
+
+    try {
+      const normalizedPhone = normalizePhone(parent.parent_phone);
+
+      // Insert student
+      const { data: student, error: studentError } = await supabase
+        .from("students")
+        .insert({
+          school_id: school.id,
+          admission_number: academic.admission_number,
+          full_name: personal.full_name.trim(),
+          date_of_birth: personal.date_of_birth || null,
+          gender: personal.gender || null,
+          photo_url: null,
+          parent_name: parent.parent_name.trim(),
+          parent_phone: normalizedPhone,
+          parent_email: parent.parent_email.trim() || null,
+          parent_nid: parent.parent_nid.trim() || null,
+          current_class_id: academic.class_id,
+          enrollment_date: academic.enrollment_date,
+          status: "active",
+        })
+        .select()
+        .single();
+
+      if (studentError) throw studentError;
+
+      // Upload photo if selected
+      if (photoFile) {
+        const photoUrl = await uploadPhoto(student.id);
+        if (photoUrl) {
+          await supabase.from("students").update({ photo_url: photoUrl }).eq("id", student.id);
+          student.photo_url = photoUrl;
+        }
+      }
+
+      // Create class enrollment for current term
+      if (currentTerm && currentAcademicYear) {
+        const { error: enrollError } = await supabase
+          .from("class_enrollments")
+          .insert({
+            student_id: student.id,
+            class_id: academic.class_id,
+            term_id: currentTerm.id,
+            academic_year_id: currentAcademicYear.id,
+          });
+
+        if (enrollError) throw enrollError;
+      }
+
+      // Optionally create fee account
+      if (currentTerm && currentAcademicYear) {
+        const { data: feeStructures } = await supabase
+          .from("fee_structures")
+          .select("amount")
+          .eq("school_id", school.id)
+          .eq("term_id", currentTerm.id)
+          .or(`class_id.eq.${academic.class_id},class_id.is.null`)
+          .eq("is_mandatory", true);
+
+        const totalExpected =
+          (feeStructures || []).reduce((sum: number, fs: { amount: number }) => sum + fs.amount, 0) || 0;
+
+        if (totalExpected > 0) {
+          await supabase.from("fee_accounts").insert({
+            school_id: school.id,
+            student_id: student.id,
+            term_id: currentTerm.id,
+            academic_year_id: currentAcademicYear.id,
+            total_expected: totalExpected,
+            total_paid: 0,
+            balance: totalExpected,
+            status: "unpaid",
+          });
+        }
+      }
+
+      setCreatedStudent(student);
+      setSuccess(true);
+      toast({
+        title: "Student Enrolled",
+        description: `${student.full_name} (${student.admission_number}) has been enrolled successfully.`,
+        variant: "success",
+      });
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "An unexpected error occurred.";
+      toast({ title: "Enrollment Failed", description: message, variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function getSelectedClassName() {
+    return classes.find((c) => c.id === academic.class_id)?.name || "Not selected";
+  }
+
+  // Success state
+  if (success && createdStudent) {
+    return (
+      <div className="max-w-lg mx-auto">
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5 }}
+        >
+          <Card className="border-emerald-500/20 bg-emerald-500/5">
+            <CardContent className="p-8 text-center">
+              <div className="w-20 h-20 rounded-full bg-emerald-500/20 flex items-center justify-center mx-auto mb-6">
+                <CheckCircle2 className="w-10 h-10 text-emerald-400" />
+              </div>
+              <h2 className="text-2xl font-bold mb-2">Enrollment Successful</h2>
+              <p className="text-foreground/60 mb-6">
+                The student has been enrolled and their fee account has been set up.
+              </p>
+
+              <div className="bg-navy-900/50 rounded-lg p-4 text-left space-y-2 mb-6">
+                <div className="flex justify-between">
+                  <span className="text-foreground/60">Name</span>
+                  <span className="font-medium">{createdStudent.full_name}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-foreground/60">Admission No.</span>
+                  <span className="font-medium font-mono text-amber-400">
+                    {createdStudent.admission_number}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-foreground/60">Class</span>
+                  <span className="font-medium">{getSelectedClassName()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-foreground/60">Enrolled</span>
+                  <span className="font-medium">
+                    {formatDate(academic.enrollment_date)}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-3">
+                <Button
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => router.push(`/dashboard/students/${createdStudent.id}`)}
+                >
+                  View Profile
+                </Button>
+                <Button
+                  className="flex-1"
+                  onClick={() => {
+                    setSuccess(false);
+                    setCreatedStudent(null);
+                    setStep(0);
+                    setPersonal({ full_name: "", date_of_birth: "", gender: "", photo_url: "" });
+                    setParent({ parent_name: "", parent_phone: "", parent_email: "", parent_relationship: "", parent_nid: "" });
+                    setPhotoFile(null);
+                    setErrors({});
+                  }}
+                >
+                  <UserPlus className="w-4 h-4 mr-2" />
+                  Enroll Another
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto">
+      {/* Page Header */}
+      <motion.div {...fadeInUp} className="mb-8">
+        <h1 className="text-2xl font-bold">Enroll New Student</h1>
+        <p className="text-foreground/60 text-sm">
+          Complete the steps below to enroll a new student.
+        </p>
+      </motion.div>
+
+      {/* Step Indicators */}
+      <motion.div {...fadeInUp} transition={{ delay: 0.1 }} className="mb-8">
+        <div className="flex items-center justify-between">
+          {STEPS.map((s, i) => {
+            const Icon = s.icon;
+            const isActive = i === step;
+            const isCompleted = i < step;
+
+            return (
+              <div key={s.label} className="flex items-center flex-1 last:flex-none">
+                <div className="flex flex-col items-center">
+                  <div
+                    className={cn(
+                      "w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all",
+                      isActive
+                        ? "border-amber-400 bg-amber-400/20 text-amber-400"
+                        : isCompleted
+                        ? "border-emerald-500 bg-emerald-500/20 text-emerald-400"
+                        : "border-navy-600 bg-navy-800 text-foreground/40"
+                    )}
+                  >
+                    {isCompleted ? (
+                      <CheckCircle2 className="w-5 h-5" />
+                    ) : (
+                      <Icon className="w-5 h-5" />
+                    )}
+                  </div>
+                  <span
+                    className={cn(
+                      "text-[10px] mt-1.5 text-center hidden sm:block",
+                      isActive ? "text-amber-400 font-medium" : "text-foreground/50"
+                    )}
+                  >
+                    {s.label}
+                  </span>
+                </div>
+                {i < STEPS.length - 1 && (
+                  <div
+                    className={cn(
+                      "flex-1 h-0.5 mx-2 rounded-full transition-all",
+                      i < step ? "bg-emerald-500" : "bg-navy-700"
+                    )}
+                  />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </motion.div>
+
+      {/* Progress Bar */}
+      <div className="w-full bg-navy-800 rounded-full h-1.5 mb-8">
+        <motion.div
+          className="bg-amber-400 h-1.5 rounded-full"
+          initial={{ width: 0 }}
+          animate={{ width: `${((step + 1) / STEPS.length) * 100}%` }}
+          transition={{ duration: 0.5, ease: "easeInOut" }}
+        />
+      </div>
+
+      {/* Step Content */}
+      <AnimatePresence mode="wait" custom={direction}>
+        <motion.div
+          key={step}
+          custom={direction}
+          variants={slideVariants}
+          initial="enter"
+          animate="center"
+          exit="exit"
+          transition={{ duration: 0.3, ease: "easeInOut" }}
+        >
+          <Card className="border-border-subtle bg-surface">
+            <CardContent className="p-6">
+              {/* Step 1: Personal Info */}
+              {step === 0 && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-lg font-semibold mb-1">Personal Information</h3>
+                    <p className="text-sm text-foreground/60">
+                      Enter the student&apos;s basic details.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="full_name">Full Name *</Label>
+                    <Input
+                      id="full_name"
+                      placeholder="e.g. John Mukasa"
+                      value={personal.full_name}
+                      onChange={(e) =>
+                        setPersonal((p) => ({ ...p, full_name: e.target.value }))
+                      }
+                      className={errors.full_name ? "border-rose-500" : ""}
+                    />
+                    {errors.full_name && (
+                      <p className="text-xs text-rose-400">{errors.full_name}</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="dob">Date of Birth</Label>
+                      <Input
+                        id="dob"
+                        type="date"
+                        value={personal.date_of_birth}
+                        onChange={(e) =>
+                          setPersonal((p) => ({
+                            ...p,
+                            date_of_birth: e.target.value,
+                          }))
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Gender *</Label>
+                      <Select
+                        value={personal.gender}
+                        onValueChange={(v) =>
+                          setPersonal((p) => ({ ...p, gender: v }))
+                        }
+                      >
+                        <SelectTrigger
+                          className={errors.gender ? "border-rose-500" : ""}
+                        >
+                          <SelectValue placeholder="Select gender" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="male">Male</SelectItem>
+                          <SelectItem value="female">Female</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {errors.gender && (
+                        <p className="text-xs text-rose-400">{errors.gender}</p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Photo (Optional)</Label>
+                    <div
+                      className={cn(
+                        "relative flex flex-col items-center justify-center gap-3 p-6 rounded-xl border-2 border-dashed transition-colors cursor-pointer",
+                        isDragging
+                          ? "border-amber-400 bg-amber-400/10"
+                          : "border-navy-600 bg-navy-800 hover:border-navy-500"
+                      )}
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFileSelected(file);
+                        }}
+                      />
+                      {personal.photo_url ? (
+                        <div className="flex items-center gap-4">
+                          <img
+                            src={personal.photo_url}
+                            alt="Preview"
+                            className="w-20 h-20 rounded-xl object-cover border border-navy-600"
+                          />
+                          <div className="text-left">
+                            <p className="text-sm font-medium text-foreground">
+                              {photoFile?.name || "Photo selected"}
+                            </p>
+                            <p className="text-xs text-foreground/50">
+                              Click or drop to replace
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="w-16 h-16 rounded-full bg-navy-700 flex items-center justify-center">
+                            {uploadingPhoto ? (
+                              <Loader2 className="w-8 h-8 text-amber-400 animate-spin" />
+                            ) : (
+                              <Camera className="w-8 h-8 text-foreground/30" />
+                            )}
+                          </div>
+                          <div className="text-center">
+                            <p className="text-sm text-foreground/60">
+                              <span className="text-amber-400 font-medium">Click to upload</span> or drag & drop
+                            </p>
+                            <p className="text-xs text-foreground/40 mt-1">
+                              JPG, PNG up to 5MB — auto-compressed to 800px
+                            </p>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 2: Parent/Guardian Info */}
+              {step === 1 && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-lg font-semibold mb-1">Parent / Guardian</h3>
+                    <p className="text-sm text-foreground/60">
+                      Contact details for the student&apos;s parent or guardian.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="parent_name">Full Name *</Label>
+                    <Input
+                      id="parent_name"
+                      placeholder="e.g. James Mukasa"
+                      value={parent.parent_name}
+                      onChange={(e) =>
+                        setParent((p) => ({ ...p, parent_name: e.target.value }))
+                      }
+                      className={errors.parent_name ? "border-rose-500" : ""}
+                    />
+                    {errors.parent_name && (
+                      <p className="text-xs text-rose-400">{errors.parent_name}</p>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="parent_phone">Phone Number *</Label>
+                      <Input
+                        id="parent_phone"
+                        placeholder="07XXXXXXXX"
+                        value={parent.parent_phone}
+                        onChange={(e) =>
+                          setParent((p) => ({
+                            ...p,
+                            parent_phone: e.target.value,
+                          }))
+                        }
+                        className={errors.parent_phone ? "border-rose-500" : ""}
+                      />
+                      {errors.parent_phone && (
+                        <p className="text-xs text-rose-400">
+                          {errors.parent_phone}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="parent_email">Email (Optional)</Label>
+                      <Input
+                        id="parent_email"
+                        type="email"
+                        placeholder="parent@example.com"
+                        value={parent.parent_email}
+                        onChange={(e) =>
+                          setParent((p) => ({
+                            ...p,
+                            parent_email: e.target.value,
+                          }))
+                        }
+                        className={errors.parent_email ? "border-rose-500" : ""}
+                      />
+                      {errors.parent_email && (
+                        <p className="text-xs text-rose-400">
+                          {errors.parent_email}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Relationship</Label>
+                      <Select
+                        value={parent.parent_relationship}
+                        onValueChange={(v) =>
+                          setParent((p) => ({ ...p, parent_relationship: v }))
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select relationship" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {RELATIONSHIPS.map((r) => (
+                            <SelectItem key={r} value={r}>
+                              {r}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="parent_nid">National ID (Optional)</Label>
+                      <Input
+                        id="parent_nid"
+                        placeholder="NIN number"
+                        value={parent.parent_nid}
+                        onChange={(e) =>
+                          setParent((p) => ({ ...p, parent_nid: e.target.value }))
+                        }
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Step 3: Academic Placement */}
+              {step === 2 && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-lg font-semibold mb-1">Academic Placement</h3>
+                    <p className="text-sm text-foreground/60">
+                      Assign the student to a class and set enrollment details.
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Class *</Label>
+                    <Select
+                      value={academic.class_id}
+                      onValueChange={(v) =>
+                        setAcademic((a) => ({ ...a, class_id: v }))
+                      }
+                    >
+                      <SelectTrigger
+                        className={errors.class_id ? "border-rose-500" : ""}
+                      >
+                        <SelectValue placeholder="Select class" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {classes.map((c) => (
+                          <SelectItem key={c.id} value={c.id}>
+                            {c.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {errors.class_id && (
+                      <p className="text-xs text-rose-400">{errors.class_id}</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="enrollment_date">Enrollment Date *</Label>
+                    <Input
+                      id="enrollment_date"
+                      type="date"
+                      value={academic.enrollment_date}
+                      onChange={(e) =>
+                        setAcademic((a) => ({
+                          ...a,
+                          enrollment_date: e.target.value,
+                        }))
+                      }
+                      className={errors.enrollment_date ? "border-rose-500" : ""}
+                    />
+                    {errors.enrollment_date && (
+                      <p className="text-xs text-rose-400">
+                        {errors.enrollment_date}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="auto_generate"
+                        checked={academic.auto_generate}
+                        onChange={(e) =>
+                          setAcademic((a) => ({
+                            ...a,
+                            auto_generate: e.target.checked,
+                          }))
+                        }
+                        className="rounded border-navy-600"
+                      />
+                      <Label htmlFor="auto_generate" className="cursor-pointer">
+                        Auto-generate admission number
+                      </Label>
+                    </div>
+
+                    {!academic.auto_generate && (
+                      <div className="space-y-2">
+                        <Label htmlFor="admission_no">Admission Number *</Label>
+                        <Input
+                          id="admission_no"
+                          placeholder="e.g. STU-0001"
+                          value={academic.admission_number}
+                          onChange={(e) =>
+                            setAcademic((a) => ({
+                              ...a,
+                              admission_number: e.target.value,
+                            }))
+                          }
+                          className={
+                            errors.admission_number ? "border-rose-500" : ""
+                          }
+                        />
+                        {errors.admission_number && (
+                          <p className="text-xs text-rose-400">
+                            {errors.admission_number}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {academic.auto_generate && (
+                      <div className="p-3 rounded-lg bg-navy-900/50 flex items-center gap-2">
+                        <span className="text-sm text-foreground/60">
+                          Admission No:
+                        </span>
+                        <span className="font-mono text-amber-400 font-medium">
+                          {academic.admission_number}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Step 4: Review & Submit */}
+              {step === 3 && (
+                <div className="space-y-5">
+                  <div>
+                    <h3 className="text-lg font-semibold mb-1">Review & Submit</h3>
+                    <p className="text-sm text-foreground/60">
+                      Verify the information below before completing enrollment.
+                    </p>
+                  </div>
+
+                  <div className="space-y-4">
+                    <div className="p-4 rounded-lg bg-navy-900/50 space-y-2">
+                      <h4 className="text-sm font-medium text-amber-400 flex items-center gap-2">
+                        <User className="w-4 h-4" />
+                        Personal Information
+                      </h4>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <span className="text-foreground/60">Name</span>
+                        <span>{personal.full_name}</span>
+                        <span className="text-foreground/60">Gender</span>
+                        <span className="capitalize">{personal.gender || "Not set"}</span>
+                        <span className="text-foreground/60">Date of Birth</span>
+                        <span>
+                          {personal.date_of_birth
+                            ? formatDate(personal.date_of_birth)
+                            : "Not set"}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-lg bg-navy-900/50 space-y-2">
+                      <h4 className="text-sm font-medium text-amber-400 flex items-center gap-2">
+                        <Phone className="w-4 h-4" />
+                        Parent / Guardian
+                      </h4>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <span className="text-foreground/60">Name</span>
+                        <span>{parent.parent_name}</span>
+                        <span className="text-foreground/60">Phone</span>
+                        <span>{parent.parent_phone}</span>
+                        <span className="text-foreground/60">Relationship</span>
+                        <span>{parent.parent_relationship || "Not set"}</span>
+                        {parent.parent_email && (
+                          <>
+                            <span className="text-foreground/60">Email</span>
+                            <span>{parent.parent_email}</span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-4 rounded-lg bg-navy-900/50 space-y-2">
+                      <h4 className="text-sm font-medium text-amber-400 flex items-center gap-2">
+                        <GraduationCap className="w-4 h-4" />
+                        Academic Placement
+                      </h4>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <span className="text-foreground/60">Class</span>
+                        <span>{getSelectedClassName()}</span>
+                        <span className="text-foreground/60">Admission No.</span>
+                        <span className="font-mono text-amber-400">
+                          {academic.admission_number}
+                        </span>
+                        <span className="text-foreground/60">Enrollment Date</span>
+                        <span>{formatDate(academic.enrollment_date)}</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Navigation Buttons */}
+      <motion.div
+        {...fadeInUp}
+        transition={{ delay: 0.2 }}
+        className="flex items-center justify-between mt-6"
+      >
+        <Button
+          variant="ghost"
+          onClick={prevStep}
+          disabled={step === 0}
+        >
+          <ChevronLeft className="w-4 h-4 mr-2" />
+          Back
+        </Button>
+
+        {step < 3 ? (
+          <Button onClick={nextStep}>
+            Next
+            <ChevronRight className="w-4 h-4 ml-2" />
+          </Button>
+        ) : (
+          <Button onClick={handleSubmit} disabled={saving}>
+            {saving ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Enrolling...
+              </>
+            ) : (
+              <>
+                <CheckCircle2 className="w-4 h-4 mr-2" />
+                Complete Enrollment
+              </>
+            )}
+          </Button>
+        )}
+      </motion.div>
+    </div>
+  );
+}
