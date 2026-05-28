@@ -44,6 +44,7 @@ import {
   Pencil,
   Check,
   X,
+  MessageSquare,
 } from "lucide-react";
 
 interface ClassOption {
@@ -403,6 +404,123 @@ export default function ReportCardsPage() {
 
   const [zipLoading, setZipLoading] = useState(false);
   const [downloadingStudentId, setDownloadingStudentId] = useState<string | null>(null);
+  const [sendingSmsId, setSendingSmsId] = useState<string | null>(null);
+
+  async function shareReportCardViaSMS(card: ReportCardRow) {
+    setSendingSmsId(card.student_id);
+    try {
+      // 1. Generate PDF blob and upload to storage temporarily, or use existing pdf_path if available
+      const studentName = card.students?.full_name || "Unknown";
+      const admissionNo = card.students?.admission_number || "N/A";
+      const className = classes.find((c) => c.id === selectedClass)?.name || "Class";
+      const termObj = terms.find((t) => t.id === selectedTermId);
+
+      // Fetch marks for this student
+      const { data: studentMarks } = await supabase
+        .from("marks")
+        .select("subject_id, exam_type, score, max_score, subjects(name)")
+        .eq("student_id", card.student_id)
+        .eq("term_id", selectedTermId);
+
+      // Fetch subject comments
+      const { data: subjectComments } = await supabase
+        .from("subject_comments")
+        .select("subject_id, bot_comment, mid_comment, eot_comment")
+        .eq("student_id", card.student_id)
+        .eq("term_id", selectedTermId);
+
+      const subjectsData = studentMarks?.map((m) => ({
+        subject: m.subjects?.name ?? "Unknown",
+        bot: studentMarks?.find((sm) => sm.subject_id === m.subject_id && sm.exam_type === "BOT")?.score ?? null,
+        mid: studentMarks?.find((sm) => sm.subject_id === m.subject_id && sm.exam_type === "MID")?.score ?? null,
+        eot: studentMarks?.find((sm) => sm.subject_id === m.subject_id && sm.exam_type === "EOT")?.score ?? null,
+        total: Math.round(card.average ?? 0 * (studentMarks?.length ?? 1) / 100),
+        grade: getGrade(card.average ?? 0, gradingScales),
+        remark: subjectComments?.find((sc) => sc.subject_id === m.subject_id)?.eot_comment ?? "",
+      })) ?? [];
+
+      const pdfDoc = (
+        <ReportCardPDF
+          schoolName={school?.name ?? ""}
+          schoolMotto={school?.motto ?? ""}
+          studentName={studentName}
+          admissionNumber={admissionNo}
+          className={className}
+          termName={termObj?.name ?? ""}
+          academicYear={termObj?.academic_year ?? ""}
+          subjects={subjectsData}
+          totalMarks={card.total_marks ?? 0}
+          averageMarks={card.average ?? 0}
+          classPosition={card.position_in_class ?? 0}
+          classSize={card.class_size ?? 0}
+          classTeacherComment={card.class_teacher_comment ?? ""}
+          headComment={card.headmaster_comment ?? ""}
+        />
+      );
+
+      const pdfBlob = await pdf(pdfDoc).toBlob();
+      
+      // Upload to storage
+      const fileName = `report-cards/${school?.id}/${card.student_id}_${selectedTermId}.pdf`;
+      const { error: uploadError } = await supabase.storage
+        .from("report-cards")
+        .upload(fileName, pdfBlob, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      // 2. Generate 30-day signed URL
+      const { data: signed } = await supabase.storage
+        .from("report-cards")
+        .createSignedUrl(fileName, 2592000); // 30 days
+
+      if (!signed?.signedUrl) {
+        toast({ title: "Error", description: "Could not generate share link.", variant: "destructive" });
+        return;
+      }
+
+      // 3. Fetch parent phone for the student
+      const { data: student } = await supabase
+        .from("students")
+        .select("parent_name, parent_phone")
+        .eq("id", card.student_id)
+        .single();
+
+      if (!student?.parent_phone) {
+        toast({ title: "No parent phone", description: "This student has no parent phone number.", variant: "destructive" });
+        return;
+      }
+
+      // Normalize phone
+      const normalizedPhone = student.parent_phone.startsWith("+") 
+        ? student.parent_phone 
+        : `+256${student.parent_phone.replace(/^0/, "")}`;
+
+      // 4. Send via communication API
+      const res = await fetch("/api/communication/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: `Report Card — ${studentName}`,
+          message_body: `Dear ${student.parent_name || "Parent"}, ${studentName}'s report card for ${termObj?.name ?? "this term"} is ready. View at: ${signed.signedUrl} — ${school?.name}`,
+          audience_type: "manual_phones",
+          phone_numbers: [normalizedPhone],
+          channels: { sms: true, in_app: false },
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error ?? "Failed to send SMS");
+      }
+
+      toast({ title: "Sent", description: `Report card link sent to ${normalizedPhone}` });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to send SMS";
+      toast({ title: "Error", description: message, variant: "destructive" });
+    } finally {
+      setSendingSmsId(null);
+    }
+  }
 
   const handleDownloadSinglePdf = async (rc: ReportCardRow) => {
     setDownloadingStudentId(rc.student_id);

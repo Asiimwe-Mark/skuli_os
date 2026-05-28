@@ -14,6 +14,18 @@ import {
   GraduationCap,
 } from "lucide-react";
 
+interface PortalStudentJoin {
+  student_id: string;
+  student: {
+    id: string;
+    first_name: string;
+    last_name: string;
+    admission_number: string | null;
+    class: { id: string; name: string } | null;
+    school: { id: string; name: string; motto: string | null } | null;
+  };
+}
+
 interface Term {
   id: string;
   name: string;
@@ -43,13 +55,41 @@ interface ReportCard {
   class_teacher_comment: string;
 }
 
+interface ReportCardDetail {
+  student_name: string;
+  admission_number: string;
+  class_name: string;
+  term_name: string;
+  academic_year: string;
+  subjects: SubjectMarks[];
+  total_marks: number;
+  average_marks: number;
+  class_position: number | null;
+  class_size: number | null;
+  class_teacher_comment: string | null;
+  head_comment: string | null;
+}
+
+interface SubjectMarks {
+  subject: string;
+  bot: number | null;
+  mid: number | null;
+  eot: number | null;
+  total: number;
+  grade: string;
+  remarks: string | null;
+}
+
 export default function PortalResultsPage() {
   const supabase = createBrowserClient();
   const [loading, setLoading] = useState(true);
+  const [linkedStudents, setLinkedStudents] = useState<PortalStudentJoin[]>([]);
+  const [selectedStudentId, setSelectedStudentId] = useState<string>("");
   const [terms, setTerms] = useState<Term[]>([]);
   const [selectedTermId, setSelectedTermId] = useState<string>("");
   const [reportCards, setReportCards] = useState<ReportCard[]>([]);
   const [viewingReport, setViewingReport] = useState<ReportCard | null>(null);
+  const [viewingReportDetail, setViewingReportDetail] = useState<ReportCardDetail | null>(null);
   const [schoolName, setSchoolName] = useState("");
   const [schoolMotto, setSchoolMotto] = useState("");
   const [studentName, setStudentName] = useState("");
@@ -64,34 +104,37 @@ export default function PortalResultsPage() {
       } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: parentStudent } = await supabase
+      const { data: linkedStudentsData } = await supabase
         .from("parent_students")
         .select(
           `
+          student_id,
           student:students (
             id,
             first_name,
             last_name,
+            admission_number,
             class:classes ( name ),
             school:schools ( name, motto )
           )
         `
         )
-        .eq("parent_id", user.id)
-        .limit(1)
-        .single();
+        .eq("parent_id", user.id);
 
-      if (!parentStudent) {
+      if (!linkedStudentsData || linkedStudentsData.length === 0) {
         setLoading(false);
         return;
       }
 
-      const student = parentStudent.student as any;
-      setStudentId(student.id);
-      setStudentName(`${student.first_name} ${student.last_name}`);
-      setClassName(student.class?.name ?? "");
-      setSchoolName(student.school?.name ?? "");
-      setSchoolMotto(student.school?.motto ?? "");
+      setLinkedStudents(linkedStudentsData as unknown as PortalStudentJoin[]);
+      setSelectedStudentId(linkedStudentsData[0].student_id);
+
+      const firstStudent = linkedStudentsData[0].student;
+      setStudentId(firstStudent.id);
+      setStudentName(`${firstStudent.first_name} ${firstStudent.last_name}`);
+      setClassName(firstStudent.class?.name ?? "");
+      setSchoolName(firstStudent.school?.name ?? "");
+      setSchoolMotto(firstStudent.school?.motto ?? "");
 
       const { data: termData } = await supabase
         .from("terms")
@@ -112,26 +155,12 @@ export default function PortalResultsPage() {
 
   useEffect(() => {
     async function loadReportCards() {
-      if (!selectedTermId) return;
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return;
-
-      const { data: parentStudent } = await supabase
-        .from("parent_students")
-        .select("student_id")
-        .eq("parent_id", user.id)
-        .limit(1)
-        .single();
-
-      if (!parentStudent) return;
+      if (!selectedTermId || !selectedStudentId) return;
 
       const { data } = await supabase
         .from("report_cards")
         .select("*")
-        .eq("student_id", parentStudent.student_id)
+        .eq("student_id", selectedStudentId)
         .eq("term_id", selectedTermId)
         .eq("is_published", true);
 
@@ -139,7 +168,53 @@ export default function PortalResultsPage() {
     }
 
     loadReportCards();
-  }, [supabase, selectedTermId]);
+  }, [supabase, selectedTermId, selectedStudentId]);
+
+  async function fetchReportCardDetail(card: ReportCard) {
+    if (!selectedStudentId) return;
+
+    // Fetch detailed marks with BOT/MID/EOT breakdown
+    const { data: marksData } = await supabase
+      .from("exam_marks")
+      .select(`
+        subject:subjects(name),
+        bot_score,
+        mid_score,
+        eot_score,
+        total_score,
+        grade,
+        remarks
+      `)
+      .eq("student_id", selectedStudentId)
+      .eq("term_id", card.term_id);
+
+    const subjects: SubjectMarks[] = (marksData ?? []).map((m) => ({
+      subject: m.subject?.name ?? "Unknown",
+      bot: m.bot_score,
+      mid: m.mid_score,
+      eot: m.eot_score,
+      total: m.total_score ?? 0,
+      grade: m.grade ?? "",
+      remarks: m.remarks ?? null,
+    }));
+
+    const detail: ReportCardDetail = {
+      student_name: studentName,
+      admission_number: "",
+      class_name: className,
+      term_name: card.term_name,
+      academic_year: card.academic_year,
+      subjects,
+      total_marks: card.total_marks,
+      average_marks: card.average_marks,
+      class_position: card.class_position,
+      class_size: card.total_students,
+      class_teacher_comment: card.class_teacher_comment,
+      head_comment: card.head_comment,
+    };
+
+    setViewingReportDetail(detail);
+  }
 
   if (loading) {
     return (
@@ -159,7 +234,10 @@ export default function PortalResultsPage() {
           animate={{ opacity: 1, x: 0 }}
         >
           <button
-            onClick={() => setViewingReport(null)}
+            onClick={() => {
+              setViewingReport(null);
+              setViewingReportDetail(null);
+            }}
             className="mb-4 flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:underline"
           >
             <ArrowLeft className="h-4 w-4" />
@@ -215,44 +293,48 @@ export default function PortalResultsPage() {
               </div>
             </div>
 
-            {/* Marks Table */}
-            <div className="p-5">
+            {/* Marks Table with BOT/MID/EOT columns */}
+            <div className="overflow-x-auto p-5">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-gray-200 text-left text-xs font-medium text-gray-500">
                     <th className="pb-2">Subject</th>
-                    <th className="pb-2 text-center">Marks</th>
+                    <th className="pb-2 text-center">BOT</th>
+                    <th className="pb-2 text-center">MID</th>
+                    <th className="pb-2 text-center">EOT</th>
+                    <th className="pb-2 text-center">Total</th>
                     <th className="pb-2 text-center">Grade</th>
                     <th className="pb-2 text-right">Remark</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {viewingReport.subjects.map((s, i) => (
+                  {(viewingReportDetail?.subjects ?? viewingReport.subjects).map((s, i) => (
                     <tr key={i}>
                       <td className="py-2.5 text-gray-900">{s.subject}</td>
                       <td className="py-2.5 text-center font-medium">
-                        {s.marks}
+                        {s.bot !== null ? s.bot : "—"}
+                      </td>
+                      <td className="py-2.5 text-center font-medium">
+                        {s.mid !== null ? s.mid : "—"}
+                      </td>
+                      <td className="py-2.5 text-center font-medium">
+                        {s.eot !== null ? s.eot : "—"}
+                      </td>
+                      <td className="py-2.5 text-center font-bold">
+                        {"total" in s ? s.total : s.marks}
                       </td>
                       <td className="py-2.5 text-center">
                         <span
                           className={cn(
                             "inline-block rounded-full px-2 py-0.5 text-xs font-semibold",
-                            s.grade === "A"
-                              ? "bg-green-100 text-green-700"
-                              : s.grade === "B"
-                              ? "bg-blue-100 text-blue-700"
-                              : s.grade === "C"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : s.grade === "D"
-                              ? "bg-orange-100 text-orange-700"
-                              : "bg-red-100 text-red-700"
+                            getGradeBgColor(s.grade)
                           )}
                         >
                           {s.grade}
                         </span>
                       </td>
                       <td className="py-2.5 text-right text-xs text-gray-600">
-                        {s.remark}
+                        {"remarks" in s ? s.remarks : s.remark}
                       </td>
                     </tr>
                   ))}
@@ -278,23 +360,23 @@ export default function PortalResultsPage() {
 
             {/* Comments */}
             <div className="space-y-3 border-t border-gray-100 p-5">
-              {viewingReport.class_teacher_comment && (
+              {(viewingReportDetail?.class_teacher_comment ?? viewingReport.class_teacher_comment) && (
                 <div>
                   <p className="text-xs font-medium text-gray-500">
                     Class Teacher&apos;s Comment
                   </p>
                   <p className="mt-0.5 text-sm text-gray-700">
-                    {viewingReport.class_teacher_comment}
+                    {viewingReportDetail?.class_teacher_comment ?? viewingReport.class_teacher_comment}
                   </p>
                 </div>
               )}
-              {viewingReport.head_comment && (
+              {(viewingReportDetail?.head_comment ?? viewingReport.head_comment) && (
                 <div>
                   <p className="text-xs font-medium text-gray-500">
                     Head Teacher&apos;s Comment
                   </p>
                   <p className="mt-0.5 text-sm text-gray-700">
-                    {viewingReport.head_comment}
+                    {viewingReportDetail?.head_comment ?? viewingReport.head_comment}
                   </p>
                 </div>
               )}
@@ -347,6 +429,32 @@ export default function PortalResultsPage() {
         animate={{ opacity: 1, y: 0 }}
         className="space-y-4"
       >
+        {/* Child Selector - shown when multiple children exist */}
+        {linkedStudents.length > 1 && (
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
+                <GraduationCap className="h-5 w-5 text-indigo-600" />
+              </div>
+              <h2 className="text-sm font-semibold text-gray-900">Select Child</h2>
+            </div>
+            <div className="relative">
+              <select
+                value={selectedStudentId}
+                onChange={(e) => setSelectedStudentId(e.target.value)}
+                className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {linkedStudents.map((ls) => (
+                  <option key={ls.student_id} value={ls.student_id}>
+                    {ls.student.first_name} {ls.student.last_name} — {ls.student.class?.name ?? "N/A"}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            </div>
+          </div>
+        )}
+
         <h1 className="text-lg font-bold text-gray-900">Results</h1>
 
         {/* Term Selector */}
@@ -373,7 +481,10 @@ export default function PortalResultsPage() {
                 key={rc.id}
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                onClick={() => setViewingReport(rc)}
+                onClick={() => {
+                  setViewingReport(rc);
+                  fetchReportCardDetail(rc);
+                }}
                 className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/30"
               >
                 <div className="flex items-center gap-3">
@@ -414,4 +525,27 @@ export default function PortalResultsPage() {
       </motion.div>
     </div>
   );
+}
+
+function getGradeBgColor(grade: string): string {
+  switch (grade) {
+    case "A":
+    case "A+":
+    case "A-":
+      return "bg-green-100 text-green-700";
+    case "B":
+    case "B+":
+    case "B-":
+      return "bg-blue-100 text-blue-700";
+    case "C":
+    case "C+":
+    case "C-":
+      return "bg-yellow-100 text-yellow-700";
+    case "D":
+    case "D+":
+    case "D-":
+      return "bg-orange-100 text-orange-700";
+    default:
+      return "bg-red-100 text-red-700";
+  }
 }
