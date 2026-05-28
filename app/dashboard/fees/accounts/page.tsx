@@ -49,6 +49,7 @@ import {
   CreditCard,
   Smartphone,
 } from "lucide-react";
+import { ApplyDiscountDialog } from "@/components/fees/apply-discount-dialog";
 
 interface FeeAccountRow {
   id: string;
@@ -113,6 +114,8 @@ export default function FeeAccountsPage() {
   const [stkPhone, setStkPhone] = useState("");
   const [stkAmount, setStkAmount] = useState("");
   const [stkStatus, setStkStatus] = useState<"idle" | "initiating" | "polling" | "success" | "timeout" | "error">("idle");
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [selectedStudent, setSelectedStudent] = useState<{ id: string; name: string } | null>(null);
   const [stkMessage, setStkMessage] = useState("");
   const stkPollingTimerRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -646,21 +649,33 @@ export default function FeeAccountsPage() {
                         </Badge>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        {account.status !== "paid" && (
+                        <div className="flex items-center justify-end gap-1">
                           <Button
                             variant="ghost"
                             size="sm"
                             onClick={() => {
-                              setStkAccount(account);
-                              setStkPhone(account.student?.parent_phone || "");
-                              setStkAmount(String(Math.max(account.balance, 0)));
-                              setStkPushOpen(true);
+                              setSelectedStudent({ id: account.student_id, name: account.student?.full_name || "Student" });
+                              setDiscountOpen(true);
                             }}
                           >
-                            <Smartphone className="w-4 h-4 mr-1" />
-                            Request Payment
+                            Apply Discount
                           </Button>
-                        )}
+                          {account.status !== "paid" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setStkAccount(account);
+                                setStkPhone(account.student?.parent_phone || "");
+                                setStkAmount(String(Math.max(account.balance, 0)));
+                                setStkPushOpen(true);
+                              }}
+                            >
+                              <Smartphone className="w-4 h-4 mr-1" />
+                              Request Payment
+                            </Button>
+                          )}
+                        </div>
                       </td>
                     </motion.tr>
                   );
@@ -800,6 +815,17 @@ export default function FeeAccountsPage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Apply Discount Dialog */}
+      {selectedStudent && (
+        <ApplyDiscountDialog
+          open={discountOpen}
+          onOpenChange={setDiscountOpen}
+          studentId={selectedStudent.id}
+          studentName={selectedStudent.name}
+          currentTermId={currentTerm?.id || ""}
+        />
+      )}
     </motion.div>
   );
 }
