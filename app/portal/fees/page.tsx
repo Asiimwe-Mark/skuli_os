@@ -46,8 +46,7 @@ interface LinkedStudent {
   student_id: string;
   student: {
     id: string;
-    first_name: string;
-    last_name: string;
+    full_name: string;
     admission_number: string | null;
     class: { id: string; name: string } | null;
     school: { id: string; name: string; motto: string | null } | null;
@@ -62,6 +61,7 @@ export default function PortalFeesPage() {
   const [phone, setPhone] = useState("");
   const [feeSummary, setFeeSummary] = useState<FeeSummary | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [discounts, setDiscounts] = useState<any[]>([]);
 
   const [showPayModal, setShowPayModal] = useState(false);
   const [payAmount, setPayAmount] = useState("");
@@ -77,24 +77,20 @@ export default function PortalFeesPage() {
       if (!user) return;
 
       const { data: profile } = await supabase
-        .from("profiles")
+        .from("users")
         .select("phone")
         .eq("id", user.id)
         .single();
       if (profile?.phone) setPhone(profile.phone);
 
       const { data: linkedStudentsData } = await supabase
-        .from("parent_students")
+        .from("students")
         .select(`
-          student_id,
-          student:students (
-            id,
-            first_name,
-            last_name,
-            admission_number,
-            class:classes ( name ),
-            school:schools ( name, motto )
-          )
+          id,
+          full_name,
+          admission_number,
+          class:classes ( name ),
+          school:schools ( name, motto )
         `)
         .eq("parent_id", user.id);
 
@@ -103,18 +99,34 @@ export default function PortalFeesPage() {
         return;
       }
 
-      setLinkedStudents(linkedStudentsData as unknown as LinkedStudent[]);
-      setSelectedStudentId(linkedStudentsData[0].student_id);
+      const mappedStudents: LinkedStudent[] = linkedStudentsData.map((s: any) => ({
+        student_id: s.id,
+        student: {
+          id: s.id,
+          full_name: s.full_name,
+          admission_number: s.admission_number,
+          class: s.class,
+          school: s.school,
+        },
+      }));
+
+      setLinkedStudents(mappedStudents);
+      setSelectedStudentId(mappedStudents[0].student_id);
 
       const sid = linkedStudentsData[0].student_id;
 
-      const [feeRes, payRes] = await Promise.all([
+      const [feeRes, payRes, discRes] = await Promise.all([
         supabase.rpc("get_student_fee_breakdown", { p_student_id: sid }),
         supabase
           .from("payments")
           .select("id, amount, payment_date, receipt_number, method, status")
           .eq("student_id", sid)
           .order("payment_date", { ascending: false }),
+        supabase
+          .from("student_discounts")
+          .select(`*, discount:fee_discounts(*)`)
+          .eq("student_id", sid)
+          .eq("is_deleted", false),
       ]);
 
       if (feeRes.data) {
@@ -122,6 +134,7 @@ export default function PortalFeesPage() {
         setPayAmount(feeRes.data.balance?.toString() ?? "");
       }
       if (payRes.data) setPayments(payRes.data);
+      if (discRes.data) setDiscounts(discRes.data);
 
       setLoading(false);
     }
@@ -208,12 +221,15 @@ export default function PortalFeesPage() {
                   supabase.from("payments").select("id, amount, payment_date, receipt_number, method, status").eq("student_id", e.target.value).order("payment_date", { ascending: false }).then(({ data }) => {
                     if (data) setPayments(data);
                   });
+                  supabase.from("student_discounts").select(`*, discount:fee_discounts(*)`).eq("student_id", e.target.value).eq("is_deleted", false).then(({ data }) => {
+                    setDiscounts(data ?? []);
+                  });
                 }}
                 className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
               >
                 {linkedStudents.map((ls) => (
                   <option key={ls.student_id} value={ls.student_id}>
-                    {ls.student.first_name} {ls.student.last_name} — {ls.student.class?.name ?? "N/A"}
+                    {ls.student.full_name} — {ls.student.class?.name ?? "N/A"}
                   </option>
                 ))}
               </select>
@@ -293,6 +309,39 @@ export default function PortalFeesPage() {
             </p>
           )}
         </div>
+
+        {/* Discounts */}
+        {discounts && discounts.length > 0 && (
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <h2 className="mb-3 text-base font-bold text-gray-900">Discounts</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 text-left text-xs font-medium text-gray-500">
+                    <th className="pb-2 pr-3">Discount</th>
+                    <th className="pb-2 pr-3">Type</th>
+                    <th className="pb-2 text-right">Value</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {discounts.map((sd: any) => (
+                    <tr key={sd.id} className="hover:bg-gray-50">
+                      <td className="py-2.5 pr-3 text-gray-700">{sd.discount?.name}</td>
+                      <td className="py-2.5 pr-3 text-gray-600 capitalize">
+                        {sd.discount?.discount_type === "percentage" ? "Percentage" : "Fixed Amount"}
+                      </td>
+                      <td className="py-2.5 text-right font-semibold text-gray-900">
+                        {sd.discount?.discount_type === "percentage"
+                          ? `${sd.discount.value}%`
+                          : formatUGX(sd.discount?.value ?? 0)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Payment History */}
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
