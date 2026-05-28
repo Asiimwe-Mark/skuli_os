@@ -73,6 +73,7 @@ import type {
   Subject,
 } from "@/types";
 import { DisciplineTab } from "./discipline-tab";
+import { ApplyDiscountDialog } from "@/components/fees/apply-discount-dialog";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -196,6 +197,7 @@ export default function StudentProfilePage() {
   const initialTab = searchParams.get("tab") || "overview";
 
   const { school, currentTerm, currentAcademicYear } = useSchoolStore();
+  const schoolId = school?.id;
   const { canEditStudents, canViewFees, canRecordPayments } = usePermissions();
   const supabase = createBrowserClient();
   const { toast } = useToast();
@@ -218,6 +220,10 @@ export default function StudentProfilePage() {
   const [savingPayment, setSavingPayment] = useState(false);
   const [sharingReportCard, setSharingReportCard] = useState(false);
   const [downloadingCert, setDownloadingCert] = useState(false);
+
+  // Discount dialog
+  const [discountOpen, setDiscountOpen] = useState(false);
+  const [studentDiscounts, setStudentDiscounts] = useState<any[]>([]);
 
   // Edit form
   const [editForm, setEditForm] = useState({
@@ -267,6 +273,7 @@ export default function StudentProfilePage() {
       status: data.status,
       exit_date: data.exit_date || "",
     });
+    setLoading(false);
   }
 
   async function loadClasses() {
@@ -321,6 +328,18 @@ export default function StudentProfilePage() {
     } else {
       setPayments([]);
     }
+
+    // Fetch student discounts
+    const { data: discountsData } = await supabase
+      .from("student_discounts")
+      .select(`
+        *,
+        discount:fee_discounts(*)
+      `)
+      .eq("student_id", studentId)
+      .eq("is_deleted", false)
+      .or(`term_id.eq.${selectedTermId},term_id.is.null`);
+    setStudentDiscounts(discountsData || []);
   }
 
   async function loadMarks() {
@@ -847,6 +866,12 @@ export default function StudentProfilePage() {
                   Record Payment
                 </Button>
               )}
+              {canRecordPayments && (
+                <Button variant="outline" onClick={() => setDiscountOpen(true)}>
+                  <CreditCard className="w-4 h-4 mr-2" />
+                  Apply Discount
+                </Button>
+              )}
               <Button variant="outline" onClick={async () => {
                 if (!feeAccount || !school) return;
                 try {
@@ -871,6 +896,43 @@ export default function StudentProfilePage() {
                 Generate Statement
               </Button>
             </div>
+
+            {/* Discounts section */}
+            {studentDiscounts.length > 0 && (
+              <div className="mb-6">
+                <h4 className="text-sm font-medium text-muted-foreground mb-2">Applied Discounts</h4>
+                <div className="space-y-2">
+                  {studentDiscounts.map((sd) => (
+                    <div key={sd.id} className="flex items-center justify-between bg-navy-800 rounded-lg px-4 py-2">
+                      <div>
+                        <span className="font-medium">{sd.discount?.name}</span>
+                        <span className="text-muted-foreground ml-2 text-sm">
+                          {sd.discount?.discount_type === "percentage"
+                            ? `${sd.discount.value}%`
+                            : `UGX ${sd.discount?.value?.toLocaleString()}`}
+                        </span>
+                        {sd.term_id && (
+                          <span className="text-muted-foreground ml-2 text-sm">
+                            -- {terms?.find((t) => t.id === sd.term_id)?.name || "Specific Term"}
+                          </span>
+                        )}
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-rose hover:text-rose"
+                        onClick={async () => {
+                          await fetch(`/api/fees/student-discounts?id=${sd.id}`, { method: "DELETE" });
+                          loadFeeData();
+                        }}
+                      >
+                        Remove
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Payment History */}
             <Card className="border-border-subtle bg-surface">
@@ -1517,6 +1579,15 @@ export default function StudentProfilePage() {
         requireTyping={student.full_name}
         onConfirm={handleDelete}
       />
-   <div/>
+
+      {/* Apply Discount Dialog */}
+      <ApplyDiscountDialog
+        open={discountOpen}
+        onOpenChange={setDiscountOpen}
+        studentId={studentId}
+        studentName={student?.full_name}
+        currentTermId={selectedTermId}
+      />
+    </div>
   );
 }
