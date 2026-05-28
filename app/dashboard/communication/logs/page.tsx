@@ -31,12 +31,52 @@ import {
 } from "lucide-react";
 import type { SmsLog } from "@/types";
 
+interface AnnouncementLog {
+  id: string;
+  title: string;
+  body: string;
+  audience_type: string;
+  status: string;
+  scheduled_at: string | null;
+  scheduled_status: string | null;
+  created_at: string;
+  sent_at: string | null;
+  total_recipients: number;
+  delivered_count: number;
+  failed_count: number;
+  cost: number | null;
+}
+
 const STATUS_VARIANT: Record<string, "warning" | "default" | "success" | "destructive"> = {
   pending: "warning",
   sent: "default",
   delivered: "success",
   failed: "destructive",
 };
+
+function getAnnouncementBadge(a: AnnouncementLog) {
+  if (a.scheduled_at && a.scheduled_status === "pending") {
+    return (
+      <Badge variant="outline" className="border-amber-500 text-amber-600 bg-amber-50">
+        Scheduled · {formatDate(a.scheduled_at)}
+      </Badge>
+    );
+  }
+  if (a.scheduled_at && a.scheduled_status === "sent") {
+    return (
+      <Badge className="bg-emerald-100 text-emerald-700">
+        Sent (Scheduled)
+      </Badge>
+    );
+  }
+  if (a.scheduled_at && a.scheduled_status === "failed") {
+    return <Badge variant="destructive">Schedule Failed</Badge>;
+  }
+  if (a.scheduled_at && a.scheduled_status === "cancelled") {
+    return <Badge variant="outline" className="text-muted-foreground">Cancelled</Badge>;
+  }
+  return <Badge className="bg-emerald-100 text-emerald-700">Sent</Badge>;
+}
 
 export default function SmsLogsPage() {
   const { school } = useSchoolStore();
@@ -49,7 +89,7 @@ export default function SmsLogsPage() {
     queryKey: ["sms-logs", school?.id, statusFilter, dateFrom, dateTo],
     queryFn: async () => {
       let q = supabase
-        .from("sms_logs")
+        .from("announcements")
         .select("*")
         .eq("school_id", school!.id)
         .order("created_at", { ascending: false })
@@ -59,7 +99,7 @@ export default function SmsLogsPage() {
       if (dateTo) q = q.lte("created_at", dateTo + "T23:59:59");
       const { data, error } = await q;
       if (error) throw error;
-      return (data || []) as SmsLog[];
+      return (data || []) as unknown as AnnouncementLog[];
     },
     enabled: !!school?.id,
   });
@@ -134,32 +174,39 @@ export default function SmsLogsPage() {
       {isLoading ? (
         <div className="space-y-2">{[...Array(8)].map((_, i) => <Skeleton key={i} className="h-14 rounded-lg" />)}</div>
       ) : logs.length === 0 ? (
-        <EmptyState icon={Inbox} title="No SMS logs" description="SMS messages sent from your school will appear here." />
+        <EmptyState icon={Inbox} title="No communication logs" description="Communication logs from your school will appear here." />
       ) : (
         <Card className="border-border-subtle bg-surface">
           <CardContent className="p-0">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Recipient</TableHead>
+                  <TableHead>Title</TableHead>
                   <TableHead>Message</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Cost</TableHead>
+                  <TableHead>Recipients</TableHead>
                   <TableHead>Timestamp</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {logs.map((log) => (
                   <TableRow key={log.id}>
-                    <TableCell className="font-mono text-sm">{log.recipient_phone}</TableCell>
+                    <TableCell className="font-medium text-sm">{log.title}</TableCell>
                     <TableCell className="max-w-[300px]">
-                      <p className="text-sm truncate">{log.message_body}</p>
-                      {log.message_type && <Badge variant="outline" className="text-[10px] mt-1">{log.message_type}</Badge>}
+                      <p className="text-sm truncate">{log.body}</p>
+                      <Badge variant="outline" className="text-[10px] mt-1 capitalize">{log.audience_type}</Badge>
                     </TableCell>
-                    <TableCell><Badge variant={STATUS_VARIANT[log.status] || "default"}>{log.status}</Badge></TableCell>
-                    <TableCell className="text-sm">{log.cost ? formatUGX(log.cost) : "--"}</TableCell>
+                    <TableCell>{getAnnouncementBadge(log)}</TableCell>
+                    <TableCell className="text-sm">
+                      {log.total_recipients ?? "--"}
+                      {log.delivered_count !== undefined && log.failed_count !== undefined && (
+                        <span className="text-xs text-muted-foreground ml-1">
+                          ({log.delivered_count} delivered, {log.failed_count} failed)
+                        </span>
+                      )}
+                    </TableCell>
                     <TableCell className="text-sm text-foreground/60">
-                      {log.sent_at ? formatDateTime(log.sent_at) : log.created_at ? formatDateTime(log.created_at) : "--"}
+                      {log.scheduled_at ? `Scheduled: ${formatDate(log.scheduled_at)}` : (log.sent_at ? formatDateTime(log.sent_at) : formatDateTime(log.created_at))}
                     </TableCell>
                   </TableRow>
                 ))}
