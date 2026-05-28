@@ -99,7 +99,7 @@ export async function POST(request: NextRequest) {
 
       if (totalExpected <= 0) continue;
 
-      const { error } = await ctx.supabase.from("fee_accounts").insert({
+      const { data: newAccount, error } = await ctx.supabase.from("fee_accounts").insert({
         school_id: schoolId,
         student_id: enrollment.student_id,
         term_id: parsed.data.term_id,
@@ -108,9 +108,15 @@ export async function POST(request: NextRequest) {
         total_paid: 0,
         balance: totalExpected,
         status: "unpaid",
-      } as any);
+      } as any).select("id").single();
 
-      if (!error) created++;
+      if (!error && newAccount) {
+        // Recalculate to apply any discounts
+        await ctx.supabase.rpc("recalculate_fee_account", {
+          p_account_id: newAccount.id,
+        });
+        created++;
+      }
     }
 
     // Audit log
