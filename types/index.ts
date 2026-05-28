@@ -191,6 +191,36 @@ export interface FeePayment {
   received_by?: UserProfile;
 }
 
+export type DiscountType = 'percentage' | 'fixed_amount';
+
+export interface FeeDiscount {
+  id: string;
+  school_id: string;
+  name: string;
+  discount_type: DiscountType;
+  value: number;
+  max_amount: number | null;
+  is_recurring: boolean;
+  created_at: string;
+  is_deleted: boolean;
+}
+
+export interface StudentDiscount {
+  id: string;
+  school_id: string;
+  student_id: string;
+  discount_id: string;
+  term_id: string | null;
+  approved_by: string | null;
+  note: string | null;
+  created_at: string;
+  is_deleted: boolean;
+  // Joined fields
+  discount?: FeeDiscount;
+  student_name?: string;
+  student_class?: string;
+}
+
 export interface Mark {
   id: string;
   school_id: string;

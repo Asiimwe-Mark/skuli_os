@@ -40,9 +40,26 @@ export const feeStatementSchema = z.object({
   term_id: z.string().uuid().optional(),
 });
 
+export const createDiscountSchema = z.object({
+  name: z.string().min(1, 'Discount name is required'),
+  discount_type: z.enum(['percentage', 'fixed_amount']),
+  value: z.number().positive('Value must be greater than 0'),
+  max_amount: z.number().positive().nullable().optional(),
+  is_recurring: z.boolean().default(true),
+});
+
+export const applyDiscountSchema = z.object({
+  student_id: z.string().uuid('Select a student'),
+  discount_id: z.string().uuid('Select a discount'),
+  term_id: z.string().uuid().nullable(),
+  note: z.string().optional().nullable(),
+});
+
 export type CreateFeeStructureFormData = z.infer<typeof createFeeStructureSchema>;
 export type RecordPaymentFormData = z.infer<typeof recordPaymentSchema>;
 export type GenerateFeeAccountsFormData = z.infer<typeof generateFeeAccountsSchema>;
+export type CreateDiscountFormData = z.infer<typeof createDiscountSchema>;
+export type ApplyDiscountFormData = z.infer<typeof applyDiscountSchema>;
 
 // Legacy aliases
 export const feeStructureSchema = createFeeStructureSchema;
