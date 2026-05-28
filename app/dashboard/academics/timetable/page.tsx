@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,8 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { toast } from '@/hooks/use-toast';
-import { Toaster } from '@/components/ui/toaster';
+import { useToast } from '@/components/ui/use-toast';
 import { Plus, Download, Printer, AlertTriangle, X, Loader2 } from 'lucide-react';
 import type { Database } from '@/types/database';
 
@@ -27,7 +26,8 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
 const DAY_MAP: Record<number, string> = { 1: 'Mon', 2: 'Tue', 3: 'Wed', 4: 'Thu', 5: 'Fri' };
 
 export default function TimetablePage() {
-  const supabase = createClientComponentClient<Database>();
+  const supabase = createClient();
+  const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [classes, setClasses] = useState<Class[]>([]);
   const [academicYears, setAcademicYears] = useState<AcademicYear[]>([]);
@@ -93,7 +93,7 @@ export default function TimetablePage() {
       .select(`
         *,
         subject:subjects(id, name, color),
-        teacher:users(id, first_name, last_name)
+        teacher:users(id, full_name)
       `)
       .eq('class_id', selectedClassId)
       .eq('academic_year_id', selectedAcademicYearId)
@@ -293,7 +293,6 @@ export default function TimetablePage() {
 
   return (
     <div className="space-y-6">
-      <Toaster />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -466,7 +465,7 @@ export default function TimetablePage() {
                               </div>
                               {slot.teacher && (
                                 <div className="text-xs text-muted-foreground truncate">
-                                  {slot.teacher.first_name} {slot.teacher.last_name}
+                                  {slot.teacher.full_name}
                                 </div>
                               )}
                               {slot.room && (
@@ -527,7 +526,7 @@ export default function TimetablePage() {
                 <SelectContent>
                   {teachers.map(teacher => (
                     <SelectItem key={teacher.id} value={teacher.id}>
-                      {teacher.first_name} {teacher.last_name}
+                      {teacher.full_name}
                     </SelectItem>
                   ))}
                 </SelectContent>

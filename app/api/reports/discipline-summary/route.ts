@@ -28,8 +28,7 @@ export async function POST(request: NextRequest) {
       .from('students')
       .select(`
         id,
-        first_name,
-        last_name,
+        full_name,
         admission_number,
         class:classes(
           id,
@@ -61,8 +60,7 @@ export async function POST(request: NextRequest) {
         parent_notified,
         parent_notified_at,
         recorded_by:users(
-          first_name,
-          last_name
+          full_name
         )
       `)
       .eq('student_id', student_id)
@@ -103,7 +101,7 @@ export async function POST(request: NextRequest) {
     page.drawText('Student Information', { x: 50, y: yPosition, size: 12, font: boldFont });
     yPosition -= 20;
 
-    page.drawText(`Name: ${studentData.first_name} ${studentData.last_name}`, { x: 70, y: yPosition, size: 10, font: font });
+    page.drawText(`Name: ${studentData.full_name}`, { x: 70, y: yPosition, size: 10, font: font });
     yPosition -= 15;
 
     page.drawText(`Admission Number: ${studentData.admission_number || 'N/A'}`, { x: 70, y: yPosition, size: 10, font: font });

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerComponentClient } from '@supabase/auth-helpers-nextjs';
-import { cookies } from 'next/headers';
+import { createClient } from '@/lib/supabase/server';
 import { generateTimetablePDF } from '@/lib/pdf/timetable';
 
 export async function GET(request: NextRequest) {
@@ -13,7 +12,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const supabase = createServerComponentClient({ cookies });
+    const supabase = await createClient();
 
     // Get user's school
     const { data: schoolIdData, error: schoolError } = await supabase.rpc('get_user_school_id');
@@ -71,7 +70,7 @@ export async function GET(request: NextRequest) {
       .select(`
         *,
         subject:subjects(id, name, color),
-        teacher:users(id, first_name, last_name)
+        teacher:users(id, full_name)
       `)
       .eq('school_id', schoolId)
       .eq('class_id', classId)

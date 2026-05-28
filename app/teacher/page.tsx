@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createServerClient } from '@/lib/supabase/server';
+import { createClient } from '@/lib/supabase/server';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Link from 'next/link';
@@ -14,7 +14,7 @@ interface Assignment {
 }
 
 export default async function TeacherDashboardPage() {
-  const supabase = createServerClient();
+  const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -63,14 +63,14 @@ export default async function TeacherDashboardPage() {
       const { count: studentCount } = await supabase
         .from('students')
         .select('*', { count: 'exact', head: true })
-        .eq('class_id', assignment.class_id)
+        .eq('current_class_id', assignment.class_id)
         .eq('is_deleted', false);
 
       // Get marks completion for this class
       const { data: marksData } = await supabase
         .from('marks')
         .select('student_id, subject_id')
-        .eq('class_id', assignment.class_id)
+        .eq('current_class_id', assignment.class_id)
         .eq('is_deleted', false);
 
       // Get today's attendance
@@ -78,7 +78,7 @@ export default async function TeacherDashboardPage() {
       const { count: attendanceCount } = await supabase
         .from('attendance_records')
         .select('*', { count: 'exact', head: true })
-        .eq('class_id', assignment.class_id)
+        .eq('current_class_id', assignment.class_id)
         .eq('date', today)
         .eq('is_deleted', false);
 
@@ -99,7 +99,7 @@ export default async function TeacherDashboardPage() {
       score,
       exam_type,
       created_at,
-      student:students(first_name, last_name),
+      student:students(full_name),
       subject:subjects(name),
       class:classes(name)
     `)
@@ -114,7 +114,7 @@ export default async function TeacherDashboardPage() {
       id,
       date,
       status,
-      student:students(first_name, last_name),
+      student:students(full_name),
       class:classes(name)
     `)
     .eq('class_id', assignments[0].class_id)
@@ -244,7 +244,7 @@ export default async function TeacherDashboardPage() {
                   <li key={mark.id} className="text-sm border-b pb-2 last:border-0">
                     <div className="flex justify-between">
                       <span className="font-medium">
-                        {mark.student.first_name} {mark.student.last_name}
+                        {mark.student.full_name}
                       </span>
                       <span className="text-amber font-semibold">{mark.score}%</span>
                     </div>
@@ -272,7 +272,7 @@ export default async function TeacherDashboardPage() {
                   <li key={record.id} className="text-sm border-b pb-2 last:border-0">
                     <div className="flex justify-between">
                       <span className="font-medium">
-                        {record.student.first_name} {record.student.last_name}
+                        {record.student.full_name}
                       </span>
                       <span
                         className={`font-semibold ${

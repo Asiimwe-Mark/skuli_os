@@ -23,15 +23,15 @@ export async function GET(request: NextRequest) {
       return new Response(JSON.stringify({ error: "student_id and term_id are required" }), { status: 400 });
     }
 
-    // Verify this user is a parent of this student
-    const { data: parentLink } = await supabase
-      .from("parent_students")
+    // Verify this user is a parent of this student (via students.parent_id)
+    const { data: parentStudent } = await supabase
+      .from("students")
       .select("id")
       .eq("parent_id", user.id)
-      .eq("student_id", studentId)
+      .eq("id", studentId)
       .limit(1);
 
-    if (!parentLink || parentLink.length === 0) {
+    if (!parentStudent || parentStudent.length === 0) {
       return new Response(JSON.stringify({ error: "Not authorized for this student" }), { status: 403 });
     }
 

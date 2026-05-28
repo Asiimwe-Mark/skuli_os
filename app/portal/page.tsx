@@ -59,8 +59,7 @@ interface LinkedStudent {
   student_id: string;
   student: {
     id: string;
-    first_name: string;
-    last_name: string;
+    full_name: string;
     admission_number: string | null;
     class: { id: string; name: string } | null;
     school: { id: string; name: string; motto: string | null } | null;
@@ -102,17 +101,13 @@ export default function PortalDashboard() {
       if (!user) return;
 
       const { data: linkedStudentsData } = await supabase
-        .from("parent_students")
+        .from("students")
         .select(`
-          student_id,
-          student:students(
-            id,
-            first_name,
-            last_name,
-            admission_number,
-            class:classes(id, name),
-            school:schools(id, name, motto)
-          )
+          id,
+          full_name,
+          admission_number,
+          class:classes(id, name),
+          school:schools(id, name, motto)
         `)
         .eq("parent_id", user.id);
 
@@ -121,16 +116,27 @@ export default function PortalDashboard() {
         return;
       }
 
-      setLinkedStudents(linkedStudentsData as LinkedStudent[]);
-      setSelectedStudentId(linkedStudentsData[0].student_id);
+      const mappedStudents: LinkedStudent[] = linkedStudentsData.map((s: any) => ({
+        student_id: s.id,
+        student: {
+          id: s.id,
+          full_name: s.full_name,
+          admission_number: s.admission_number,
+          class: s.class,
+          school: s.school,
+        },
+      }));
 
-      const sid = linkedStudentsData[0].student_id;
+      setLinkedStudents(mappedStudents);
+      setSelectedStudentId(mappedStudents[0].student_id);
+
+      const sid = mappedStudents[0].student_id;
 
       const [feeRes, payRes, resultRes, attendRes, announceRes] =
         await Promise.all([
           supabase.rpc("get_student_fee_summary", { p_student_id: sid }),
           supabase
-            .from("payments")
+            .from("fee_payments")
             .select("id, amount, payment_date, receipt_number, method")
             .eq("student_id", sid)
             .order("payment_date", { ascending: false })
@@ -220,7 +226,7 @@ export default function PortalDashboard() {
             >
               {linkedStudents.map((ls) => (
                 <option key={ls.student_id} value={ls.student_id}>
-                  {ls.student.first_name} {ls.student.last_name} — {ls.student.class?.name ?? "N/A"}
+                  {ls.student.full_name} — {ls.student.class?.name ?? "N/A"}
                 </option>
               ))}
             </select>

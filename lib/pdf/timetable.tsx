@@ -8,7 +8,7 @@ type SlotWithDetails = {
   period_id: string;
   day_of_week: number;
   subject?: { name: string | null; color?: string | null } | null;
-  teacher?: { first_name: string | null; last_name: string | null } | null;
+  teacher?: { full_name: string | null } | null;
   room?: string | null;
 };
 
@@ -171,7 +171,7 @@ const TimetablePDFDocument: React.FC<TimetablePDFProps> = ({
                       {slot?.teacher && (
                         <Text>
                           {'\n'}
-                          {slot.teacher.first_name} {slot.teacher.last_name}
+                          {slot.teacher.full_name}
                         </Text>
                       )}
                       {slot?.room && (

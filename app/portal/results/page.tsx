@@ -18,8 +18,7 @@ interface PortalStudentJoin {
   student_id: string;
   student: {
     id: string;
-    first_name: string;
-    last_name: string;
+    full_name: string;
     admission_number: string | null;
     class: { id: string; name: string } | null;
     school: { id: string; name: string; motto: string | null } | null;
@@ -105,18 +104,14 @@ export default function PortalResultsPage() {
       if (!user) return;
 
       const { data: linkedStudentsData } = await supabase
-        .from("parent_students")
+        .from("students")
         .select(
           `
-          student_id,
-          student:students (
-            id,
-            first_name,
-            last_name,
-            admission_number,
-            class:classes ( name ),
-            school:schools ( name, motto )
-          )
+          id,
+          full_name,
+          admission_number,
+          class:classes ( name ),
+          school:schools ( name, motto )
         `
         )
         .eq("parent_id", user.id);
@@ -126,12 +121,23 @@ export default function PortalResultsPage() {
         return;
       }
 
-      setLinkedStudents(linkedStudentsData as unknown as PortalStudentJoin[]);
-      setSelectedStudentId(linkedStudentsData[0].student_id);
+      const mappedStudents: PortalStudentJoin[] = linkedStudentsData.map((s: any) => ({
+        student_id: s.id,
+        student: {
+          id: s.id,
+          full_name: s.full_name,
+          admission_number: s.admission_number,
+          class: s.class,
+          school: s.school,
+        },
+      }));
 
-      const firstStudent = linkedStudentsData[0].student;
+      setLinkedStudents(mappedStudents);
+      setSelectedStudentId(mappedStudents[0].student_id);
+
+      const firstStudent = mappedStudents[0].student;
       setStudentId(firstStudent.id);
-      setStudentName(`${firstStudent.first_name} ${firstStudent.last_name}`);
+      setStudentName(firstStudent.full_name);
       setClassName(firstStudent.class?.name ?? "");
       setSchoolName(firstStudent.school?.name ?? "");
       setSchoolMotto(firstStudent.school?.motto ?? "");
@@ -175,7 +181,7 @@ export default function PortalResultsPage() {
 
     // Fetch detailed marks with BOT/MID/EOT breakdown
     const { data: marksData } = await supabase
-      .from("exam_marks")
+      .from("marks")
       .select(`
         subject:subjects(name),
         bot_score,
@@ -446,7 +452,7 @@ export default function PortalResultsPage() {
               >
                 {linkedStudents.map((ls) => (
                   <option key={ls.student_id} value={ls.student_id}>
-                    {ls.student.first_name} {ls.student.last_name} — {ls.student.class?.name ?? "N/A"}
+                    {ls.student.full_name} — {ls.student.class?.name ?? "N/A"}
                   </option>
                 ))}
               </select>

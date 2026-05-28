@@ -31,6 +31,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import Link from "next/link";
 import { cn } from "@/lib/utils/cn";
 
 /* ------------------------------------------------------------------ */
@@ -142,10 +143,14 @@ function Navigation() {
 
           {/* Desktop CTA */}
           <div className="hidden md:flex items-center gap-3">
-            <Button variant="ghost" size="sm">
-              Login
-            </Button>
-            <Button size="sm">Start Free Trial</Button>
+            <Link href="/login">
+              <Button variant="ghost" size="sm">
+                Login
+              </Button>
+            </Link>
+            <Link href="/onboard">
+              <Button size="sm">Start Free Trial</Button>
+            </Link>
           </div>
 
           {/* Mobile toggle */}
@@ -180,10 +185,14 @@ function Navigation() {
                   </a>
                 ))}
                 <div className="mt-3 flex flex-col gap-2 px-3">
-                  <Button variant="ghost" className="w-full">
-                    Login
-                  </Button>
-                  <Button className="w-full">Start Free Trial</Button>
+                  <Link href="/login">
+                    <Button variant="ghost" className="w-full">
+                      Login
+                    </Button>
+                  </Link>
+                  <Link href="/onboard">
+                    <Button className="w-full">Start Free Trial</Button>
+                  </Link>
                 </div>
               </div>
             </motion.div>
@@ -248,13 +257,17 @@ function Hero() {
               transition={{ duration: 0.6, delay: 0.3 }}
               className="mt-8 flex flex-wrap gap-4"
             >
-              <Button size="lg" className="text-base px-8">
-                Start Free Trial
-                <ArrowRight size={18} />
-              </Button>
-              <Button variant="outline" size="lg" className="text-base px-8">
-                <Play size={18} />
-                Watch Demo
+              <Link href="/onboard">
+                <Button size="lg" className="text-base px-8">
+                  Start Free Trial
+                  <ArrowRight size={18} />
+                </Button>
+              </Link>
+              <Button variant="outline" size="lg" className="text-base px-8" asChild>
+                <a href="#features">
+                  <Play size={18} />
+                  Watch Demo
+                </a>
               </Button>
             </motion.div>
           </div>
@@ -760,12 +773,14 @@ function Pricing() {
                 ))}
               </ul>
 
-              <Button
-                variant={plan.popular ? "default" : "outline"}
-                className="w-full"
-              >
-                Start Free Trial
-              </Button>
+              <Link href="/onboard">
+                <Button
+                  variant={plan.popular ? "default" : "outline"}
+                  className="w-full"
+                >
+                  Start Free Trial
+                </Button>
+              </Link>
             </motion.div>
           ))}
         </div>
@@ -1054,10 +1069,12 @@ function CTA() {
               transition={{ delay: 0.3 }}
               className="mt-8"
             >
-              <Button size="lg" className="text-base px-10">
-                Start Free Trial
-                <ArrowRight size={18} />
-              </Button>
+              <Link href="/onboard">
+                <Button size="lg" className="text-base px-10">
+                  Start Free Trial
+                  <ArrowRight size={18} />
+                </Button>
+              </Link>
             </motion.div>
             <motion.p
               initial={{ opacity: 0 }}

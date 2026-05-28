@@ -1,8 +1,7 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
-import { createClient } from '@supabase/supabase-js';
 import { errorResponse, successResponse, getSupabaseAndUser, requireSchool, requireRole } from '@/lib/api-helpers';
-import { normalizePhone } from '@/lib/utils';
+import { normalizePhone } from '@/lib/utils/phone';
 
 const notifyParentSchema = z.object({
   student_id: z.string().uuid(),
@@ -37,8 +36,7 @@ export async function POST(request: NextRequest) {
         action_taken,
         student:students(
           id,
-          first_name,
-          last_name,
+          full_name,
           parent_name,
           parent_phone
         ),
@@ -63,13 +61,13 @@ export async function POST(request: NextRequest) {
     }
 
     // Generate default message
-    const defaultMessage = `Dear ${student.parent_name || 'Parent'}, we wish to inform you that ${student.first_name} ${student.last_name} had a disciplinary incident on ${new Date(record.incident_date).toLocaleDateString('en-GB')}: ${record.incident_type.replace('_', ' ')}. Please contact ${school.name} for details.`;
+    const defaultMessage = `Dear ${student.parent_name || 'Parent'}, we wish to inform you that ${student.full_name} had a disciplinary incident on ${new Date(record.incident_date).toLocaleDateString('en-GB')}: ${record.incident_type.replace('_', ' ')}. Please contact ${school.name} for details.`;
 
     const messageBody = message_override || defaultMessage;
 
     // Send SMS via Africa's Talking
     const smsPayload = {
-      title: `Discipline Notice - ${student.first_name} ${student.last_name}`,
+      title: `Discipline Notice - ${student.full_name}`,
       message_body: messageBody,
       audience_type: 'manual_phones' as const,
       phone_numbers: [normalizePhone(student.parent_phone)],

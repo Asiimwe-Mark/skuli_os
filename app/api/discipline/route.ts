@@ -114,8 +114,7 @@ export async function GET(request: NextRequest) {
         parent_notified,
         parent_notified_at,
         recorded_by:users(
-          first_name,
-          last_name
+          full_name
         )
       `)
       .eq('student_id', student_id)

@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { formatUGX, formatDate } from '@/lib/utils';
+import { formatUGX } from '@/lib/utils/currency';
+import { formatDate } from '@/lib/utils/dates';
 import { toast } from '@/components/ui/use-toast';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,7 +45,7 @@ interface DisciplineRecord {
   action_taken: string | null;
   parent_notified: boolean;
   parent_notified_at: string | null;
-  recorded_by: { first_name: string; last_name: string } | null;
+  recorded_by: { full_name: string } | null;
 }
 
 const formSchema = z.object({
@@ -315,7 +316,7 @@ export function DisciplineTab({ studentId, schoolId }: DisciplineTabProps) {
                   {record.recorded_by ? (
                     <div className="flex items-center gap-2">
                       <User className="h-4 w-4 text-muted-foreground" />
-                      <span>{record.recorded_by.first_name} {record.recorded_by.last_name}</span>
+                      <span>{record.recorded_by.full_name}</span>
                     </div>
                   ) : (
                     '—'

@@ -1,13 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs';
+import { createClient } from '@/lib/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { toast } from '@/hooks/use-toast';
-import { Toaster } from '@/components/ui/toaster';
+import { useToast } from '@/components/ui/use-toast';
 import { Loader2 } from 'lucide-react';
 import type { Database } from '@/types/database';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday, isSameDay } from 'date-fns';
@@ -17,9 +16,8 @@ type LinkedStudent = {
   student_id: string;
   student: {
     id: string;
-    first_name: string;
-    last_name: string;
-    class_id: string | null;
+    full_name: string;
+    current_class_id: string | null;
     class: { id: string; name: string } | null;
     school: { id: string; name: string } | null;
   };
@@ -34,7 +32,8 @@ const EVENT_COLORS: Record<string, string> = {
 };
 
 export default function PortalCalendarPage() {
-  const supabase = createClientComponentClient<Database>();
+  const supabase = createClient();
+  const { toast } = useToast();
   const [loading, setLoading] = useState(true);
   const [linkedStudents, setLinkedStudents] = useState<LinkedStudent[]>([]);
   const [selectedStudentId, setSelectedStudentId] = useState<string>('');
@@ -48,17 +47,13 @@ export default function PortalCalendarPage() {
   async function fetchLinkedStudents() {
     try {
       const { data, error } = await supabase
-        .from('parent_students')
+        .from('students')
         .select(`
-          student_id,
-          student:students(
-            id,
-            first_name,
-            last_name,
-            class_id,
-            class:classes(id, name),
-            school:schools(id, name)
-          )
+          id,
+          full_name,
+          current_class_id,
+          class:classes(id, name),
+          school:schools(id, name)
         `)
         .eq('is_deleted', false);
 
@@ -68,8 +63,19 @@ export default function PortalCalendarPage() {
         return;
       }
 
-      setLinkedStudents(data as unknown as LinkedStudent[]);
-      setSelectedStudentId(data[0].student_id);
+      const mapped: LinkedStudent[] = data.map((s: any) => ({
+        student_id: s.id,
+        student: {
+          id: s.id,
+          full_name: s.full_name,
+          current_class_id: s.current_class_id,
+          class: s.class,
+          school: s.school,
+        },
+      }));
+
+      setLinkedStudents(mapped);
+      setSelectedStudentId(mapped[0].student_id);
     } catch (error) {
       console.error('Error fetching students:', error);
       toast({ title: 'Error', description: 'Failed to load student data', variant: 'destructive' });
@@ -90,7 +96,7 @@ export default function PortalCalendarPage() {
     try {
       // Get the selected student's class
       const studentData = linkedStudents.find(ls => ls.student_id === selectedStudentId);
-      const classId = studentData?.student.class_id;
+      const classId = studentData?.student.current_class_id;
 
       // Fetch school-wide public events + class-specific public events
       const { data, error } = await supabase
@@ -101,7 +107,7 @@ export default function PortalCalendarPage() {
         `)
         .eq('is_public', true)
         .eq('is_deleted', false)
-        .or(`class_id.is.null,class_id.eq.${classId}`)
+        .or(`class_id.is.null,class_id.eq.${classId},calendar_type.eq.school`)
         .order('event_date', { ascending: true });
 
       if (error) throw error;
@@ -136,7 +142,6 @@ export default function PortalCalendarPage() {
 
   return (
     <div className="space-y-6">
-      <Toaster />
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -153,7 +158,7 @@ export default function PortalCalendarPage() {
               <SelectContent>
                 {linkedStudents.map(ls => (
                   <SelectItem key={ls.student_id} value={ls.student_id}>
-                    {ls.student.first_name} {ls.student.last_name} - {ls.student.class?.name || 'No class'}
+                    {ls.student.full_name} - {ls.student.class?.name || 'No class'}
                   </SelectItem>
                 ))}
               </SelectContent>

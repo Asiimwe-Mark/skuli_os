@@ -1,5 +1,5 @@
 import { redirect } from 'next/navigation';
-import { createServerClient } from '@/lib/supabase/server';
+import { createClient } from '@/lib/supabase/server';
 import TeacherSidebar from '@/components/teacher/TeacherSidebar';
 
 export default async function TeacherLayout({
@@ -7,7 +7,7 @@ export default async function TeacherLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const supabase = createServerClient();
+  const supabase = await createClient();
 
   const { data: { user } } = await supabase.auth.getUser();
 
@@ -38,7 +38,7 @@ export default async function TeacherLayout({
     .eq('is_deleted', false);
 
   return (
-    <div className="flex min-h-screen bg-gray-50">
+    <div className="flex min-h-screen bg-background">
       <TeacherSidebar
         teacher={userProfile}
         assignments={assignments || []}

@@ -26,3 +26,6 @@ export async function createClient(): Promise<any> {
     }
   );
 }
+
+// Alias for compatibility with pages that import createServerClient
+export { createClient as createServerClient };
