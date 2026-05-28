@@ -484,6 +484,111 @@ export interface Database {
         Insert: Database['public']['Tables']['platform_settings']['Row'];
         Update: Partial<Database['public']['Tables']['platform_settings']['Insert']>;
       };
+      teacher_class_assignments: {
+        Row: { id: string; school_id: string; teacher_id: string; class_id: string; subject_id: string | null; is_class_teacher: boolean; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['teacher_class_assignments']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['teacher_class_assignments']['Insert']>;
+      };
+      timetable_periods: {
+        Row: { id: string; school_id: string; name: string; start_time: string; end_time: string; sort_order: number; is_break: boolean; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['timetable_periods']['Row'], 'id' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['timetable_periods']['Insert']>;
+      };
+      timetable_slots: {
+        Row: { id: string; school_id: string; class_id: string; period_id: string; day_of_week: number; subject_id: string | null; teacher_id: string | null; room: string | null; academic_year_id: string | null; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['timetable_slots']['Row'], 'id' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['timetable_slots']['Insert']>;
+      };
+      calendar_events: {
+        Row: { id: string; school_id: string; title: string; description: string | null; event_date: string; end_date: string | null; event_type: 'holiday' | 'exam' | 'event' | 'closure' | 'meeting'; affects_attendance: boolean; class_id: string | null; is_public: boolean; created_by: string | null; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['calendar_events']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['calendar_events']['Insert']>;
+      };
+      discipline_records: {
+        Row: { id: string; school_id: string; student_id: string; incident_date: string; incident_type: string; description: string; action_taken: string | null; recorded_by: string | null; parent_notified: boolean; parent_notified_at: string | null; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['discipline_records']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['discipline_records']['Insert']>;
+      };
+      fee_discounts: {
+        Row: { id: string; school_id: string; name: string; discount_type: 'percentage' | 'fixed_amount'; value: number; max_amount: number | null; is_recurring: boolean; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['fee_discounts']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['fee_discounts']['Insert']>;
+      };
+      student_discounts: {
+        Row: { id: string; school_id: string; student_id: string; discount_id: string; term_id: string | null; approved_by: string | null; note: string | null; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['student_discounts']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['student_discounts']['Insert']>;
+      };
+      expense_categories: {
+        Row: { id: string; school_id: string; name: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['expense_categories']['Row'], 'id' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['expense_categories']['Insert']>;
+      };
+      expenses: {
+        Row: { id: string; school_id: string; category_id: string | null; term_id: string | null; description: string; amount: number; expense_date: string; payment_method: string | null; receipt_number: string | null; recorded_by: string | null; notes: string | null; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['expenses']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['expenses']['Insert']>;
+      };
+      message_threads: {
+        Row: { id: string; school_id: string; parent_phone: string; student_id: string | null; last_message_at: string; is_read: boolean; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['message_threads']['Row'], 'id' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['message_threads']['Insert']>;
+      };
+      thread_messages: {
+        Row: { id: string; thread_id: string; school_id: string; direction: 'inbound' | 'outbound'; body: string; sender_name: string | null; at_message_id: string | null; status: 'sent' | 'delivered' | 'failed'; sent_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['thread_messages']['Row'], 'id' | 'sent_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['thread_messages']['Insert']>;
+      };
+      meeting_slots: {
+        Row: { id: string; school_id: string; teacher_id: string; slot_date: string; start_time: string; end_time: string; duration_minutes: number; is_booked: boolean; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['meeting_slots']['Row'], 'id' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['meeting_slots']['Insert']>;
+      };
+      meeting_bookings: {
+        Row: { id: string; slot_id: string; school_id: string; student_id: string; parent_name: string; parent_phone: string; notes: string | null; status: 'confirmed' | 'cancelled' | 'completed'; reminder_sent: boolean; created_at: string };
+        Insert: Omit<Database['public']['Tables']['meeting_bookings']['Row'], 'id' | 'created_at'>;
+        Update: Partial<Database['public']['Tables']['meeting_bookings']['Insert']>;
+      };
+      library_books: {
+        Row: { id: string; school_id: string; title: string; author: string | null; isbn: string | null; category: string | null; total_copies: number; available_copies: number; shelf_location: string | null; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['library_books']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['library_books']['Insert']>;
+      };
+      library_issues: {
+        Row: { id: string; school_id: string; book_id: string; student_id: string; issued_at: string; due_date: string; returned_at: string | null; fine_amount: number | null; fine_paid: boolean; issued_by: string | null };
+        Insert: Omit<Database['public']['Tables']['library_issues']['Row'], 'id' | 'issued_at'>;
+        Update: Partial<Database['public']['Tables']['library_issues']['Insert']>;
+      };
+      assets: {
+        Row: { id: string; school_id: string; name: string; asset_code: string | null; category: string | null; purchase_date: string | null; purchase_price: number | null; current_value: number | null; condition: 'excellent' | 'good' | 'fair' | 'poor' | 'written_off'; location: string | null; assigned_to: string | null; notes: string | null; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['assets']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['assets']['Insert']>;
+      };
+      asset_maintenance: {
+        Row: { id: string; asset_id: string; school_id: string; maintenance_date: string; description: string; cost: number | null; next_service_date: string | null; performed_by: string | null };
+        Insert: Omit<Database['public']['Tables']['asset_maintenance']['Row'], 'id'>;
+        Update: Partial<Database['public']['Tables']['asset_maintenance']['Insert']>;
+      };
+      alumni: {
+        Row: { id: string; school_id: string; student_id: string | null; first_name: string; last_name: string; admission_number: string | null; graduation_year: number; last_class: string | null; current_school: string | null; phone: string | null; email: string | null; profession: string | null; notes: string | null; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['alumni']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['alumni']['Insert']>;
+      };
+      school_groups: {
+        Row: { id: string; name: string; code: string; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['school_groups']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['school_groups']['Insert']>;
+      };
+      push_subscriptions: {
+        Row: { id: string; school_id: string; user_id: string | null; parent_phone: string | null; endpoint: string; p256dh: string; auth: string; created_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['push_subscriptions']['Row'], 'id' | 'created_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['push_subscriptions']['Insert']>;
+      };
+      whatsapp_messages: {
+        Row: { id: string; school_id: string; wa_message_id: string | null; direction: 'inbound' | 'outbound'; recipient_phone: string; message_type: string; message_body: string | null; media_url: string | null; status: 'sent' | 'delivered' | 'read' | 'failed'; error_message: string | null; sent_at: string; is_deleted: boolean };
+        Insert: Omit<Database['public']['Tables']['whatsapp_messages']['Row'], 'id' | 'sent_at' | 'is_deleted'>;
+        Update: Partial<Database['public']['Tables']['whatsapp_messages']['Insert']>;
+      };
     };
     Views: Record<string, never>;
     Functions: {
