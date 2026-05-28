@@ -344,6 +344,37 @@ export interface Staff {
   updated_at: string;
 }
 
+export interface MeetingSlot {
+  id: string;
+  school_id: string;
+  teacher_id: string;
+  slot_date: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  is_booked: boolean;
+  is_deleted: boolean;
+  // Joined
+  teacher?: Staff;
+  booking?: MeetingBooking;
+}
+
+export interface MeetingBooking {
+  id: string;
+  slot_id: string;
+  school_id: string;
+  student_id: string;
+  parent_name: string;
+  parent_phone: string;
+  notes: string | null;
+  status: 'confirmed' | 'cancelled' | 'completed';
+  reminder_sent: boolean;
+  created_at: string;
+  // Joined
+  slot?: MeetingSlot;
+  student?: Student;
+}
+
 export interface PayrollRecord {
   id: string;
   school_id: string;
