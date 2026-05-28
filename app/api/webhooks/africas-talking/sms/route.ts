@@ -33,6 +33,93 @@ export async function POST(request: NextRequest) {
     const data = JSON.parse(body);
     const supabase = createAdminClient();
 
+    // Handle inbound SMS (parent reply)
+    if (data.from && data.text && data.to) {
+      const senderPhone = data.from;
+      const messageText = data.text;
+
+      // Find student by parent_phone to get school_id
+      const { data: students } = await supabase
+        .from("students")
+        .select("id, school_id, parent_name")
+        .eq("parent_phone", senderPhone)
+        .eq("is_deleted", false)
+        .limit(1);
+
+      if (students && students.length > 0) {
+        const student = students[0];
+        const schoolId = student.school_id;
+        const studentId = student.id;
+
+        // Find or create thread (upsert)
+        let threadId: string;
+        const { data: existingThread } = await supabase
+          .from("message_threads")
+          .select("id")
+          .eq("school_id", schoolId)
+          .eq("parent_phone", senderPhone)
+          .single();
+
+        if (existingThread) {
+          threadId = existingThread.id;
+          await supabase
+            .from("message_threads")
+            .update({ last_message_at: new Date().toISOString(), is_read: false, student_id: studentId })
+            .eq("id", threadId);
+        } else {
+          const { data: newThread } = await supabase
+            .from("message_threads")
+            .insert({
+              school_id: schoolId,
+              parent_phone: senderPhone,
+              student_id: studentId,
+            })
+            .select("id")
+            .single();
+          threadId = newThread!.id;
+        }
+
+        // Insert inbound message
+        await supabase.from("thread_messages").insert({
+          thread_id: threadId,
+          school_id: schoolId,
+          direction: "inbound",
+          body: messageText,
+          sender_name: student.parent_name || null,
+          at_message_id: data.id || null,
+          status: "delivered",
+        });
+
+        // Notify admins (SCHOOL_ADMIN and BURSAR)
+        const { data: admins } = await supabase
+          .from("users")
+          .select("id")
+          .eq("school_id", schoolId)
+          .in("role", ["SCHOOL_ADMIN", "BURSAR"])
+          .eq("is_deleted", false);
+
+        if (admins) {
+          const preview = messageText.length > 50 ? messageText.slice(0, 50) + "..." : messageText;
+          for (const admin of admins) {
+            await supabase.from("in_app_notifications").insert({
+              school_id: schoolId,
+              recipient_user_id: admin.id,
+              title: `New message from ${student.parent_name || senderPhone}`,
+              body: preview,
+              type: "info",
+              related_entity_type: "message_thread",
+              related_entity_id: threadId,
+            });
+          }
+        }
+
+        return Response.json({ status: "ok" });
+      }
+
+      // No student found — still return ok
+      return Response.json({ status: "ok", note: "no student match" });
+    }
+
     // Africa's Talking delivers SMS status callbacks with messageId and status
     if (data.id) {
       const statusMap: Record<string, string> = {
