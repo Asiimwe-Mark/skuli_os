@@ -14,20 +14,7 @@ export async function GET() {
     const schoolId = requireSchool(ctx);
     requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR"]);
 
-    const { data, error } = await ctx.supabase
-      .from("fee_discounts")
-      .select(`
-        *,
-        student_discounts!inner(count)
-      `)
-      .eq("school_id", schoolId)
-      .eq("is_deleted", false)
-      .order("created_at", { ascending: false });
-
-    if (error) return errorResponse(error.message, 500);
-
-    // Fetch student counts separately (Supabase join count can be unreliable)
-    const { data: discounts } = await ctx.supabase
+    const { data: discounts, error } = await ctx.supabase
       .from("fee_discounts")
       .select("*")
       .eq("school_id", schoolId)
