@@ -56,6 +56,9 @@ import {
   Clock,
   Wallet,
   Send,
+  ShieldAlert,
+  FileText,
+  MessageSquare,
 } from "lucide-react";
 import type {
   Student,
@@ -69,6 +72,7 @@ import type {
   AcademicYear,
   Subject,
 } from "@/types";
+import { DisciplineTab } from "./discipline-tab";
 
 const fadeInUp = {
   initial: { opacity: 0, y: 20 },
@@ -665,6 +669,7 @@ export default function StudentProfilePage() {
             <TabsTrigger value="fees">Fees</TabsTrigger>
             <TabsTrigger value="academic">Academic</TabsTrigger>
             <TabsTrigger value="attendance">Attendance</TabsTrigger>
+            <TabsTrigger value="discipline">Discipline</TabsTrigger>
             {canEditStudents && (
               <TabsTrigger value="edit">Edit</TabsTrigger>
             )}
@@ -1212,6 +1217,11 @@ export default function StudentProfilePage() {
             </Card>
           </TabsContent>
 
+          {/* ===== TAB: DISCIPLINE ===== */}
+          <TabsContent value="discipline">
+            <DisciplineTab studentId={student.id} schoolId={schoolId} canEdit={canEditStudents} />
+          </TabsContent>
+
           {/* ===== TAB: EDIT ===== */}
           {canEditStudents && (
             <TabsContent value="edit">
@@ -1507,6 +1517,6 @@ export default function StudentProfilePage() {
         requireTyping={student.full_name}
         onConfirm={handleDelete}
       />
-    </div>
+   <div/>
   );
 }
