@@ -38,6 +38,7 @@ import {
   UserCog,
   Key,
   Bell,
+  TrendingDown,
   type LucideIcon,
 } from "lucide-react";
 import { createBrowserClient } from "@/lib/supabase/client";
@@ -63,6 +64,8 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Fee Structure", href: "/dashboard/fees/structure", icon: CreditCard },
       { label: "Discounts", href: "/dashboard/fees/discounts", icon: CreditCard },
+      { label: "Expenses", href: "/dashboard/fees/expenses", icon: TrendingDown },
+      { label: "Categories", href: "/dashboard/fees/expenses/categories", icon: CreditCard },
       { label: "Fee Accounts", href: "/dashboard/fees/accounts", icon: FileText },
       { label: "Payments", href: "/dashboard/fees/payments", icon: Receipt },
       { label: "Defaulters", href: "/dashboard/fees/defaulters", icon: AlertTriangle },
