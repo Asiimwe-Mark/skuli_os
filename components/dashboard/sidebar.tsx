@@ -103,8 +103,9 @@ const NAV_ITEMS: NavItem[] = [
     icon: MessageSquare,
     roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
     children: [
+      { label: "Inbox", href: "/dashboard/communication/inbox", icon: Inbox },
       { label: "Send Message", href: "/dashboard/communication/compose", icon: Send },
-      { label: "SMS Logs", href: "/dashboard/communication/logs", icon: Inbox },
+      { label: "SMS Logs", href: "/dashboard/communication/logs", icon: FileText },
       { label: "Templates", href: "/dashboard/communication/templates", icon: FileStack },
     ],
   },
