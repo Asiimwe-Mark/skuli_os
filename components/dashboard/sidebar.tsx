@@ -62,10 +62,13 @@ const NAV_ITEMS: NavItem[] = [
     roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
     children: [
       { label: "Fee Structure", href: "/dashboard/fees/structure", icon: CreditCard },
+      { label: "Discounts", href: "/dashboard/fees/discounts", icon: CreditCard },
       { label: "Fee Accounts", href: "/dashboard/fees/accounts", icon: FileText },
       { label: "Payments", href: "/dashboard/fees/payments", icon: Receipt },
       { label: "Defaulters", href: "/dashboard/fees/defaulters", icon: AlertTriangle },
       { label: "Reports", href: "/dashboard/fees/reports", icon: BarChart3 },
+      { label: "Statements", href: "/dashboard/fees/statements", icon: FileText },
+      { label: "Receipts", href: "/dashboard/fees/receipts", icon: Receipt },
     ],
   },
   {
@@ -87,6 +90,8 @@ const NAV_ITEMS: NavItem[] = [
       { label: "Marks Entry", href: "/dashboard/academics/marks", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"] },
       { label: "Review Marks", href: "/dashboard/academics/marks/review", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
       { label: "Report Cards", href: "/dashboard/academics/report-cards", icon: FileText, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
+      { label: "Timetable", href: "/dashboard/academics/timetable", icon: CalendarCheck, roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"] },
+      { label: "Calendar", href: "/dashboard/academics/calendar", icon: CalendarCheck, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
     ],
   },
   {
