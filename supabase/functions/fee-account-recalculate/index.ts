@@ -1,5 +1,5 @@
 // Supabase Edge Function: fee-account-recalculate
-// Triggered on fee_payment insert/update — recalculates fee_account totals
+// Calls the recalculate_fee_account() DB function which handles discounts
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -19,73 +19,22 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
 
-    // Get the fee account
-    const { data: account, error: accountError } = await supabase
+    // Call the DB function which handles discount subtraction
+    const { error } = await supabase.rpc("recalculate_fee_account", {
+      p_account_id: fee_account_id,
+    });
+
+    if (error) throw error;
+
+    // Fetch the updated account to return
+    const { data: account } = await supabase
       .from("fee_accounts")
-      .select("id, student_id, term_id, school_id")
+      .select("total_expected, total_paid, balance, status")
       .eq("id", fee_account_id)
       .single();
 
-    if (accountError || !account) {
-      return new Response(
-        JSON.stringify({ error: "Fee account not found" }),
-        { status: 404 }
-      );
-    }
-
-    // Get fee structures for this term
-    const { data: structures } = await supabase
-      .from("fee_structures")
-      .select("amount, is_mandatory")
-      .eq("school_id", account.school_id)
-      .eq("term_id", account.term_id)
-      .eq("is_deleted", false);
-
-    const totalExpected =
-      structures?.reduce((sum, s) => sum + Number(s.amount), 0) || 0;
-
-    // Get confirmed payments
-    const { data: payments } = await supabase
-      .from("fee_payments")
-      .select("amount")
-      .eq("fee_account_id", fee_account_id)
-      .eq("status", "confirmed");
-
-    const totalPaid =
-      payments?.reduce((sum, p) => sum + Number(p.amount), 0) || 0;
-
-    const balance = totalExpected - totalPaid;
-
-    let status: string;
-    if (balance < 0) {
-      status = "overpaid";
-    } else if (balance === 0) {
-      status = "paid";
-    } else if (totalPaid > 0) {
-      status = "partial";
-    } else {
-      status = "unpaid";
-    }
-
-    // Update the fee account
-    const { error: updateError } = await supabase
-      .from("fee_accounts")
-      .update({
-        total_expected: totalExpected,
-        total_paid: totalPaid,
-        balance,
-        status,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", fee_account_id);
-
-    if (updateError) throw updateError;
-
     return new Response(
-      JSON.stringify({
-        success: true,
-        data: { total_expected: totalExpected, total_paid: totalPaid, balance, status },
-      }),
+      JSON.stringify({ success: true, data: account }),
       { headers: { "Content-Type": "application/json" } }
     );
   } catch (err) {
