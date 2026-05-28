@@ -108,7 +108,7 @@ export default function BillingPage() {
       toast({ title: "Payment successful!", description: "Your plan has been upgraded.", variant: "success" });
       // Refresh school data
       if (school) {
-        supabase.from("schools").select("*").eq("id", school.id).single().then(({ data }) => {
+        supabase.from("schools").select("*").eq("id", school.id).single().then(({ data }: { data: any }) => {
           if (data) setSchool(data);
         });
       }

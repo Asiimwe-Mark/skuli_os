@@ -298,30 +298,26 @@ export default function EnrollPage() {
     setSaving(true);
 
     try {
-      const normalizedPhone = normalizePhone(parent.parent_phone);
-
-      // Insert student
-      const { data: student, error: studentError } = await supabase
-        .from("students")
-        .insert({
-          school_id: school.id,
-          admission_number: academic.admission_number,
+      // Create student via API (handles enrollment + fee account creation)
+      const res = await fetch("/api/students", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           full_name: personal.full_name.trim(),
-          date_of_birth: personal.date_of_birth || null,
-          gender: personal.gender || null,
-          photo_url: null,
+          date_of_birth: personal.date_of_birth || undefined,
+          gender: personal.gender || undefined,
           parent_name: parent.parent_name.trim(),
-          parent_phone: normalizedPhone,
-          parent_email: parent.parent_email.trim() || null,
-          parent_nid: parent.parent_nid.trim() || null,
+          parent_phone: parent.parent_phone,
+          parent_email: parent.parent_email.trim() || undefined,
+          parent_nid: parent.parent_nid.trim() || undefined,
           current_class_id: academic.class_id,
           enrollment_date: academic.enrollment_date,
-          status: "active",
-        })
-        .select()
-        .single();
-
-      if (studentError) throw studentError;
+          admission_number: academic.auto_generate ? undefined : academic.admission_number,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Enrollment failed");
+      const student = result.data || result;
 
       // Upload photo if selected
       if (photoFile) {
@@ -329,47 +325,6 @@ export default function EnrollPage() {
         if (photoUrl) {
           await supabase.from("students").update({ photo_url: photoUrl }).eq("id", student.id);
           student.photo_url = photoUrl;
-        }
-      }
-
-      // Create class enrollment for current term
-      if (currentTerm && currentAcademicYear) {
-        const { error: enrollError } = await supabase
-          .from("class_enrollments")
-          .insert({
-            student_id: student.id,
-            class_id: academic.class_id,
-            term_id: currentTerm.id,
-            academic_year_id: currentAcademicYear.id,
-          });
-
-        if (enrollError) throw enrollError;
-      }
-
-      // Optionally create fee account
-      if (currentTerm && currentAcademicYear) {
-        const { data: feeStructures } = await supabase
-          .from("fee_structures")
-          .select("amount")
-          .eq("school_id", school.id)
-          .eq("term_id", currentTerm.id)
-          .or(`class_id.eq.${academic.class_id},class_id.is.null`)
-          .eq("is_mandatory", true);
-
-        const totalExpected =
-          (feeStructures || []).reduce((sum: number, fs: { amount: number }) => sum + fs.amount, 0) || 0;
-
-        if (totalExpected > 0) {
-          await supabase.from("fee_accounts").insert({
-            school_id: school.id,
-            student_id: student.id,
-            term_id: currentTerm.id,
-            academic_year_id: currentAcademicYear.id,
-            total_expected: totalExpected,
-            total_paid: 0,
-            balance: totalExpected,
-            status: "unpaid",
-          });
         }
       }
 

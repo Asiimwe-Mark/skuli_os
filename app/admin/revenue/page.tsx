@@ -23,6 +23,7 @@ interface School {
   name: string;
   subscription_plan: string;
   subscription_status: string;
+  created_at: string;
 }
 
 interface Invoice {

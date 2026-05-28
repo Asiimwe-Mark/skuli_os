@@ -393,7 +393,7 @@ export default function DashboardPage() {
         .eq("date", today);
 
       if (todayAttendance) {
-        const present = todayAttendance.filter((r) => r.status === "present").length;
+        const present = todayAttendance.filter((r: { status: string }) => r.status === "present").length;
         setPresentToday(present);
         setTotalStudentsToday(todayAttendance.length);
       }
@@ -417,7 +417,7 @@ export default function DashboardPage() {
 
         if (termPayments && termPayments.length > 0) {
           const weekMap = new Map<string, number>();
-          termPayments.forEach((p) => {
+          termPayments.forEach((p: { payment_date: string; amount: number }) => {
             const d = new Date(p.payment_date);
             const weekStart = new Date(d);
             weekStart.setDate(d.getDate() - d.getDay());
@@ -443,7 +443,7 @@ export default function DashboardPage() {
 
         if (methodPayments) {
           const methodMap = new Map<string, number>();
-          methodPayments.forEach((p) => {
+          methodPayments.forEach((p: { payment_method: string | null; amount: number }) => {
             const method = p.payment_method ?? "other";
             methodMap.set(method, (methodMap.get(method) ?? 0) + Number(p.amount));
           });
@@ -648,7 +648,7 @@ export default function DashboardPage() {
                     <XAxis dataKey="week" tick={{ fontSize: 11, fill: "rgba(255,255,255,0.5)" }} />
                     <YAxis tick={{ fontSize: 11, fill: "rgba(255,255,255,0.5)" }} tickFormatter={(v) => `${(v / 1000000).toFixed(1)}M`} />
                     <Tooltip
-                      formatter={(value: number) => [formatUGX(value), "Amount"]}
+                      formatter={(value) => [formatUGX(Number(value)), "Amount"]}
                       contentStyle={{ background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
                       labelStyle={{ color: "rgba(255,255,255,0.7)" }}
                       itemStyle={{ color: "#f59e0b" }}
@@ -683,7 +683,7 @@ export default function DashboardPage() {
                       ))}
                     </Pie>
                     <Tooltip
-                      formatter={(value: number) => formatUGX(value)}
+                      formatter={(value) => formatUGX(Number(value))}
                       contentStyle={{ background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
                     />
                     <Legend

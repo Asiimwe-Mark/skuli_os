@@ -1,6 +1,7 @@
 import { resend } from './client';
 import { getWelcomeEmailHtml } from './templates/welcome';
 import { getPaymentReceiptEmailHtml } from './templates/payment-receipt';
+import { getInviteEmailHtml } from './templates/invite';
 
 export interface PaymentReceiptData {
   studentName: string;
@@ -16,13 +17,31 @@ export async function sendWelcomeEmail(
   to: string,
   schoolName: string,
   adminName: string,
-  loginUrl: string
+  loginUrl: string,
+  credentials?: { email: string; password: string }
 ): Promise<void> {
   await resend.emails.send({
     from: 'SKULI <noreply@skuli.app>',
     to,
-    subject: 'Welcome to SKULI — Your School Dashboard is Ready',
-    html: getWelcomeEmailHtml(schoolName, adminName, loginUrl),
+    subject: credentials
+      ? `You're invited to ${schoolName} on SKULI`
+      : 'Welcome to SKULI — Your School Dashboard is Ready',
+    html: getWelcomeEmailHtml(schoolName, adminName, loginUrl, credentials),
+  });
+}
+
+export async function sendInviteEmail(
+  to: string,
+  schoolName: string,
+  userName: string,
+  loginUrl: string,
+  tempPassword: string
+): Promise<void> {
+  await resend.emails.send({
+    from: 'SKULI <noreply@skuli.app>',
+    to,
+    subject: `You're Invited to ${schoolName} on SKULI`,
+    html: getInviteEmailHtml(schoolName, userName, loginUrl, to, tempPassword),
   });
 }
 

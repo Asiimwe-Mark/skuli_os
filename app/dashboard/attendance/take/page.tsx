@@ -192,29 +192,26 @@ export default function TakeAttendancePage() {
       entries.forEach(([id]) => progress.set(id, "saving"));
       setSubmitProgress(new Map(progress));
 
-      // Delete existing records for this class/date
-      await supabase
-        .from("attendance_records")
-        .delete()
-        .eq("class_id", selectedClassId)
-        .eq("date", selectedDate);
-
-      // Insert all records
-      const rows = entries.map(([studentId, status]) => ({
-        school_id: school.id,
+      const attendanceRecords = entries.map(([studentId, status]) => ({
         student_id: studentId,
-        class_id: selectedClassId,
-        date: selectedDate,
         status,
       }));
 
-      const { error } = await supabase.from("attendance_records").insert(rows);
-
-      if (error) {
+      const res = await fetch("/api/attendance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          class_id: selectedClassId,
+          date: selectedDate,
+          records: attendanceRecords,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) {
         // Mark all as error
         entries.forEach(([id]) => progress.set(id, "error"));
         setSubmitProgress(new Map(progress));
-        throw error;
+        throw new Error(result.error || "Failed to save attendance");
       }
 
       // Mark all as saved
@@ -230,7 +227,7 @@ export default function TakeAttendancePage() {
       });
       setAbsentStudents(absent);
 
-      return { count: rows.length, absentCount: absent.length };
+      return { count: entries.length, absentCount: absent.length };
     },
     onSuccess: (result) => {
       toast({
@@ -463,7 +460,7 @@ export default function TakeAttendancePage() {
                   </p>
                   <p className="text-xs text-foreground/50">
                     {formatDate(selectedDate)} &middot;{" "}
-                    {classes.find((c) => c.id === selectedClassId)?.name}
+                    {classes.find((c: { id: string; name: string }) => c.id === selectedClassId)?.name}
                   </p>
                 </div>
                 <Button

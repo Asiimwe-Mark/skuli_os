@@ -164,7 +164,7 @@ function AttendanceCalendar({ attendance }: { attendance: AttendanceRecord[] }) 
         }}
         components={{
           Day: (props) => {
-            const { date, ...divProps } = props as { date: Date; [key: string]: unknown };
+            const { date, ...divProps } = props as unknown as { date: Date; [key: string]: unknown };
             return (
               <div
                 {...divProps}
@@ -519,22 +519,23 @@ export default function StudentProfilePage() {
         throw new Error("Invalid Uganda phone number.");
       }
 
-      const { error } = await supabase
-        .from("students")
-        .update({
+      const res = await fetch(`/api/students/${studentId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           full_name: editForm.full_name.trim(),
-          date_of_birth: editForm.date_of_birth || null,
-          gender: editForm.gender || null,
+          date_of_birth: editForm.date_of_birth || undefined,
+          gender: editForm.gender || undefined,
           parent_name: editForm.parent_name.trim(),
           parent_phone: normalizePhone(editForm.parent_phone),
-          parent_email: editForm.parent_email.trim() || null,
-          current_class_id: editForm.current_class_id || null,
-          status: editForm.status as Student["status"],
+          parent_email: editForm.parent_email.trim() || undefined,
+          current_class_id: editForm.current_class_id || undefined,
+          status: editForm.status,
           exit_date: (editForm.status === "left" || editForm.status === "graduated") ? (editForm.exit_date || null) : null,
-        })
-        .eq("id", studentId);
-
-      if (error) throw error;
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to update student");
 
       toast({
         title: "Updated",
@@ -556,12 +557,10 @@ export default function StudentProfilePage() {
   }
 
   async function handleDelete() {
-    const { error } = await supabase
-      .from("students")
-      .update({ is_deleted: true })
-      .eq("id", studentId);
+    const res = await fetch(`/api/students/${studentId}`, { method: "DELETE" });
+    const result = await res.json();
 
-    if (error) {
+    if (!res.ok) {
       toast({
         title: "Error",
         description: "Failed to delete student.",

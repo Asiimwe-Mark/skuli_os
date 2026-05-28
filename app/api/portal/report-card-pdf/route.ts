@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { ReportCardPDF } from "@/lib/pdf/report-card";
-import { renderToBuffer } from "@react-pdf/renderer";
+import { Document, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
 
 export async function GET(request: NextRequest) {
@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
         .lte("date", termDates.end_date);
 
       daysOpen = attRecords?.length || 0;
-      daysPresent = (attRecords || []).filter((r) => r.status === "present" || r.status === "late").length;
+      daysPresent = (attRecords || []).filter((r: { status: string }) => r.status === "present" || r.status === "late").length;
     }
 
     const studentData = student as unknown as {
@@ -141,10 +141,10 @@ export async function GET(request: NextRequest) {
     };
 
     const buffer = await renderToBuffer(
-      React.createElement(ReportCardPDF, pdfData)
+      React.createElement(Document, null, React.createElement(ReportCardPDF, pdfData))
     );
 
-    return new Response(buffer, {
+    return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="report-card-${studentData.admission_number}-${termData.name}.pdf"`,

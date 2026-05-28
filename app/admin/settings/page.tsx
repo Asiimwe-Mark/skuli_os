@@ -89,7 +89,7 @@ export default function AdminSettingsPage() {
         .eq("is_active", true);
 
       if (admins && admins.length > 0) {
-        const notifications = admins.map((admin) => ({
+        const notifications = admins.map((admin: { school_id: string; id: string }) => ({
           school_id: admin.school_id,
           recipient_user_id: admin.id,
           title: "Platform Announcement",

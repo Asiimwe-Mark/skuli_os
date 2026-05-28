@@ -247,78 +247,24 @@ export default function FeeStructurePage() {
 
   const generateMutation = useMutation({
     mutationFn: async () => {
-      if (!school?.id || !selectedTermId) throw new Error("Missing school or term");
+      if (!selectedTermId) throw new Error("Select a term first");
 
-      const { data: enrollments, error: enrollErr } = await supabase
-        .from("class_enrollments")
-        .select("student_id, class_id, academic_year_id")
-        .eq("term_id", selectedTermId);
-      if (enrollErr) throw enrollErr;
-      if (!enrollments?.length) throw new Error("No enrolled students found");
-
-      const { data: structures, error: structErr } = await supabase
-        .from("fee_structures")
-        .select("*")
-        .eq("term_id", selectedTermId)
-        .eq("school_id", school.id)
-        .eq("is_deleted", false);
-      if (structErr) throw structErr;
-      if (!structures?.length) throw new Error("No fee structures defined for this term");
-
-      let created = 0;
-      let updated = 0;
-
-      for (const enrollment of enrollments) {
-        const applicable = (structures as Array<Record<string, unknown>>).filter(
-          (s: Record<string, unknown>) => s.class_id === null || s.class_id === enrollment.class_id
-        );
-        const totalExpected = applicable.reduce((sum: number, f: Record<string, number>) => sum + f.amount, 0);
-        if (totalExpected <= 0) continue;
-
-        const { data: existing } = await supabase
-          .from("fee_accounts")
-          .select("id, total_paid")
-          .eq("student_id", enrollment.student_id)
-          .eq("term_id", selectedTermId)
-          .maybeSingle();
-
-        if (existing) {
-          const paid = existing.total_paid ?? 0;
-          const balance = totalExpected - paid;
-          const status =
-            balance < 0 ? "overpaid" : balance === 0 ? "paid" : paid > 0 ? "partial" : "unpaid";
-          const { error } = await supabase
-            .from("fee_accounts")
-            .update({
-              total_expected: totalExpected,
-              balance,
-              status,
-              updated_at: new Date().toISOString(),
-            })
-            .eq("id", existing.id);
-          if (!error) updated++;
-        } else {
-          const { error } = await supabase.from("fee_accounts").insert({
-            school_id: school.id,
-            student_id: enrollment.student_id,
-            term_id: selectedTermId,
-            academic_year_id: enrollment.academic_year_id,
-            total_expected: totalExpected,
-            total_paid: 0,
-            balance: totalExpected,
-            status: "unpaid",
-          });
-          if (!error) created++;
-        }
-      }
-
-      return { created, updated, total: enrollments.length };
+      const res = await fetch("/api/fees/generate-accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          term_id: selectedTermId,
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to generate accounts");
+      return result;
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["fee-accounts"] });
       toast({
         title: "Fee accounts generated",
-        description: `${result.created} created, ${result.updated} updated for ${result.total} students.`,
+        description: `${result.created} created, ${result.skipped} skipped.`,
       });
       setGenerateDialogOpen(false);
     },

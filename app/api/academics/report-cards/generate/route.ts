@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
       .eq("class_id", class_id)
       .eq("term_id", term_id)
       .in("student_id", studentIds)
-      .eq("is_deleted", false) as unknown as { data: Pick<MarkRow, "student_id" | "subject_id" | "score" | "max_score">[] | null };
+      .eq("is_deleted", false) as unknown as { data: Pick<MarkRow, "student_id" | "subject_id" | "score" | "max_score" | "exam_type">[] | null };
 
     if (!allMarks || allMarks.length === 0) {
       return errorResponse("No marks found for this class and term", 400);

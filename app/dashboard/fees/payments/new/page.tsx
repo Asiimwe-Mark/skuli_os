@@ -49,7 +49,6 @@ export default function RecordPaymentPage() {
   const router = useRouter();
   const school = useSchoolStore((s) => s.school);
   const currentTerm = useSchoolStore((s) => s.currentTerm);
-  const user = useSchoolStore((s) => s.user);
   const { toast } = useToast();
   const supabase = createClient();
 
@@ -160,43 +159,26 @@ export default function RecordPaymentPage() {
 
   const submitMutation = useMutation({
     mutationFn: async (data: RecordPaymentFormData) => {
-      if (!school?.id || !selectedStudent) throw new Error("Missing data");
+      if (!selectedStudent) throw new Error("Missing data");
 
-      const paymentData = {
-        school_id: school.id,
-        fee_account_id: selectedStudent.fee_account_id,
-        student_id: data.student_id,
-        amount: data.amount,
-        payment_method: data.payment_method,
-        mobile_money_provider:
-          data.payment_method === "mobile_money" ? data.mobile_money_provider : null,
-        phone_used:
-          data.payment_method === "mobile_money" && data.phone_used
-            ? normalizePhone(data.phone_used)
-            : null,
-        mobile_money_transaction_id:
-          data.payment_method === "mobile_money"
-            ? data.mobile_money_transaction_id || null
-            : null,
-        received_by_user_id: user?.id || null,
-        payment_date: data.payment_date,
-        notes: data.notes || null,
-        status: "confirmed" as const,
-      };
-
-      const { data: result, error } = await supabase
-        .from("fee_payments")
-        .insert(paymentData)
-        .select("receipt_number")
-        .single();
-      if (error) throw error;
-
-      // Recalculate fee account
-      await supabase.rpc("recalculate_fee_account", {
-        account_id: selectedStudent.fee_account_id,
+      const res = await fetch("/api/fees/payments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          student_id: data.student_id,
+          amount: data.amount,
+          payment_method: data.payment_method,
+          mobile_money_provider: data.payment_method === "mobile_money" ? data.mobile_money_provider : null,
+          phone_used: data.payment_method === "mobile_money" && data.phone_used ? normalizePhone(data.phone_used) : null,
+          mobile_money_transaction_id: data.payment_method === "mobile_money" ? data.mobile_money_transaction_id || null : null,
+          payment_date: data.payment_date,
+          notes: data.notes || null,
+          fee_account_id: selectedStudent.fee_account_id,
+        }),
       });
-
-      return result?.receipt_number || "";
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to record payment");
+      return result.receipt_number || result.data?.receipt_number || "";
     },
     onSuccess: (receipt) => {
       setReceiptNumber(receipt);

@@ -121,17 +121,9 @@ export default function FeeAccountsPage() {
   const { data: accounts = [], isLoading } = useQuery({
     queryKey: ["fee-accounts", school?.id, currentTerm?.id],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("fee_accounts")
-        .select(
-          `id, student_id, total_expected, total_paid, balance, status,
-           student:students(id, full_name, admission_number, parent_phone,
-             current_class:classes(id, name))`
-        )
-        .eq("school_id", school!.id)
-        .eq("term_id", currentTerm!.id)
-        .eq("is_deleted", false);
-      if (error) throw error;
+      const res = await fetch(`/api/fees/accounts?term_id=${currentTerm!.id}`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to load fee accounts");
       interface RawFeeAccountRow {
         id: string;
         student_id: string;
@@ -142,7 +134,7 @@ export default function FeeAccountsPage() {
         student?: FeeAccountRow['student'] | FeeAccountRow['student'][];
         student_current_class?: { id: string; name: string } | { id: string; name: string }[];
       }
-      return ((data ?? []) as unknown as RawFeeAccountRow[]).map((a) => ({
+      return ((json.data?.accounts || json.accounts || []) as unknown as RawFeeAccountRow[]).map((a) => ({
         ...a,
         student: Array.isArray(a.student) ? a.student[0] : a.student,
         student_current_class: Array.isArray(a.student_current_class)

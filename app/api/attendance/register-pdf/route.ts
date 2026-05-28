@@ -7,7 +7,7 @@ import {
 } from "@/lib/api-helpers";
 import { AttendanceRegisterPDF } from "@/lib/pdf/attendance-register";
 import type { AttendanceRegisterData } from "@/lib/pdf/attendance-register";
-import { renderToBuffer } from "@react-pdf/renderer";
+import { Document, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
 
 export async function GET(request: NextRequest) {
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
 
     // Build students array
     type StudentJoin = { id: string; full_name: string; admission_number: string };
-    const students = enrollments.map((e) => {
+    const students = enrollments.map((e: { student_id: string; students: unknown }) => {
       const s = e.students as unknown as StudentJoin;
       return {
         admission_number: s?.admission_number || "",
@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
     });
 
     // Sort by admission number
-    students.sort((a, b) => a.admission_number.localeCompare(b.admission_number));
+    students.sort((a: { admission_number: string }, b: { admission_number: string }) => a.admission_number.localeCompare(b.admission_number));
 
     const teacherName = (cls.class_teacher as unknown as { full_name?: string })?.full_name || "";
 
@@ -109,7 +109,7 @@ export async function GET(request: NextRequest) {
     };
 
     const buffer = await renderToBuffer(
-      React.createElement(AttendanceRegisterPDF, { data })
+      React.createElement(Document, null, React.createElement(AttendanceRegisterPDF, { data }))
     );
 
     const monthNames = [
@@ -117,7 +117,7 @@ export async function GET(request: NextRequest) {
       "July", "August", "September", "October", "November", "December",
     ];
 
-    return new Response(buffer, {
+    return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="attendance-register-${cls.name}-${monthNames[month - 1]}-${year}.pdf"`,

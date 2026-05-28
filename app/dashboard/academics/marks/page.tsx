@@ -231,37 +231,29 @@ export default function MarksEntryPage() {
         );
       }
 
-      const userId = (await supabase.auth.getUser()).data.user?.id;
-
-      for (const m of validMarks) {
-        // Skip approved marks — they are locked
-        if (m.review_status === "approved") continue;
-
-        const score = parseFloat(m.score);
-        const markData = {
-          school_id: school.id,
+      const marksPayload = validMarks
+        .filter((m) => m.review_status !== "approved")
+        .map((m) => ({
           student_id: m.student_id,
-          subject_id: selectedSubject,
-          class_id: selectedClass,
-          term_id: term.id,
-          academic_year_id: term.academic_year_id,
-          exam_type: selectedExamType,
-          score,
+          score: parseFloat(m.score),
           max_score: 100,
           remarks: m.remarks || null,
-          entered_by: userId,
-          review_status: submitFinal ? "submitted" : "draft",
-        };
-        if (m.existing_id) {
-          await supabase.from("marks").update(markData).eq("id", m.existing_id);
-        } else {
-          const { data } = await supabase
-            .from("marks")
-            .insert(markData)
-            .select("id")
-            .single();
-          if (data) m.existing_id = data.id;
-        }
+        }));
+
+      if (marksPayload.length > 0) {
+        const res = await fetch("/api/academics/marks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            subject_id: selectedSubject,
+            class_id: selectedClass,
+            term_id: term.id,
+            exam_type: selectedExamType,
+            marks: marksPayload,
+          }),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "Failed to save marks");
       }
       return { count: validMarks.length, submitFinal };
     },

@@ -283,7 +283,7 @@ export default function AdminDashboardPage() {
                 <Tooltip
                   contentStyle={{ background: "#1A1A2E", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8 }}
                   labelStyle={{ color: "rgba(255,255,255,0.6)" }}
-                  formatter={(value: number) => [formatUGX(value), "Revenue"]}
+                  formatter={(value) => [formatUGX(Number(value)), "Revenue"]}
                 />
                 <Line type="monotone" dataKey="revenue" stroke="#f59e0b" strokeWidth={2} dot={{ fill: "#f59e0b", r: 4 }} />
               </LineChart>

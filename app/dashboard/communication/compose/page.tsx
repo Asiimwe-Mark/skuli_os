@@ -513,7 +513,7 @@ export default function ComposePage() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
-                {scheduledAnnouncements.map((a) => (
+                {scheduledAnnouncements.map((a: { id: string; title: string; scheduled_at: string; scheduled_status: string }) => (
                   <div
                     key={a.id}
                     className="flex items-center justify-between p-2 rounded-lg bg-navy-700/30 border border-navy-600"

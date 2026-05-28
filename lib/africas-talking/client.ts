@@ -22,8 +22,9 @@ export async function getSchoolCredentials(
 
   if (error || !school) return null;
 
-  const encUsername = school.africas_talking_username_enc as string | null;
-  const encApiKey = school.africas_talking_api_key_enc as string | null;
+  const schoolData = school as unknown as { africas_talking_username_enc: string | null; africas_talking_api_key_enc: string | null };
+  const encUsername = schoolData.africas_talking_username_enc;
+  const encApiKey = schoolData.africas_talking_api_key_enc;
 
   if (!encUsername || !encApiKey) return null;
 
@@ -31,11 +32,11 @@ export async function getSchoolCredentials(
   if (!vaultKey) return null;
 
   try {
-    const { data: decryptedUsername } = await supabase.rpc('decrypt_secret', {
+    const { data: decryptedUsername } = await (supabase.rpc as Function)('decrypt_secret', {
       encrypted: encUsername,
       key: vaultKey,
     });
-    const { data: decryptedApiKey } = await supabase.rpc('decrypt_secret', {
+    const { data: decryptedApiKey } = await (supabase.rpc as Function)('decrypt_secret', {
       encrypted: encApiKey,
       key: vaultKey,
     });
@@ -129,6 +130,6 @@ export async function initiateMobileMoney(
  */
 export async function fetchApplicationData(credentials?: ATCredentials) {
   const client = getAfricasTalkingClient(credentials);
-  const application = client.APPLICATION;
+  const application = (client as any).APPLICATION;
   return application.fetchApplicationData();
 }

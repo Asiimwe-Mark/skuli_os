@@ -21,8 +21,10 @@ export default function AdminSchoolsPage() {
   const { data: schools = [], isLoading } = useQuery<SchoolRow[]>({
     queryKey: ["admin-schools"],
     queryFn: async () => {
-      const { data } = await supabase.from("schools").select("*").eq("is_deleted", false).order("created_at", { ascending: false });
-      return (data || []) as SchoolRow[];
+      const res = await fetch("/api/admin/schools");
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || "Failed to load schools");
+      return (json.data?.schools || json.schools || []) as SchoolRow[];
     },
   });
 

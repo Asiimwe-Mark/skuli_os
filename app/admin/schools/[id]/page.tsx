@@ -157,12 +157,20 @@ export default function AdminSchoolDetailPage() {
     enabled: !!schoolId,
   });
 
+  async function adminSchoolPatch(updates: Record<string, unknown>) {
+    const res = await fetch("/api/admin/schools", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: schoolId, ...updates }),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || "Failed to update school");
+    return json;
+  }
+
   const suspendMutation = useMutation({
     mutationFn: async () => {
-      await supabase
-        .from("schools")
-        .update({ subscription_status: "cancelled" } as Record<string, unknown>)
-        .eq("id", schoolId);
+      await adminSchoolPatch({ subscription_status: "cancelled" });
       const { data: users } = await supabase
         .from("users")
         .select("id")
@@ -185,10 +193,7 @@ export default function AdminSchoolDetailPage() {
 
   const reactivateMutation = useMutation({
     mutationFn: async () => {
-      await supabase
-        .from("schools")
-        .update({ subscription_status: "active" } as Record<string, unknown>)
-        .eq("id", schoolId);
+      await adminSchoolPatch({ subscription_status: "active" });
       const { data: users } = await supabase
         .from("users")
         .select("id")
@@ -209,13 +214,10 @@ export default function AdminSchoolDetailPage() {
 
   const extendTrialMutation = useMutation({
     mutationFn: async () => {
-      await supabase
-        .from("schools")
-        .update({
-          trial_ends_at: new Date(trialDate).toISOString(),
-          subscription_status: "trial",
-        } as Record<string, unknown>)
-        .eq("id", schoolId);
+      await adminSchoolPatch({
+        trial_ends_at: new Date(trialDate).toISOString(),
+        subscription_status: "trial",
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-school", schoolId] });
@@ -228,13 +230,10 @@ export default function AdminSchoolDetailPage() {
     mutationFn: async () => {
       const maxStudents =
         newPlan === "starter" ? 200 : newPlan === "growth" ? 500 : 99999;
-      await supabase
-        .from("schools")
-        .update({
-          subscription_plan: newPlan,
-          max_students: maxStudents,
-        } as Record<string, unknown>)
-        .eq("id", schoolId);
+      await adminSchoolPatch({
+        subscription_plan: newPlan,
+        max_students: maxStudents,
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-school", schoolId] });

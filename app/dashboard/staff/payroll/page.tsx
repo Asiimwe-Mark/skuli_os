@@ -109,7 +109,7 @@ export default function PayrollPage() {
         .eq("year", selectedYear);
       if (error) throw error;
 
-      const recordMap = new Map((records || []).map((r: PayrollRecord) => [r.staff_id, r]));
+      const recordMap = new Map<string, PayrollRecord>((records || []).map((r: PayrollRecord) => [r.staff_id, r]));
 
       const rows: PayrollRow[] = staffList.map((staff) => {
         const existing = recordMap.get(staff.id);
@@ -119,9 +119,9 @@ export default function PayrollPage() {
           return {
             ...existing,
             staff,
-            editingAllowances: existing.allowances || {},
-            editingDeductions: existing.deductions || {},
-          };
+            editingAllowances: (existing.allowances || {}) as Record<string, number>,
+            editingDeductions: (existing.deductions || {}) as Record<string, number>,
+          } as PayrollRow;
         }
 
         return {
@@ -142,9 +142,9 @@ export default function PayrollPage() {
           created_at: "",
           updated_at: "",
           staff,
-          editingAllowances: {},
-          editingDeductions: {},
-        };
+          editingAllowances: {} as Record<string, number>,
+          editingDeductions: {} as Record<string, number>,
+        } as PayrollRow;
       });
 
       setPayrollRows(rows);
@@ -195,28 +195,16 @@ export default function PayrollPage() {
 
   const approveMutation = useMutation({
     mutationFn: async () => {
-      for (const row of payrollRows) {
-        const nssf = calcNSSF(row.basic_salary);
-        const record = {
-          school_id: school!.id,
-          staff_id: row.staff_id,
+      const res = await fetch("/api/staff/payroll/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
           month: selectedMonth,
           year: selectedYear,
-          basic_salary: row.basic_salary,
-          allowances: row.editingAllowances,
-          deductions: row.editingDeductions,
-          nssf_employee: nssf.employee,
-          nssf_employer: nssf.employer,
-          net_salary: row.net_salary,
-          payment_status: "pending" as const,
-        };
-
-        if (row.id) {
-          await supabase.from("payroll_records").update(record).eq("id", row.id);
-        } else {
-          await supabase.from("payroll_records").insert(record);
-        }
-      }
+        }),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || "Failed to generate payroll");
     },
     onSuccess: () => {
       toast({ title: "Payroll approved", description: `${payrollRows.length} records saved.`, variant: "success" });
@@ -259,9 +247,9 @@ export default function PayrollPage() {
     setPaymentModalOpen(true);
   };
 
-  const totalGross = payrollRows.reduce((s, r) => s + r.basic_salary, 0);
-  const totalNet = payrollRows.reduce((s, r) => s + r.net_salary, 0);
-  const totalNSSF = payrollRows.reduce((s, r) => s + calcNSSF(r.basic_salary).employee, 0);
+  const totalGross = payrollRows.reduce((s: number, r: PayrollRow) => s + r.basic_salary, 0);
+  const totalNet = payrollRows.reduce((s: number, r: PayrollRow) => s + r.net_salary, 0);
+  const totalNSSF = payrollRows.reduce((s: number, r: PayrollRow) => s + calcNSSF(r.basic_salary).employee, 0);
   const paidCount = payrollRows.filter((r) => r.payment_status === "paid").length;
 
   return (

@@ -180,8 +180,8 @@ export default function StudentsPage() {
       }
     }
 
-    const enriched: StudentRow[] = (data || []).map((s) => ({
-      ...s,
+    const enriched: StudentRow[] = (data || []).map((s: { id: string } & Record<string, unknown>) => ({
+      ...s as any,
       fee_account: feeMap[s.id] || null,
     }));
 

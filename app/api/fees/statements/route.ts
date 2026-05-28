@@ -7,7 +7,7 @@ import {
   errorResponse,
 } from "@/lib/api-helpers";
 import { FeeStatementPDF } from "@/lib/pdf/fee-statement";
-import { renderToBuffer } from "@react-pdf/renderer";
+import { Document, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
 
 const statementSchema = z.object({
@@ -90,9 +90,9 @@ export async function POST(request: NextRequest) {
       termsData.push({
         term_name: term?.name || "Term",
         academic_year: term?.academic_years?.name || "",
-        fee_items: (structures || []).map((s) => ({ name: s.name, amount: Number(s.amount) })),
+        fee_items: (structures || []).map((s: { name: string; amount: number }) => ({ name: s.name, amount: Number(s.amount) })),
         total_expected: Number(account.total_expected),
-        payments: (payments || []).map((p) => ({
+        payments: (payments || []).map((p: { payment_date: string; amount: number; payment_method: string; receipt_number: string | null }) => ({
           date: p.payment_date,
           amount: Number(p.amount),
           method: p.payment_method,
@@ -111,7 +111,7 @@ export async function POST(request: NextRequest) {
     };
 
     const pdfStream = renderToBuffer(
-      React.createElement(FeeStatementPDF, {
+      React.createElement(Document, null, React.createElement(FeeStatementPDF, {
         school: {
           name: school?.name || "School",
           address: school?.address || undefined,
@@ -125,12 +125,12 @@ export async function POST(request: NextRequest) {
         },
         terms: termsData,
         generated_date: new Date().toISOString().split("T")[0],
-      })
+      }))
     );
 
     const buffer = await pdfStream;
 
-    return new Response(buffer, {
+    return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="fee-statement-${studentData.admission_number}.pdf"`,

@@ -68,7 +68,8 @@ export default function StaffDirectoryPage() {
     setValue,
     formState: { errors },
   } = useForm<StaffFormData>({
-    resolver: zodResolver(staffSchema),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    resolver: zodResolver(staffSchema) as any,
   });
 
   const { data: staffList = [], isLoading } = useQuery({
@@ -89,19 +90,21 @@ export default function StaffDirectoryPage() {
     mutationFn: async (data: StaffFormData) => {
       const payload = { ...data, photo_url: photoUrl };
       if (editingStaff) {
-        const { error } = await supabase
-          .from("staff")
-          .update(payload)
-          .eq("id", editingStaff.id);
-        if (error) throw error;
-      } else {
-        const empNum = `EMP-${String(staffList.length + 1).padStart(4, "0")}`;
-        const { error } = await supabase.from("staff").insert({
-          ...payload,
-          school_id: school!.id,
-          employee_number: empNum,
+        const res = await fetch(`/api/staff/${editingStaff.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
         });
-        if (error) throw error;
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "Failed to update staff");
+      } else {
+        const res = await fetch("/api/staff", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || "Failed to add staff");
       }
     },
     onSuccess: () => {
@@ -166,7 +169,12 @@ export default function StaffDirectoryPage() {
           icon={Users}
           title="No staff members"
           description="Add your teaching and non-teaching staff to manage payroll and assignments."
-          action={{ label: "Add Staff", onClick: openCreate }}
+          action={
+            <Button onClick={openCreate}>
+              <Plus className="w-4 h-4 mr-2" />
+              Add Staff
+            </Button>
+          }
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -251,7 +259,7 @@ export default function StaffDirectoryPage() {
             <DialogTitle>{editingStaff ? "Edit Staff" : "Add Staff Member"}</DialogTitle>
           </DialogHeader>
 
-          <form onSubmit={handleSubmit((data) => saveMutation.mutate(data))} className="space-y-4">
+          <form onSubmit={handleSubmit((data) => saveMutation.mutate(data as StaffFormData))} className="space-y-4">
             <div className="flex justify-center">
               <PhotoUpload
                 currentUrl={photoUrl}

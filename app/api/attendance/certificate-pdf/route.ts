@@ -7,7 +7,7 @@ import {
 } from "@/lib/api-helpers";
 import { AttendanceCertificatePDF } from "@/lib/pdf/attendance-certificate";
 import type { AttendanceCertificateData } from "@/lib/pdf/attendance-certificate";
-import { renderToBuffer } from "@react-pdf/renderer";
+import { Document, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
 
 export async function GET(request: NextRequest) {
@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
 
     const totalDays = records?.length || 0;
     const totalPresent = (records || []).filter(
-      (r) => r.status === "present" || r.status === "late"
+      (r: { status: string }) => r.status === "present" || r.status === "late"
     ).length;
     const attendanceRate = totalDays > 0 ? Math.round((totalPresent / totalDays) * 100) : 0;
 
@@ -128,10 +128,10 @@ export async function GET(request: NextRequest) {
     };
 
     const buffer = await renderToBuffer(
-      React.createElement(AttendanceCertificatePDF, { data })
+      React.createElement(Document, null, React.createElement(AttendanceCertificatePDF, { data }))
     );
 
-    return new Response(buffer, {
+    return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="attendance-certificate-${studentData.admission_number}.pdf"`,
