@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   const { data: threads, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  const threadIds = (threads || []).map((t) => t.id);
+  const threadIds = (threads || []).map((t: { id: string }) => t.id);
   let lastMessages: Record<string, { body: string; direction: string }> = {};
 
   if (threadIds.length > 0) {
@@ -57,7 +57,7 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  const result = (threads || []).map((t) => ({
+  const result = (threads || []).map((t: { id: string; [key: string]: unknown }) => ({
     ...t,
     last_message: lastMessages[t.id] || null,
   }));
