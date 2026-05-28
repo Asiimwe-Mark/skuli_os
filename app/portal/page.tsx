@@ -16,6 +16,8 @@ import {
   ChevronRight,
   Download,
   Loader2,
+  GraduationCap,
+  ChevronDown,
 } from "lucide-react";
 
 interface FeeSummary {
@@ -53,6 +55,18 @@ interface Announcement {
   created_at: string;
 }
 
+interface LinkedStudent {
+  student_id: string;
+  student: {
+    id: string;
+    first_name: string;
+    last_name: string;
+    admission_number: string | null;
+    class: { id: string; name: string } | null;
+    school: { id: string; name: string; motto: string | null } | null;
+  };
+}
+
 const stagger = {
   hidden: { opacity: 0 },
   show: {
@@ -69,7 +83,8 @@ const fadeUp = {
 export default function PortalDashboard() {
   const supabase = createBrowserClient();
   const [loading, setLoading] = useState(true);
-  const [studentId, setStudentId] = useState<string | null>(null);
+  const [linkedStudents, setLinkedStudents] = useState<LinkedStudent[]>([]);
+  const [selectedStudentId, setSelectedStudentId] = useState<string>("");
 
   const [feeSummary, setFeeSummary] = useState<FeeSummary | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -86,20 +101,30 @@ export default function PortalDashboard() {
       } = await supabase.auth.getUser();
       if (!user) return;
 
-      const { data: parentStudent } = await supabase
+      const { data: linkedStudentsData } = await supabase
         .from("parent_students")
-        .select("student_id")
-        .eq("parent_id", user.id)
-        .limit(1)
-        .single();
+        .select(`
+          student_id,
+          student:students(
+            id,
+            first_name,
+            last_name,
+            admission_number,
+            class:classes(id, name),
+            school:schools(id, name, motto)
+          )
+        `)
+        .eq("parent_id", user.id);
 
-      if (!parentStudent) {
+      if (!linkedStudentsData || linkedStudentsData.length === 0) {
         setLoading(false);
         return;
       }
 
-      const sid = parentStudent.student_id;
-      setStudentId(sid);
+      setLinkedStudents(linkedStudentsData as LinkedStudent[]);
+      setSelectedStudentId(linkedStudentsData[0].student_id);
+
+      const sid = linkedStudentsData[0].student_id;
 
       const [feeRes, payRes, resultRes, attendRes, announceRes] =
         await Promise.all([
@@ -143,7 +168,7 @@ export default function PortalDashboard() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          student_id: studentId,
+          student_id: selectedStudentId,
           amount: feeSummary.balance,
         }),
       });
@@ -178,6 +203,32 @@ export default function PortalDashboard() {
       animate="show"
       className="mx-auto max-w-lg space-y-4 p-4"
     >
+      {/* Child Selector - shown when multiple children exist */}
+      {linkedStudents.length > 1 && (
+        <motion.div variants={fadeUp} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
+              <GraduationCap className="h-5 w-5 text-indigo-600" />
+            </div>
+            <h2 className="text-sm font-semibold text-gray-900">Select Child</h2>
+          </div>
+          <div className="relative">
+            <select
+              value={selectedStudentId}
+              onChange={(e) => setSelectedStudentId(e.target.value)}
+              className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            >
+              {linkedStudents.map((ls) => (
+                <option key={ls.student_id} value={ls.student_id}>
+                  {ls.student.first_name} {ls.student.last_name} — {ls.student.class?.name ?? "N/A"}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+          </div>
+        </motion.div>
+      )}
+
       {/* Fee Status Card */}
       <motion.div variants={fadeUp} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
