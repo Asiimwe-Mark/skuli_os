@@ -38,6 +38,7 @@ CREATE TABLE student_discounts (
   UNIQUE (student_id, discount_id, term_id)
 );
 
+CREATE INDEX idx_student_discounts_school ON student_discounts(school_id) WHERE is_deleted = false;
 CREATE INDEX idx_student_discounts_student ON student_discounts(student_id) WHERE is_deleted = false;
 CREATE INDEX idx_student_discounts_discount ON student_discounts(discount_id) WHERE is_deleted = false;
 CREATE INDEX idx_student_discounts_term ON student_discounts(term_id) WHERE is_deleted = false;
@@ -50,11 +51,13 @@ ALTER TABLE student_discounts ENABLE ROW LEVEL SECURITY;
 
 -- fee_discounts: Admin/Bursar full access within school
 CREATE POLICY "school_manage_discounts" ON fee_discounts FOR ALL
-  USING (school_id = get_user_school_id());
+  USING (school_id = get_user_school_id()
+    AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR'));
 
 -- student_discounts: Admin/Bursar full access within school
 CREATE POLICY "school_manage_student_discounts" ON student_discounts FOR ALL
-  USING (school_id = get_user_school_id());
+  USING (school_id = get_user_school_id()
+    AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR'));
 
 -- student_discounts: Parents read-only for own children
 CREATE POLICY "parent_read_student_discounts" ON student_discounts FOR SELECT
