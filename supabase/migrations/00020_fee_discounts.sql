@@ -34,8 +34,7 @@ CREATE TABLE student_discounts (
   note          text,
   created_at    timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
-  is_deleted    boolean NOT NULL DEFAULT false,
-  UNIQUE (student_id, discount_id, term_id)
+  is_deleted    boolean NOT NULL DEFAULT false
 );
 
 CREATE INDEX idx_student_discounts_school ON student_discounts(school_id) WHERE is_deleted = false;
@@ -43,16 +42,33 @@ CREATE INDEX idx_student_discounts_student ON student_discounts(student_id) WHER
 CREATE INDEX idx_student_discounts_discount ON student_discounts(discount_id) WHERE is_deleted = false;
 CREATE INDEX idx_student_discounts_term ON student_discounts(term_id) WHERE is_deleted = false;
 
+-- Conditional unique indexes to enforce uniqueness with nullable term_id
+CREATE UNIQUE INDEX uq_student_discounts_with_term
+  ON student_discounts(student_id, discount_id, term_id)
+  WHERE term_id IS NOT NULL AND is_deleted = false;
+
+CREATE UNIQUE INDEX uq_student_discounts_no_term
+  ON student_discounts(student_id, discount_id)
+  WHERE term_id IS NULL AND is_deleted = false;
+
 -- ---------------------------------------------------------------------------
 -- 3. RLS Policies
 -- ---------------------------------------------------------------------------
 ALTER TABLE fee_discounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE student_discounts ENABLE ROW LEVEL SECURITY;
 
+-- fee_discounts: Super admin full access
+CREATE POLICY "super_admin_all_fee_discounts" ON fee_discounts FOR ALL
+  USING (get_user_role() = 'SUPER_ADMIN');
+
 -- fee_discounts: Admin/Bursar full access within school
 CREATE POLICY "school_manage_discounts" ON fee_discounts FOR ALL
   USING (school_id = get_user_school_id()
     AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR'));
+
+-- student_discounts: Super admin full access
+CREATE POLICY "super_admin_all_student_discounts" ON student_discounts FOR ALL
+  USING (get_user_role() = 'SUPER_ADMIN');
 
 -- student_discounts: Admin/Bursar full access within school
 CREATE POLICY "school_manage_student_discounts" ON student_discounts FOR ALL
@@ -62,10 +78,12 @@ CREATE POLICY "school_manage_student_discounts" ON student_discounts FOR ALL
 -- student_discounts: Parents read-only for own children
 CREATE POLICY "parent_read_student_discounts" ON student_discounts FOR SELECT
   USING (
-    get_user_role() = 'PARENT'
+    school_id = get_user_school_id()
+    AND get_user_role() = 'PARENT'
     AND student_id IN (
       SELECT s.id FROM students s
       WHERE s.parent_phone = (SELECT phone FROM users WHERE id = auth.uid())
+        AND s.school_id = get_user_school_id()
         AND s.is_deleted = false
     )
   );
