@@ -375,6 +375,19 @@ export interface MeetingBooking {
   student?: Student;
 }
 
+export interface ThreadWithPreview {
+  id: string;
+  school_id: string;
+  parent_phone: string;
+  student_id: string | null;
+  last_message_at: string;
+  is_read: boolean;
+  is_deleted: boolean;
+  // Joined
+  student?: { full_name: string; admission_number: string | null } | null;
+  last_message?: { body: string; direction: string } | null;
+}
+
 export interface PayrollRecord {
   id: string;
   school_id: string;
