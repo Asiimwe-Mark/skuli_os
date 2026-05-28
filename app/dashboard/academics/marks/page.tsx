@@ -257,18 +257,41 @@ export default function MarksEntryPage() {
       }
       return { count: validMarks.length, submitFinal };
     },
+    onMutate: async (variables) => {
+      // Cancel any outgoing refetches
+      await queryClient.cancelQueries({ queryKey: ["marks-sheet", selectedClass, selectedSubject, term?.id, selectedExamType] });
+      
+      // Snapshot the previous value
+      const previousMarks = queryClient.getQueryData(['marks-sheet', selectedClass, selectedSubject, term?.id, selectedExamType]);
+      
+      // Optimistically update to the new value - mark all as saving
+      queryClient.setQueryData(['marks-sheet', selectedClass, selectedSubject, term?.id, selectedExamType], (old: any) => {
+        if (!old) return old;
+        return {
+          ...old,
+          existingMarks: (old.existingMarks || []).map((m: any) => ({ ...m, _saving: true }))
+        };
+      });
+      
+      return { previousMarks };
+    },
+    onError: (err, variables, context) => {
+      // Rollback to snapshot
+      if (context?.previousMarks) {
+        queryClient.setQueryData(['marks-sheet', selectedClass, selectedSubject, term?.id, selectedExamType], context.previousMarks);
+      }
+      
+      toast({
+        title: "Error saving marks",
+        description: err instanceof Error ? err.message : "Unknown error",
+        variant: "destructive",
+      });
+    },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["marks-sheet"] });
       toast({
         title: result.submitFinal ? "Marks submitted" : "Draft saved",
         description: `${result.count} marks saved successfully.`,
-      });
-    },
-    onError: (err) => {
-      toast({
-        title: "Error saving marks",
-        description: err instanceof Error ? err.message : "Unknown error",
-        variant: "destructive",
       });
     },
   });

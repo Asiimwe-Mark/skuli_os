@@ -15,6 +15,7 @@ import {
   Loader2,
   Receipt,
   ArrowLeft,
+  ChevronDown,
 } from "lucide-react";
 
 interface FeeItem {
@@ -41,10 +42,23 @@ interface Payment {
 
 type PaymentModalState = "idle" | "processing" | "success" | "failed";
 
+interface LinkedStudent {
+  student_id: string;
+  student: {
+    id: string;
+    first_name: string;
+    last_name: string;
+    admission_number: string | null;
+    class: { id: string; name: string } | null;
+    school: { id: string; name: string; motto: string | null } | null;
+  };
+}
+
 export default function PortalFeesPage() {
   const supabase = createBrowserClient();
   const [loading, setLoading] = useState(true);
-  const [studentId, setStudentId] = useState<string | null>(null);
+  const [linkedStudents, setLinkedStudents] = useState<LinkedStudent[]>([]);
+  const [selectedStudentId, setSelectedStudentId] = useState<string>("");
   const [phone, setPhone] = useState("");
   const [feeSummary, setFeeSummary] = useState<FeeSummary | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
@@ -69,20 +83,30 @@ export default function PortalFeesPage() {
         .single();
       if (profile?.phone) setPhone(profile.phone);
 
-      const { data: parentStudent } = await supabase
+      const { data: linkedStudentsData } = await supabase
         .from("parent_students")
-        .select("student_id")
-        .eq("parent_id", user.id)
-        .limit(1)
-        .single();
+        .select(`
+          student_id,
+          student:students (
+            id,
+            first_name,
+            last_name,
+            admission_number,
+            class:classes ( name ),
+            school:schools ( name, motto )
+          )
+        `)
+        .eq("parent_id", user.id);
 
-      if (!parentStudent) {
+      if (!linkedStudentsData || linkedStudentsData.length === 0) {
         setLoading(false);
         return;
       }
 
-      const sid = parentStudent.student_id;
-      setStudentId(sid);
+      setLinkedStudents(linkedStudentsData as unknown as LinkedStudent[]);
+      setSelectedStudentId(linkedStudentsData[0].student_id);
+
+      const sid = linkedStudentsData[0].student_id;
 
       const [feeRes, payRes] = await Promise.all([
         supabase.rpc("get_student_fee_breakdown", { p_student_id: sid }),
@@ -127,7 +151,7 @@ export default function PortalFeesPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          student_id: studentId,
+          student_id: selectedStudentId,
           phone: payPhone,
           amount: parseFloat(payAmount),
         }),
@@ -160,6 +184,44 @@ export default function PortalFeesPage() {
         animate={{ opacity: 1, y: 0 }}
         className="space-y-4"
       >
+        {/* Child Selector - shown when multiple children exist */}
+        {linkedStudents.length > 1 && (
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="mb-3 flex items-center gap-2">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
+                <Receipt className="h-5 w-5 text-indigo-600" />
+              </div>
+              <h2 className="text-sm font-semibold text-gray-900">Select Child</h2>
+            </div>
+            <div className="relative">
+              <select
+                value={selectedStudentId}
+                onChange={(e) => {
+                  setSelectedStudentId(e.target.value);
+                  // Reload fee data for selected student
+                  supabase.rpc("get_student_fee_breakdown", { p_student_id: e.target.value }).then(({ data }) => {
+                    if (data) {
+                      setFeeSummary(data);
+                      setPayAmount(data.balance?.toString() ?? "");
+                    }
+                  });
+                  supabase.from("payments").select("id, amount, payment_date, receipt_number, method, status").eq("student_id", e.target.value).order("payment_date", { ascending: false }).then(({ data }) => {
+                    if (data) setPayments(data);
+                  });
+                }}
+                className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              >
+                {linkedStudents.map((ls) => (
+                  <option key={ls.student_id} value={ls.student_id}>
+                    {ls.student.first_name} {ls.student.last_name} — {ls.student.class?.name ?? "N/A"}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+            </div>
+          </div>
+        )}
+
         {/* Fee Breakdown */}
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center gap-2">
