@@ -55,11 +55,28 @@ export const applyDiscountSchema = z.object({
   note: z.string().optional().nullable(),
 });
 
+export const createExpenseSchema = z.object({
+  category_id: z.string().uuid().nullable().optional(),
+  term_id: z.string().uuid().nullable().optional(),
+  description: z.string().min(1, 'Description is required'),
+  amount: z.number().positive('Amount must be greater than 0'),
+  expense_date: z.string().min(1, 'Date is required'),
+  payment_method: z.enum(['cash', 'bank', 'mobile_money', 'cheque']),
+  receipt_number: z.string().optional().nullable(),
+  notes: z.string().optional().nullable(),
+});
+
+export const createExpenseCategorySchema = z.object({
+  name: z.string().min(1, 'Category name is required'),
+});
+
 export type CreateFeeStructureFormData = z.infer<typeof createFeeStructureSchema>;
 export type RecordPaymentFormData = z.infer<typeof recordPaymentSchema>;
 export type GenerateFeeAccountsFormData = z.infer<typeof generateFeeAccountsSchema>;
 export type CreateDiscountFormData = z.infer<typeof createDiscountSchema>;
 export type ApplyDiscountFormData = z.infer<typeof applyDiscountSchema>;
+export type CreateExpenseFormData = z.infer<typeof createExpenseSchema>;
+export type CreateExpenseCategoryFormData = z.infer<typeof createExpenseCategorySchema>;
 
 // Legacy aliases
 export const feeStructureSchema = createFeeStructureSchema;
