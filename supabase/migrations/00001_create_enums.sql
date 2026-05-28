@@ -121,3 +121,5 @@ CREATE TYPE school_type AS ENUM (
     'secondary',
     'both'
 );
+
+CREATE TYPE discount_type AS ENUM ('percentage', 'fixed_amount');
