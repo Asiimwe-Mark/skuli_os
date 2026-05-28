@@ -7,14 +7,14 @@ import { Badge } from '@/components/ui/badge';
 export default async function TeacherProfilePage() {
   const supabase = createServerClient();
 
-  const {  { user } } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     redirect('/login');
   }
 
   // Fetch teacher profile
-  const {  userProfile } = await supabase
+  const { data: userProfile } = await supabase
     .from('users')
     .select('full_name, phone, avatar_url, school_id, created_at')
     .eq('id', user.id)
@@ -25,7 +25,7 @@ export default async function TeacherProfilePage() {
   }
 
   // Fetch teacher's assignments
-  const {  assignments } = await supabase
+  const { data: assignments } = await supabase
     .from('teacher_class_assignments')
     .select(`
       class_id,

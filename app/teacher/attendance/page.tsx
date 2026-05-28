@@ -82,11 +82,11 @@ export default function TeacherAttendancePage() {
   const [submitResults, setSubmitResults] = useState<Map<string, 'saving' | 'saved' | 'error'>>(new Map());
 
   // Fetch teacher's assignments (only homeroom classes can take attendance)
-  const {  assignments = [] } = useQuery<Assignment[]>({
+  const { data: assignments = [] } = useQuery<Assignment[]>({
     queryKey: ['teacher-assignments', school?.id],
     enabled: !!school?.id,
     queryFn: async () => {
-      const {  { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
       const { data, error } = await supabase
@@ -116,17 +116,17 @@ export default function TeacherAttendancePage() {
   }, [homeroomClasses, selectedClassId]);
 
   // Load students + existing attendance
-  const {  students = [], isLoading: loadingStudents } = useQuery({
+  const { data: students = [], isLoading: loadingStudents } = useQuery({
     queryKey: ['attendance-students', selectedClassId, selectedDate, currentTerm?.id],
     queryFn: async () => {
-      const {  enrollments, error: enrollErr } = await supabase
+      const { data: enrollments, error: enrollErr } = await supabase
         .from('class_enrollments')
         .select('student_id, students(id, full_name, admission_number)')
         .eq('class_id', selectedClassId)
         .eq('term_id', currentTerm!.id);
       if (enrollErr) throw enrollErr;
 
-      const {  existing } = await supabase
+      const { data: existing } = await supabase
         .from('attendance_records')
         .select('student_id, status')
         .eq('class_id', selectedClassId)

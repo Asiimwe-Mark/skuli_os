@@ -51,11 +51,11 @@ export default function TeacherMarksPage() {
   const scoreRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   // Fetch teacher's assignments
-  const {  assignments = [] } = useQuery<Assignment[]>({
+  const { data: assignments = [] } = useQuery<Assignment[]>({
     queryKey: ['teacher-assignments', school?.id],
     enabled: !!school?.id,
     queryFn: async () => {
-      const {  { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('Not authenticated');
 
       const { data, error } = await supabase
@@ -85,7 +85,7 @@ export default function TeacherMarksPage() {
   }, [assignments, selectedClass]);
 
   // Get students for selected class
-  const {  students = [], isLoading: studentsLoading } = useQuery({
+  const { data: students = [], isLoading: studentsLoading } = useQuery({
     queryKey: ['class-students', selectedClass, currentTerm?.id],
     enabled: !!selectedClass && !!currentTerm?.id,
     queryFn: async () => {
@@ -101,7 +101,7 @@ export default function TeacherMarksPage() {
   });
 
   // Get existing marks
-  const {  existingMarks = [] } = useQuery({
+  const { data: existingMarks = [] } = useQuery({
     queryKey: ['teacher-marks', selectedClass, selectedSubject, currentTerm?.id],
     enabled: !!selectedClass && !!selectedSubject && !!currentTerm?.id,
     queryFn: async () => {
@@ -154,7 +154,7 @@ export default function TeacherMarksPage() {
       });
 
       try {
-        const {  { user } } = await supabase.auth.getUser();
+        const { data: { user } } = await supabase.auth.getUser();
         const markData = {
           school_id: school.id,
           student_id: mark.student_id,

@@ -1,0 +1,217 @@
+import React from 'react';
+import { Document, Page, Text, View, StyleSheet, pdf } from '@react-pdf/renderer';
+import { Database } from '@/types/database';
+
+type Period = Database['public']['Tables']['timetable_periods']['Row'];
+type SlotWithDetails = {
+  id: string;
+  period_id: string;
+  day_of_week: number;
+  subject?: { name: string | null; color?: string | null } | null;
+  teacher?: { first_name: string | null; last_name: string | null } | null;
+  room?: string | null;
+};
+
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+
+interface TimetablePDFProps {
+  schoolName: string;
+  className: string;
+  academicYear: string;
+  periods: Period[];
+  slots: SlotWithDetails[];
+}
+
+const styles = StyleSheet.create({
+  page: {
+    flexDirection: 'column',
+    backgroundColor: '#ffffff',
+    padding: 20,
+  },
+  header: {
+    marginBottom: 20,
+    borderBottom: 2,
+    borderColor: '#000000',
+    paddingBottom: 10,
+  },
+  schoolName: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    marginBottom: 5,
+  },
+  title: {
+    fontSize: 16,
+    textAlign: 'center',
+    marginBottom: 5,
+  },
+  subtitle: {
+    fontSize: 12,
+    textAlign: 'center',
+    color: '#666666',
+  },
+  table: {
+    display: 'table',
+    width: 'auto',
+    borderStyle: 'solid',
+    borderWidth: 1,
+    borderColor: '#000000',
+    marginBottom: 20,
+  },
+  tableRow: {
+    flexDirection: 'row',
+  },
+  tableHeader: {
+    backgroundColor: '#f3f4f6',
+  },
+  tableCell: {
+    flex: 1,
+    borderStyle: 'solid',
+    borderWidth: 1,
+    borderColor: '#000000',
+    padding: 8,
+    fontSize: 10,
+  },
+  tableCellHeader: {
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  tableCellPeriod: {
+    flex: 0.8,
+    fontWeight: 'bold',
+  },
+  tableCellSubject: {
+    flex: 1,
+    textAlign: 'center',
+  },
+  breakRow: {
+    backgroundColor: '#f9fafb',
+  },
+  breakCell: {
+    textAlign: 'center',
+    fontStyle: 'italic',
+    color: '#666666',
+  },
+  footer: {
+    position: 'absolute',
+    bottom: 20,
+    left: 20,
+    right: 20,
+    textAlign: 'center',
+    fontSize: 10,
+    color: '#666666',
+    borderTop: 1,
+    borderColor: '#e5e7eb',
+    paddingTop: 10,
+  },
+});
+
+const TimetablePDFDocument: React.FC<TimetablePDFProps> = ({
+  schoolName,
+  className,
+  academicYear,
+  periods,
+  slots,
+}) => {
+  const getSlot = (periodId: string, day: number) => {
+    return slots.find((s) => s.period_id === periodId && s.day_of_week === day);
+  };
+
+  return (
+    <Document>
+      <Page size="LANDSCAPE_A4" style={styles.page}>
+        <View style={styles.header}>
+          <Text style={styles.schoolName}>{schoolName}</Text>
+          <Text style={styles.title}>Class Timetable - {className}</Text>
+          <Text style={styles.subtitle}>Academic Year: {academicYear}</Text>
+        </View>
+
+        <View style={styles.table}>
+          {/* Header Row */}
+          <View style={[styles.tableRow, styles.tableHeader]}>
+            <Text style={[styles.tableCell, styles.tableCellPeriod, styles.tableCellHeader]}>
+              Period
+            </Text>
+            {DAYS.map((day) => (
+              <Text key={day} style={[styles.tableCell, styles.tableCellHeader]}>
+                {day}
+              </Text>
+            ))}
+          </View>
+
+          {/* Period Rows */}
+          {periods.map((period) => {
+            const isBreak = period.is_break;
+            if (isBreak) {
+              return (
+                <View key={period.id} style={[styles.tableRow, styles.breakRow]}>
+                  <Text style={[styles.tableCell, styles.breakCell]}>{period.name}</Text>
+                  {DAYS.map((_, i) => (
+                    <Text key={i} style={[styles.tableCell, styles.breakCell]}>
+                      {period.name}
+                    </Text>
+                  ))}
+                </View>
+              );
+            }
+
+            return (
+              <View key={period.id} style={styles.tableRow}>
+                <Text style={[styles.tableCell, styles.tableCellPeriod]}>
+                  {period.name}
+                  {'\n'}
+                  {period.start_time} - {period.end_time}
+                </Text>
+                {DAYS.map((_, index) => {
+                  const day = index + 1;
+                  const slot = getSlot(period.id, day);
+                  return (
+                    <Text key={day} style={[styles.tableCell, styles.tableCellSubject]}>
+                      {slot?.subject?.name || '-'}
+                      {slot?.teacher && (
+                        <Text>
+                          {'\n'}
+                          {slot.teacher.first_name} {slot.teacher.last_name}
+                        </Text>
+                      )}
+                      {slot?.room && (
+                        <Text>
+                          {'\n'}({slot.room})
+                        </Text>
+                      )}
+                    </Text>
+                  );
+                })}
+              </View>
+            );
+          })}
+        </View>
+
+        <Text style={styles.footer}>
+          Generated by SKULI on {new Date().toLocaleDateString('en-GB')}
+        </Text>
+      </Page>
+    </Document>
+  );
+};
+
+export async function generateTimetablePDF(
+  schoolName: string,
+  className: string,
+  academicYear: string,
+  periods: Period[],
+  slots: SlotWithDetails[]
+): Promise<Blob> {
+  const doc = (
+    <TimetablePDFDocument
+      schoolName={schoolName}
+      className={className}
+      academicYear={academicYear}
+      periods={periods}
+      slots={slots}
+    />
+  );
+  return pdf(doc).toBlob();
+}
+
+export default TimetablePDFDocument;

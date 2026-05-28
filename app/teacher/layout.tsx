@@ -9,13 +9,13 @@ export default async function TeacherLayout({
 }) {
   const supabase = createServerClient();
 
-  const {  { user } } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     redirect('/login');
   }
 
-  const {  userProfile } = await supabase
+  const { data: userProfile } = await supabase
     .from('users')
     .select('role, school_id, full_name, avatar_url')
     .eq('id', user.id)
@@ -25,7 +25,7 @@ export default async function TeacherLayout({
     redirect('/login');
   }
 
-  const {  assignments } = await supabase
+  const { data: assignments } = await supabase
     .from('teacher_class_assignments')
     .select(`
       class_id,

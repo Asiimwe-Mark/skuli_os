@@ -16,14 +16,14 @@ interface Assignment {
 export default async function TeacherDashboardPage() {
   const supabase = createServerClient();
 
-  const {  { user } } = await supabase.auth.getUser();
+  const { data: { user } } = await supabase.auth.getUser();
 
   if (!user) {
     redirect('/login');
   }
 
   // Fetch teacher's assignments
-  const {  assignments } = await supabase
+  const { data: assignments } = await supabase
     .from('teacher_class_assignments')
     .select(`
       class_id,
@@ -67,7 +67,7 @@ export default async function TeacherDashboardPage() {
         .eq('is_deleted', false);
 
       // Get marks completion for this class
-      const {  marksData } = await supabase
+      const { data: marksData } = await supabase
         .from('marks')
         .select('student_id, subject_id')
         .eq('class_id', assignment.class_id)
@@ -92,7 +92,7 @@ export default async function TeacherDashboardPage() {
   );
 
   // Get recent marks submissions
-  const {  recentMarks } = await supabase
+  const { data: recentMarks } = await supabase
     .from('marks')
     .select(`
       id,
@@ -108,7 +108,7 @@ export default async function TeacherDashboardPage() {
     .limit(5);
 
   // Get recent attendance sessions
-  const {  recentAttendance } = await supabase
+  const { data: recentAttendance } = await supabase
     .from('attendance_records')
     .select(`
       id,
