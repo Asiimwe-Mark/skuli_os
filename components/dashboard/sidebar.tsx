@@ -36,6 +36,7 @@ import {
   FileStack,
   Calculator,
   UserCog,
+  UserCheck,
   Key,
   Bell,
   TrendingDown,
@@ -119,6 +120,14 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Staff Directory", href: "/dashboard/staff", icon: UserCog },
       { label: "Payroll", href: "/dashboard/staff/payroll", icon: Calculator },
+    ],
+  },
+  {
+    label: "Meetings",
+    icon: UserCheck,
+    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    children: [
+      { label: "Schedule Meetings", href: "/dashboard/meetings", icon: CalendarCheck },
     ],
   },
   {
