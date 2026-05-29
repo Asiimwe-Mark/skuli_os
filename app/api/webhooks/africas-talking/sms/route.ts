@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import crypto from "crypto";
 import type { Database } from "@/types/database";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sendPushToUser } from "@/lib/push";
 
 type SmsLogRow = Database["public"]["Tables"]["sms_logs"]["Row"];
 
@@ -110,6 +111,17 @@ export async function POST(request: NextRequest) {
               related_entity_type: "message_thread",
               related_entity_id: threadId,
             });
+
+            // Push notification to admin
+            try {
+              await sendPushToUser(supabase, admin.id, {
+                title: `New message from ${student.parent_name || senderPhone}`,
+                body: preview,
+                url: "/dashboard/communication",
+              });
+            } catch {
+              // Push failure should not block SMS processing
+            }
           }
         }
 
