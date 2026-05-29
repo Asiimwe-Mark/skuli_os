@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   BookOpen,
@@ -11,6 +12,7 @@ import {
   User,
   LogOut,
   ChevronDown,
+  Clock,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -44,11 +46,31 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createBrowserClient();
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
+
+  useEffect(() => {
+    const updateCount = () => {
+      try {
+        const pending = JSON.parse(localStorage.getItem('skuli-pending-attendance') || '[]');
+        setPendingSyncCount(pending.length);
+      } catch {
+        setPendingSyncCount(0);
+      }
+    };
+
+    updateCount();
+    window.addEventListener('pending-attendance-changed', updateCount);
+    window.addEventListener('storage', updateCount);
+    return () => {
+      window.removeEventListener('pending-attendance-changed', updateCount);
+      window.removeEventListener('storage', updateCount);
+    };
+  }, []);
 
   const navItems = [
     { href: '/teacher', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/teacher/marks', label: 'Marks Entry', icon: BookOpen },
-    { href: '/teacher/attendance', label: 'Attendance', icon: CheckSquare },
+    { href: '/teacher/attendance', label: 'Attendance', icon: CheckSquare, badge: pendingSyncCount },
     { href: '/teacher/notices', label: 'Notices', icon: Megaphone },
     { href: '/teacher/profile', label: 'Profile', icon: User },
   ];
@@ -78,6 +100,7 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
+            const badge = 'badge' in item && typeof item.badge === 'number' ? item.badge : 0;
             return (
               <li key={item.href}>
                 <Link
@@ -90,7 +113,13 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
                   )}
                 >
                   <Icon className="w-5 h-5" />
-                  {item.label}
+                  <span className="flex-1">{item.label}</span>
+                  {badge > 0 && (
+                    <span className="flex items-center gap-1 text-xs font-semibold bg-amber-500 text-white rounded-full px-2 py-0.5">
+                      <Clock className="w-3 h-3" />
+                      {badge}
+                    </span>
+                  )}
                 </Link>
               </li>
             );

@@ -1,6 +1,8 @@
 // SKULI Service Worker
 const CACHE_NAME = "skuli-static-v1";
+const ATTENDANCE_CACHE = "skuli-attendance-v1";
 const OFFLINE_URL = "/offline";
+const ATTENDANCE_CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
 
 // Assets to pre-cache on install
 const PRECACHE_URLS = [OFFLINE_URL];
@@ -17,7 +19,7 @@ self.addEventListener("activate", (event) => {
     caches.keys().then((keys) =>
       Promise.all(
         keys
-          .filter((key) => key !== CACHE_NAME)
+          .filter((key) => key !== CACHE_NAME && key !== ATTENDANCE_CACHE)
           .map((key) => caches.delete(key))
       )
     )
@@ -32,6 +34,53 @@ self.addEventListener("fetch", (event) => {
   if (request.method !== "GET") return;
 
   const url = new URL(request.url);
+
+  // Attendance class-list: cache-first with 24h TTL for offline support
+  if (url.pathname === "/api/attendance/class-list") {
+    event.respondWith(
+      caches.open(ATTENDANCE_CACHE).then((cache) =>
+        cache.match(request).then((cached) => {
+          if (cached) {
+            const cachedTime = parseInt(cached.headers.get("x-cached-at") || "0", 10);
+            if (Date.now() - cachedTime < ATTENDANCE_CACHE_TTL) {
+              // Refresh in background
+              fetch(request).then((response) => {
+                if (response.ok) {
+                  const clone = response.clone();
+                  clone.blob().then((blob) => {
+                    const headers = new Headers(clone.headers);
+                    headers.set("x-cached-at", Date.now().toString());
+                    cache.put(request, new Response(blob, { headers }));
+                  });
+                }
+              }).catch(() => {});
+              return cached;
+            }
+          }
+          // No valid cache — fetch from network
+          return fetch(request).then((response) => {
+            if (response.ok) {
+              const clone = response.clone();
+              clone.blob().then((blob) => {
+                const headers = new Headers(clone.headers);
+                headers.set("x-cached-at", Date.now().toString());
+                cache.put(request, new Response(blob, { headers }));
+              });
+            }
+            return response;
+          }).catch(() => {
+            // Offline and no cache — return empty class list
+            if (cached) return cached;
+            return new Response(
+              JSON.stringify({ data: { classes: [] }, offline: true }),
+              { status: 200, headers: { "Content-Type": "application/json" } }
+            );
+          });
+        })
+      )
+    );
+    return;
+  }
 
   // API routes: network-first, no cache fallback for mutations
   if (url.pathname.startsWith("/api/")) {

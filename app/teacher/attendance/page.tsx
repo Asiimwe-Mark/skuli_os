@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createBrowserClient } from '@/lib/supabase/client';
 import { useSchoolStore } from '@/store/school';
@@ -11,7 +11,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/shared/empty-state';
 import { useToast } from '@/components/ui/use-toast';
-import { CheckCircle2, XCircle, Clock, ShieldCheck, Loader2, AlertCircle } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, ShieldCheck, Loader2, AlertCircle, WifiOff, RefreshCw } from 'lucide-react';
 import type { AttendanceStatus } from '@/types';
 import { useSearchParams } from 'next/navigation';
 
@@ -20,6 +20,16 @@ interface StudentEntry {
   full_name: string;
   admission_number: string;
 }
+
+interface PendingAttendance {
+  classId: string;
+  className: string;
+  date: string;
+  records: [string, AttendanceStatus][];
+  queuedAt: string;
+}
+
+const PENDING_STORAGE_KEY = 'skuli-pending-attendance';
 
 const STATUS_CONFIG: Record<
   AttendanceStatus,
@@ -50,7 +60,7 @@ const STATUS_CONFIG: Record<
     shortLabel: 'L',
     color: 'text-amber-400',
     bgColor: 'bg-amber-400/20',
-    borderColor: 'border-amber-400/50',
+    borderColor: 'border-amber-500/50',
   },
   excused: {
     label: 'Excused',
@@ -68,6 +78,19 @@ interface Assignment {
   class: { name: string; stream: string | null } | null;
 }
 
+function getPendingCount(): number {
+  try {
+    const pending = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '[]');
+    return pending.length;
+  } catch {
+    return 0;
+  }
+}
+
+function dispatchPendingChange() {
+  window.dispatchEvent(new CustomEvent('pending-attendance-changed'));
+}
+
 export default function TeacherAttendancePage() {
   const { school, currentTerm } = useSchoolStore();
   const { toast } = useToast();
@@ -77,38 +100,130 @@ export default function TeacherAttendancePage() {
 
   const [selectedClassId, setSelectedClassId] = useState(searchParams.get('classId') || '');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  // Local state — NOT saved until Submit is clicked
   const [localAttendance, setLocalAttendance] = useState<Map<string, AttendanceStatus>>(new Map());
   const [submitResults, setSubmitResults] = useState<Map<string, 'saving' | 'saved' | 'error'>>(new Map());
 
-  // Fetch teacher's assignments (only homeroom classes can take attendance)
+  // Offline state
+  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const syncLockRef = useRef(false);
+
+  // Online/offline detection + sync on reconnect
+  useEffect(() => {
+    setPendingCount(getPendingCount());
+
+    const handleOnline = () => {
+      setIsOnline(true);
+      syncPendingSubmissions();
+    };
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
+  async function syncPendingSubmissions() {
+    if (syncLockRef.current) return;
+    const pending: PendingAttendance[] = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '[]');
+    if (pending.length === 0) return;
+
+    syncLockRef.current = true;
+    setIsSyncing(true);
+    let totalSynced = 0;
+    const failedBatches: PendingAttendance[] = [];
+
+    for (const batch of pending) {
+      try {
+        const response = await fetch('/api/attendance', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            class_id: batch.classId,
+            date: batch.date,
+            records: batch.records.map(([studentId, status]) => ({
+              student_id: studentId,
+              status,
+            })),
+          }),
+        });
+        if (response.ok) {
+          totalSynced += batch.records.length;
+        } else {
+          failedBatches.push(batch);
+        }
+      } catch {
+        failedBatches.push(batch);
+      }
+    }
+
+    // Re-queue failed batches, clear successful ones
+    if (failedBatches.length > 0) {
+      localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(failedBatches));
+    } else {
+      localStorage.removeItem(PENDING_STORAGE_KEY);
+    }
+    setPendingCount(failedBatches.length);
+    dispatchPendingChange();
+    setIsSyncing(false);
+    syncLockRef.current = false;
+
+    if (totalSynced > 0) {
+      toast({
+        title: 'Attendance Synced',
+        description: `${totalSynced} offline record${totalSynced !== 1 ? 's' : ''} synced successfully${failedBatches.length ? `. ${failedBatches.length} batch${failedBatches.length !== 1 ? 'es' : ''} failed — will retry.` : '.'}`,
+      });
+    } else if (failedBatches.length > 0) {
+      toast({
+        title: 'Sync Failed',
+        description: 'Could not sync offline attendance. Will retry when connection improves.',
+        variant: 'destructive',
+      });
+    }
+
+    queryClient.invalidateQueries({ queryKey: ['attendance-students'] });
+  }
+
+  // Fetch teacher's assignments via API (SW-cached for offline)
   const { data: assignments = [] } = useQuery<Assignment[]>({
     queryKey: ['teacher-assignments', school?.id],
     enabled: !!school?.id,
     queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not authenticated');
-
-      const { data, error } = await supabase
-        .from('teacher_class_assignments')
-        .select(`
-          class_id,
-          subject_id,
-          is_class_teacher,
-          class:classes(id, name, stream)
-        `)
-        .eq('teacher_id', user.id)
-        .eq('is_deleted', false);
-
-      if (error) throw error;
-      return data || [];
+      const res = await fetch('/api/attendance/class-list');
+      if (!res.ok) {
+        // Fallback to direct Supabase if API fails
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error('Not authenticated');
+        const { data, error } = await supabase
+          .from('teacher_class_assignments')
+          .select(`
+            class_id,
+            subject_id,
+            is_class_teacher,
+            class:classes(id, name, stream)
+          `)
+          .eq('teacher_id', user.id)
+          .eq('is_deleted', false);
+        if (error) throw error;
+        return data || [];
+      }
+      const json = await res.json();
+      // Map API response to Assignment shape for homeroom classes
+      return (json.data?.classes || []).map((c: any) => ({
+        class_id: c.classId,
+        subject_id: null,
+        is_class_teacher: true,
+        class: { name: c.className, stream: c.stream },
+      }));
     },
   });
 
-  // Filter to only homeroom classes
   const homeroomClasses = assignments.filter((a) => a.is_class_teacher);
 
-  // Auto-select first homeroom class if none selected
   useEffect(() => {
     if (homeroomClasses.length > 0 && !selectedClassId) {
       setSelectedClassId(homeroomClasses[0].class_id);
@@ -145,13 +260,12 @@ export default function TeacherAttendancePage() {
         admission_number: e.students?.admission_number || '',
       }));
 
-      // Initialize local attendance with existing records
       const initialAttendance = new Map<string, AttendanceStatus>();
       list.forEach((s) => {
         if (existingMap.has(s.student_id)) {
           initialAttendance.set(s.student_id, existingMap.get(s.student_id)!);
         } else {
-          initialAttendance.set(s.student_id, 'present'); // Default to present
+          initialAttendance.set(s.student_id, 'present');
         }
       });
 
@@ -161,45 +275,84 @@ export default function TeacherAttendancePage() {
     enabled: !!selectedClassId && !!currentTerm?.id,
   });
 
-  // On tap: instant local update, no API call
   const handleTap = useCallback((studentId: string, status: AttendanceStatus) => {
     setLocalAttendance((prev) => new Map(prev).set(studentId, status));
   }, []);
 
-  // On submit: batch all changes
   const handleSubmitAll = async () => {
     const entries = Array.from(localAttendance.entries());
+    const className = homeroomClasses.find((c) => c.class_id === selectedClassId)?.class?.name || 'Unknown';
+
+    if (!isOnline) {
+      // Queue locally
+      const existing: PendingAttendance[] = JSON.parse(localStorage.getItem(PENDING_STORAGE_KEY) || '[]');
+      existing.push({
+        classId: selectedClassId,
+        className,
+        date: selectedDate,
+        records: entries,
+        queuedAt: new Date().toISOString(),
+      });
+      try {
+        localStorage.setItem(PENDING_STORAGE_KEY, JSON.stringify(existing));
+        setPendingCount(existing.length);
+        dispatchPendingChange();
+      } catch {
+        toast({
+          title: 'Storage Full',
+          description: 'Could not save attendance offline. Please free up browser storage and try again.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      toast({
+        title: 'Saved Offline',
+        description: `Attendance for ${className} will sync when you reconnect.`,
+      });
+      return;
+    }
+
+    // Online submit — batch format matching takeAttendanceSchema
     setSubmitResults(new Map(entries.map(([id]) => [id, 'saving'])));
 
-    const results = await Promise.allSettled(
-      entries.map(([studentId, status]) =>
-        fetch('/api/attendance', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            student_id: studentId,
-            status,
-            date: selectedDate,
-            class_id: selectedClassId,
-          }),
-        })
-      )
-    );
+    const response = await fetch('/api/attendance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        class_id: selectedClassId,
+        date: selectedDate,
+        records: entries.map(([studentId, status]) => ({
+          student_id: studentId,
+          status,
+        })),
+      }),
+    });
 
     const newResults = new Map<string, 'saving' | 'saved' | 'error'>();
-    entries.forEach(([studentId], i) => {
-      newResults.set(studentId, results[i]?.status === 'fulfilled' ? 'saved' : 'error');
+    const resultStatus = response.ok ? 'saved' : 'error';
+    entries.forEach(([studentId]) => {
+      newResults.set(studentId, resultStatus);
     });
     setSubmitResults(newResults);
 
-    const successCount = Array.from(newResults.values()).filter((v) => v === 'saved').length;
-    toast({
-      title: 'Attendance Submitted',
-      description: `${successCount}/${entries.length} records saved successfully.`,
-    });
+    if (response.ok) {
+      toast({
+        title: 'Attendance Submitted',
+        description: `${entries.length} records saved successfully.`,
+      });
+    } else {
+      toast({
+        title: 'Submission Failed',
+        description: 'Server rejected attendance. Please try again.',
+        variant: 'destructive',
+      });
+    }
 
-    // Invalidate queries to refresh
     queryClient.invalidateQueries({ queryKey: ['attendance-students'] });
+
+    // Clear results after 3s so button re-enables
+    setTimeout(() => setSubmitResults(new Map()), 3000);
   };
 
   const todayStr = new Date().toISOString().split('T')[0];
@@ -222,6 +375,36 @@ export default function TeacherAttendancePage() {
         <h1 className="text-3xl font-bold text-navy mb-2">Take Attendance</h1>
         <p className="text-gray-600">Mark attendance for your homeroom class.</p>
       </div>
+
+      {/* Offline Banner */}
+      {!isOnline && (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border-2 border-amber-500/50 bg-amber-500/10 px-4 py-3 text-amber-700 dark:text-amber-300">
+          <WifiOff className="h-5 w-5 shrink-0" />
+          <p className="text-sm font-medium">
+            You are offline. Attendance will be saved locally and synced when you reconnect.
+          </p>
+        </div>
+      )}
+
+      {/* Syncing indicator */}
+      {isSyncing && (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border-2 border-blue-500/50 bg-blue-500/10 px-4 py-3 text-blue-700 dark:text-blue-300">
+          <RefreshCw className="h-5 w-5 shrink-0 animate-spin" />
+          <p className="text-sm font-medium">
+            Syncing offline attendance...
+          </p>
+        </div>
+      )}
+
+      {/* Pending sync count */}
+      {pendingCount > 0 && !isSyncing && (
+        <div className="mb-6 flex items-center gap-3 rounded-lg border-2 border-amber-500/50 bg-amber-500/10 px-4 py-3 text-amber-700 dark:text-amber-300">
+          <Clock className="h-5 w-5 shrink-0" />
+          <p className="text-sm font-medium">
+            {pendingCount} pending attendance batch{pendingCount !== 1 ? 'es' : ''} waiting to sync
+          </p>
+        </div>
+      )}
 
       {/* Class and Date Selector */}
       <Card className="mb-6">
@@ -357,8 +540,13 @@ export default function TeacherAttendancePage() {
                     );
                   })}
                 </div>
-                <Button onClick={handleSubmitAll} disabled={submitResults.size > 0}>
-                  {submitResults.size > 0 ? (
+                <Button onClick={handleSubmitAll} disabled={submitResults.size > 0 || isSyncing}>
+                  {!isOnline ? (
+                    <>
+                      <WifiOff className="w-4 h-4 mr-2" />
+                      Save Offline
+                    </>
+                  ) : submitResults.size > 0 ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                       Submitting...
@@ -372,7 +560,6 @@ export default function TeacherAttendancePage() {
                 </Button>
               </div>
 
-              {/* Show submit results summary */}
               {submitResults.size > 0 && (
                 <div className="text-sm">
                   <p className="font-medium mb-2">Submit Results:</p>

@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
 import TeacherSidebar from '@/components/teacher/TeacherSidebar';
+import { ServiceWorkerRegistration } from '@/components/teacher/ServiceWorkerRegistration';
 
 export default async function TeacherLayout({
   children,
@@ -39,6 +40,7 @@ export default async function TeacherLayout({
 
   return (
     <div className="flex min-h-screen bg-background">
+      <ServiceWorkerRegistration />
       <TeacherSidebar
         teacher={userProfile}
         assignments={assignments || []}
