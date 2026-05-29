@@ -8,6 +8,7 @@ import {
   successResponse,
   errorResponse,
 } from "@/lib/api-helpers";
+import { sendPushToUser } from "@/lib/push";
 
 type AttendanceRecordRow = Database["public"]["Tables"]["attendance_records"]["Row"];
 
@@ -117,6 +118,36 @@ export async function POST(request: NextRequest) {
         absent: absentStudents.length,
       },
     });
+
+    // Push notifications to parents of absent students
+    for (const record of absentStudents) {
+      try {
+        const { data: student } = await ctx.supabase
+          .from("students")
+          .select("full_name, parent_phone")
+          .eq("id", record.student_id)
+          .single();
+
+        if (student?.parent_phone) {
+          const { data: parentUser } = await ctx.supabase
+            .from("users")
+            .select("id")
+            .eq("phone", student.parent_phone)
+            .eq("role", "PARENT")
+            .single();
+
+          if (parentUser) {
+            await sendPushToUser(ctx.supabase, parentUser.id, {
+              title: "Absence Alert",
+              body: `${student.full_name} marked absent on ${parsed.data.date}`,
+              url: "/portal",
+            });
+          }
+        }
+      } catch {
+        // Push failure should not block attendance recording
+      }
+    }
 
     return successResponse({
       records: data ?? [],
