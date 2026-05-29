@@ -354,13 +354,19 @@ export default function ReportCardsPage() {
       const unpublished = reportCards.filter((rc) => !rc.is_published);
       if (unpublished.length === 0) throw new Error("All already published");
 
-      for (const rc of unpublished) {
-        await supabase
-          .from("report_cards")
-          .update({ is_published: true })
-          .eq("id", rc.id);
+      const response = await fetch("/api/academics/report-cards/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ class_id: selectedClass, term_id: selectedTermId }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "Failed to publish");
       }
-      return { count: unpublished.length };
+
+      const result = await response.json();
+      return { count: result.data.published };
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["report-cards"] });
