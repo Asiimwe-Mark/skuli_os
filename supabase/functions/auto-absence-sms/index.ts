@@ -2,6 +2,7 @@
 // Daily cron at 9AM EAT — finds absent students, sends parent SMS via Africa's Talking
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { queuePushNotification, getParentUserId } from "../_shared/push-queue.ts";
 
 serve(async (_req) => {
   try {
@@ -123,6 +124,20 @@ serve(async (_req) => {
             status: "failed",
             sent_at: new Date().toISOString(),
           });
+        }
+
+        // Push notification to parent
+        try {
+          const parentId = await getParentUserId(supabase, student.parent_phone);
+          if (parentId) {
+            await queuePushNotification(supabase, parentId, {
+              title: "Absence Alert",
+              body: `${student.full_name} was absent from school today (${today})`,
+              url: "/portal",
+            });
+          }
+        } catch {
+          // Push failure should not block SMS processing
         }
 
         totalSent++;
