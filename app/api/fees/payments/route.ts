@@ -8,6 +8,7 @@ import {
   successResponse,
   errorResponse,
 } from "@/lib/api-helpers";
+import { sendPushToUser } from "@/lib/push";
 
 type FeePaymentRow = Database["public"]["Tables"]["fee_payments"]["Row"];
 type FeeAccountRow = Database["public"]["Tables"]["fee_accounts"]["Row"];
@@ -165,6 +166,34 @@ export async function POST(request: NextRequest) {
         student_id: parsed.data.student_id,
       },
     } as any);
+
+    // Push notification to parent
+    try {
+      const { data: student } = await ctx.supabase
+        .from("students")
+        .select("full_name, parent_phone")
+        .eq("id", parsed.data.student_id)
+        .single();
+
+      if (student?.parent_phone) {
+        const { data: parentUser } = await ctx.supabase
+          .from("users")
+          .select("id")
+          .eq("phone", student.parent_phone)
+          .eq("role", "PARENT")
+          .single();
+
+        if (parentUser) {
+          await sendPushToUser(ctx.supabase, parentUser.id, {
+            title: "Payment Received",
+            body: `${parsed.data.amount.toLocaleString()} UGX for ${student.full_name}`,
+            url: "/portal/fees",
+          });
+        }
+      }
+    } catch {
+      // Push notification failure should not block payment recording
+    }
 
     return successResponse(payment, 201);
   } catch (err: unknown) {
