@@ -2,6 +2,7 @@
 // Daily cron at 8AM EAT — finds tomorrow's bookings, sends reminder SMS via sms_logs
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { queuePushNotification, getParentUserId } from "../_shared/push-queue.ts";
 
 serve(async (_req) => {
   try {
@@ -70,6 +71,20 @@ serve(async (_req) => {
       });
 
       // Mark reminder as sent
+      // Queue push notification
+      try {
+        const parentId = await getParentUserId(supabase, booking.parent_phone);
+        if (parentId) {
+          await queuePushNotification(supabase, parentId, {
+            title: "Meeting Reminder",
+            body: `Meeting with ${teacherName} tomorrow at ${time}`,
+            url: "/portal/meetings",
+          });
+        }
+      } catch {
+        // Push failure should not block SMS processing
+      }
+
       await supabase
         .from("meeting_bookings")
         .update({ reminder_sent: true })
