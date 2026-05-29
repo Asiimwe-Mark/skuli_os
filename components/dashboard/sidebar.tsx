@@ -41,6 +41,7 @@ import {
   Bell,
   TrendingDown,
   Library,
+  Box,
   type LucideIcon,
 } from "lucide-react";
 import { createBrowserClient } from "@/lib/supabase/client";
@@ -148,6 +149,14 @@ const NAV_ITEMS: NavItem[] = [
     children: [
       { label: "Book Catalog", href: "/dashboard/library", icon: BookOpen },
       { label: "Issues & Returns", href: "/dashboard/library/issues", icon: ClipboardList },
+    ],
+  },
+  {
+    label: "Operations",
+    icon: Box,
+    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    children: [
+      { label: "Assets & Inventory", href: "/dashboard/assets", icon: Box },
     ],
   },
   {
