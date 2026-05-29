@@ -1,0 +1,140 @@
+<h2>Expense Dashboard — Layout Wireframe</h2>
+<p class="subtitle">app/dashboard/fees/expenses/page.tsx — Approach A</p>
+
+<div class="mockup">
+  <div class="mockup-header">Expense Tracking Dashboard</div>
+  <div class="mockup-body">
+    <!-- Top bar: term selector + actions -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
+      <div style="display:flex;gap:12px;align-items:center">
+        <div class="mock-input" style="width:160px;padding:6px 12px">Term Selector ▾</div>
+        <div class="mock-input" style="width:160px;padding:6px 12px">Date Range ▾</div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="mock-button" style="background:#10B981;color:#fff">+ Add Expense</button>
+        <button class="mock-button">Export CSV</button>
+        <button class="mock-button" style="background:#8B5CF6;color:#fff">P&L Report</button>
+      </div>
+    </div>
+
+    <!-- KPI Cards row -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
+      <div style="background:#1a1f36;border-radius:8px;padding:16px;border:1px solid #2a3050">
+        <p style="color:#888;font-size:12px;margin:0">Total Income (Fee Payments)</p>
+        <p style="color:#10B981;font-size:24px;font-weight:bold;margin:4px 0 0">UGX 12,450,000</p>
+        <p style="color:#666;font-size:11px;margin:4px 0 0">This term</p>
+      </div>
+      <div style="background:#1a1f36;border-radius:8px;padding:16px;border:1px solid #2a3050">
+        <p style="color:#888;font-size:12px;margin:0">Total Expenses</p>
+        <p style="color:#EF4444;font-size:24px;font-weight:bold;margin:4px 0 0">UGX 4,200,000</p>
+        <p style="color:#666;font-size:11px;margin:4px 0 0">This term</p>
+      </div>
+      <div style="background:#1a1f36;border-radius:8px;padding:16px;border:1px solid #2a3050">
+        <p style="color:#888;font-size:12px;margin:0">Net Surplus / Deficit</p>
+        <p style="color:#F59E0B;font-size:24px;font-weight:bold;margin:4px 0 0">UGX 8,250,000</p>
+        <p style="color:#666;font-size:11px;margin:4px 0 0">Surplus</p>
+      </div>
+    </div>
+
+    <!-- Charts row -->
+    <div style="display:grid;grid-template-columns:2fr 1fr;gap:12px;margin-bottom:20px">
+      <div style="background:#1a1f36;border-radius:8px;padding:16px;border:1px solid #2a3050">
+        <p style="color:#ccc;font-size:13px;font-weight:600;margin:0 0 12px">Income vs Expenses by Week</p>
+        <div style="display:flex;align-items:flex-end;gap:8px;height:120px">
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1">
+            <div style="width:100%;display:flex;gap:2px;align-items:flex-end;justify-content:center">
+              <div style="background:#10B981;width:12px;height:80px;border-radius:2px"></div>
+              <div style="background:#EF4444;width:12px;height:40px;border-radius:2px"></div>
+            </div>
+            <span style="color:#666;font-size:10px">Wk 1</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1">
+            <div style="width:100%;display:flex;gap:2px;align-items:flex-end;justify-content:center">
+              <div style="background:#10B981;width:12px;height:100px;border-radius:2px"></div>
+              <div style="background:#EF4444;width:12px;height:30px;border-radius:2px"></div>
+            </div>
+            <span style="color:#666;font-size:10px">Wk 2</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1">
+            <div style="width:100%;display:flex;gap:2px;align-items:flex-end;justify-content:center">
+              <div style="background:#10B981;width:12px;height:60px;border-radius:2px"></div>
+              <div style="background:#EF4444;width:12px;height:50px;border-radius:2px"></div>
+            </div>
+            <span style="color:#666;font-size:10px">Wk 3</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1">
+            <div style="width:100%;display:flex;gap:2px;align-items:flex-end;justify-content:center">
+              <div style="background:#10B981;width:12px;height:90px;border-radius:2px"></div>
+              <div style="background:#EF4444;width:12px;height:35px;border-radius:2px"></div>
+            </div>
+            <span style="color:#666;font-size:10px">Wk 4</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1">
+            <div style="width:100%;display:flex;gap:2px;align-items:flex-end;justify-content:center">
+              <div style="background:#10B981;width:12px;height:70px;border-radius:2px"></div>
+              <div style="background:#EF4444;width:12px;height:25px;border-radius:2px"></div>
+            </div>
+            <span style="color:#666;font-size:10px">Wk 5</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;flex:1">
+            <div style="width:100%;display:flex;gap:2px;align-items:flex-end;justify-content:center">
+              <div style="background:#10B981;width:12px;height:50px;border-radius:2px"></div>
+              <div style="background:#EF4444;width:12px;height:60px;border-radius:2px"></div>
+            </div>
+            <span style="color:#666;font-size:10px">Wk 6</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:16px;margin-top:10px;justify-content:center">
+          <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#888"><span style="display:inline-block;width:10px;height:10px;background:#10B981;border-radius:2px"></span> Income</span>
+          <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:#888"><span style="display:inline-block;width:10px;height:10px;background:#EF4444;border-radius:2px"></span> Expenses</span>
+        </div>
+      </div>
+      <div style="background:#1a1f36;border-radius:8px;padding:16px;border:1px solid #2a3050">
+        <p style="color:#ccc;font-size:13px;font-weight:600;margin:0 0 12px">Expenses by Category</p>
+        <div style="display:flex;align-items:center;justify-content:center;height:120px">
+          <div style="position:relative;width:100px;height:100px">
+            <div style="width:100px;height:100px;border-radius:50%;background:conic-gradient(#F59E0B 0% 40%, #3B82F6 40% 65%, #10B981 65% 80%, #8B5CF6 80% 90%, #6B7280 90% 100%);"></div>
+            <div style="position:absolute;top:25px;left:25px;width:50px;height:50px;border-radius:50%;background:#1a1f36;"></div>
+          </div>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:#888;display:flex;flex-direction:column;gap:4px">
+          <span><span style="color:#F59E0B">●</span> Salaries — 40%</span>
+          <span><span style="color:#3B82F6">●</span> Utilities — 25%</span>
+          <span><span style="color:#10B981">●</span> Supplies — 15%</span>
+          <span><span style="color:#8B5CF6">●</span> Maintenance — 10%</span>
+          <span><span style="color:#6B7280">●</span> Other — 10%</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Expense table -->
+    <div style="background:#1a1f36;border-radius:8px;padding:16px;border:1px solid #2a3050">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <p style="color:#ccc;font-size:13px;font-weight:600;margin:0">Expense Records</p>
+        <div style="display:flex;gap:8px">
+          <div class="mock-input" style="width:180px;padding:4px 8px;font-size:12px">Search expenses...</div>
+          <div class="mock-input" style="width:120px;padding:4px 8px;font-size:12px">Category ▾</div>
+        </div>
+      </div>
+      <table style="width:100%;font-size:12px;border-collapse:collapse">
+        <tr style="color:#888;text-align:left;border-bottom:1px solid #2a3050">
+          <th style="padding:8px">Date</th><th>Category</th><th>Description</th><th>Amount</th><th>Method</th><th>Receipt #</th><th>Recorded By</th>
+        </tr>
+        <tr style="border-bottom:1px solid #1f2545;color:#ccc">
+          <td style="padding:8px">2026-05-15</td><td>Salaries</td><td>May teaching staff salaries</td><td style="color:#EF4444">UGX 2,000,000</td><td>Bank</td><td>REC-001</td><td>James B.</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1f2545;color:#ccc">
+          <td style="padding:8px">2026-05-12</td><td>Utilities</td><td>Electricity bill - May</td><td style="color:#EF4444">UGX 450,000</td><td>Mobile Money</td><td>REC-002</td><td>James B.</td>
+        </tr>
+        <tr style="border-bottom:1px solid #1f2545;color:#ccc">
+          <td style="padding:8px">2026-05-10</td><td>Supplies</td><td>Science lab equipment</td><td style="color:#EF4444">UGX 320,000</td><td>Cash</td><td>REC-003</td><td>Mary K.</td>
+        </tr>
+        <tr style="color:#ccc">
+          <td style="padding:8px">2026-05-08</td><td>Maintenance</td><td>Roof repair - Block B</td><td style="color:#EF4444">UGX 780,000</td><td>Cheque</td><td>REC-004</td><td>James B.</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+</div>
+
+<p style="margin-top:16px;color:#888;font-size:13px">This matches the layout pattern from your existing Fees Reports page — KPIs on top, charts in the middle, table at the bottom. The <strong>Categories</strong> page lives separately at <code>/fees/expenses/categories</code>.</p>

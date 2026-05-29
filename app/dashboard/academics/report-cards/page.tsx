@@ -435,32 +435,45 @@ export default function ReportCardsPage() {
         .eq("student_id", card.student_id)
         .eq("term_id", selectedTermId);
 
-      const subjectsData = studentMarks?.map((m) => ({
-        subject: m.subjects?.name ?? "Unknown",
-        bot: studentMarks?.find((sm) => sm.subject_id === m.subject_id && sm.exam_type === "BOT")?.score ?? null,
-        mid: studentMarks?.find((sm) => sm.subject_id === m.subject_id && sm.exam_type === "MID")?.score ?? null,
-        eot: studentMarks?.find((sm) => sm.subject_id === m.subject_id && sm.exam_type === "EOT")?.score ?? null,
+      const subjectsData = studentMarks?.map((m: any) => ({
+        name: m.subjects?.name ?? "Unknown",
+        bot: studentMarks?.find((sm: any) => sm.subject_id === m.subject_id && sm.exam_type === "BOT")?.score ?? undefined,
+        midterm: studentMarks?.find((sm: any) => sm.subject_id === m.subject_id && sm.exam_type === "MID")?.score ?? undefined,
+        eot: studentMarks?.find((sm: any) => sm.subject_id === m.subject_id && sm.exam_type === "EOT")?.score ?? undefined,
         total: Math.round(card.average ?? 0 * (studentMarks?.length ?? 1) / 100),
         grade: getGrade(card.average ?? 0, gradingScales),
-        remark: subjectComments?.find((sc) => sc.subject_id === m.subject_id)?.eot_comment ?? "",
+        remarks: subjectComments?.find((sc: any) => sc.subject_id === m.subject_id)?.eot_comment ?? undefined,
       })) ?? [];
 
       const pdfDoc = (
         <ReportCardPDF
-          schoolName={school?.name ?? ""}
-          schoolMotto={school?.motto ?? ""}
-          studentName={studentName}
-          admissionNumber={admissionNo}
-          className={className}
-          termName={termObj?.name ?? ""}
-          academicYear={termObj?.academic_year ?? ""}
+          school={{
+            name: school?.name || "School",
+            address: (school as any)?.address,
+            motto: (school as any)?.motto,
+            logo_url: (school as any)?.logo_url,
+          }}
+          student={{
+            full_name: studentName,
+            admission_number: admissionNo,
+            class_name: className,
+          }}
+          term={termObj?.name || "Term"}
+          academic_year={termObj?.academic_year_id || ""}
           subjects={subjectsData}
-          totalMarks={card.total_marks ?? 0}
-          averageMarks={card.average ?? 0}
-          classPosition={card.position_in_class ?? 0}
-          classSize={card.class_size ?? 0}
-          classTeacherComment={card.class_teacher_comment ?? ""}
-          headComment={card.headmaster_comment ?? ""}
+          summary={{
+            total_marks: card.total_marks ?? 0,
+            average: card.average ?? 0,
+            position: card.position_in_class ?? 0,
+            class_size: card.class_size ?? 0,
+          }}
+          attendance={{ days_present: 0, days_open: 0 }}
+          comments={{
+            class_teacher: card.class_teacher_comment || undefined,
+            headmaster: card.headmaster_comment || undefined,
+          }}
+          conduct_grade={card.conduct_grade || undefined}
+          next_term_date={nextTerm?.start_date || undefined}
         />
       );
 
@@ -982,7 +995,7 @@ export default function ReportCardsPage() {
                     <TableHead>Class Teacher Comment</TableHead>
                     <TableHead>Headmaster Comment</TableHead>
                     <TableHead className="text-center w-20">Status</TableHead>
-                    <TableHead className="w-20">PDF</TableHead>
+                    <TableHead className="w-24">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -1191,19 +1204,36 @@ export default function ReportCardsPage() {
                           </Badge>
                         </TableCell>
                         <TableCell>
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-8 w-8"
-                            disabled={downloadingStudentId === rc.student_id}
-                            onClick={() => handleDownloadSinglePdf(rc)}
-                          >
-                            {downloadingStudentId === rc.student_id ? (
-                              <Loader2 className="w-4 h-4 animate-spin" />
-                            ) : (
-                              <Download className="w-4 h-4" />
+                          <div className="flex items-center gap-1">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-8 w-8"
+                              disabled={downloadingStudentId === rc.student_id}
+                              onClick={() => handleDownloadSinglePdf(rc)}
+                            >
+                              {downloadingStudentId === rc.student_id ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <Download className="w-4 h-4" />
+                              )}
+                            </Button>
+                            {rc.is_published && (
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-8 w-8"
+                                disabled={sendingSmsId === rc.student_id}
+                                onClick={() => shareReportCardViaSMS(rc)}
+                              >
+                                {sendingSmsId === rc.student_id ? (
+                                  <Loader2 className="w-4 h-4 animate-spin" />
+                                ) : (
+                                  <Send className="w-4 h-4" />
+                                )}
+                              </Button>
                             )}
-                          </Button>
+                          </div>
                         </TableCell>
                       </motion.tr>
                     );

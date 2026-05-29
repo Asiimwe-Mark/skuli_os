@@ -45,7 +45,7 @@ export default function GroupSettingsPage() {
 
       if (adminData) {
         setAdmins(
-          adminData.map((a) => ({
+          adminData.map((a: any) => ({
             id: a.id,
             user_id: a.user_id,
             user: a.user as unknown as { full_name: string; phone: string | null } | null,
@@ -110,7 +110,7 @@ export default function GroupSettingsPage() {
         .eq("group_id", group.id);
       if (adminData) {
         setAdmins(
-          adminData.map((a) => ({
+          adminData.map((a: any) => ({
             id: a.id,
             user_id: a.user_id,
             user: a.user as unknown as { full_name: string; phone: string | null } | null,

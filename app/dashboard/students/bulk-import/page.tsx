@@ -9,7 +9,21 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
-import { Upload, FileSpreadsheet, CheckCircle, XCircle, Loader2, Download } from 'lucide-react';
+import { Upload, FileSpreadsheet, CheckCircle, XCircle, Loader2, Download, Eye } from 'lucide-react';
+
+interface ParsedRow {
+  row: number;
+  full_name: string;
+  admission_number: string;
+  date_of_birth: string;
+  gender: string;
+  parent_name: string;
+  parent_phone: string;
+  parent_email: string;
+  class_name: string;
+  valid: boolean;
+  error?: string;
+}
 
 interface ImportResult {
   success: number;
@@ -25,12 +39,15 @@ export default function BulkImportPage() {
   const [file, setFile] = useState<File | null>(null);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [previewData, setPreviewData] = useState<ParsedRow[] | null>(null);
+  const [headers, setHeaders] = useState<string[]>([]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selected = e.target.files?.[0];
     if (selected && selected.type === 'text/csv') {
       setFile(selected);
       setResult(null);
+      setPreviewData(null);
     } else {
       toast({ title: 'Please select a CSV file', variant: 'destructive' });
     }
@@ -47,25 +64,60 @@ export default function BulkImportPage() {
     URL.revokeObjectURL(url);
   };
 
+  const handlePreview = async () => {
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const lines = text.split('\n').filter(line => line.trim());
+      const parsedHeaders = lines[0].split(',').map(h => h.trim().toLowerCase());
+      setHeaders(parsedHeaders);
+
+      const requiredHeaders = ['full_name', 'parent_name', 'parent_phone'];
+      const missing = requiredHeaders.filter(h => !parsedHeaders.includes(h));
+      if (missing.length > 0) {
+        toast({ title: `Missing required columns: ${missing.join(', ')}`, variant: 'destructive' });
+        return;
+      }
+
+      const rows: ParsedRow[] = [];
+      for (let i = 1; i < lines.length; i++) {
+        const values = lines[i].split(',').map(v => v.trim());
+        const row: Record<string, string> = {};
+        parsedHeaders.forEach((h, idx) => {
+          row[h] = values[idx] || '';
+        });
+
+        const valid = !!(row.full_name && row.parent_name && row.parent_phone);
+        rows.push({
+          row: i + 1,
+          full_name: row.full_name || '',
+          admission_number: row.admission_number || '',
+          date_of_birth: row.date_of_birth || '',
+          gender: row.gender || '',
+          parent_name: row.parent_name || '',
+          parent_phone: row.parent_phone || '',
+          parent_email: row.parent_email || '',
+          class_name: row.class_name || '',
+          valid,
+          error: valid ? undefined : 'Missing required fields (full_name, parent_name, parent_phone)',
+        });
+      }
+
+      setPreviewData(rows);
+    } catch (err: any) {
+      toast({ title: 'Failed to parse CSV', description: err.message, variant: 'destructive' });
+    }
+  };
+
   const handleImport = async () => {
-    if (!file || !school) return;
+    if (!file || !school || !previewData) return;
 
     setImporting(true);
     const supabase = createBrowserClient();
 
     try {
-      const text = await file.text();
-      const lines = text.split('\n').filter(line => line.trim());
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-
-      const requiredHeaders = ['full_name', 'parent_name', 'parent_phone'];
-      const missing = requiredHeaders.filter(h => !headers.includes(h));
-      if (missing.length > 0) {
-        toast({ title: `Missing required columns: ${missing.join(', ')}`, variant: 'destructive' });
-        setImporting(false);
-        return;
-      }
-
+      const validRows = previewData.filter(r => r.valid);
       let success = 0;
       let failed = 0;
       const errors: string[] = [];
@@ -76,7 +128,7 @@ export default function BulkImportPage() {
         .select('id, name')
         .eq('school_id', school.id);
 
-      const classMap = new Map(classes?.map((c: { name: string; id: string }) => [c.name.toLowerCase(), c.id]) || []);
+      const classMap = new Map(classes?.map((c: any) => [c.name.toLowerCase(), c.id]) || []);
 
       // Get current student count for admission number generation
       const { count } = await supabase
@@ -86,18 +138,8 @@ export default function BulkImportPage() {
 
       let seq = (count ?? 0) + 1;
 
-      for (let i = 1; i < lines.length; i++) {
-        const values = lines[i].split(',').map(v => v.trim());
-        const row: Record<string, string> = {};
-        headers.forEach((h, idx) => {
-          row[h] = values[idx] || '';
-        });
-
+      for (const row of validRows) {
         try {
-          if (!row.full_name || !row.parent_name || !row.parent_phone) {
-            throw new Error(`Row ${i + 1}: Missing required fields`);
-          }
-
           const admissionNumber = row.admission_number || `ADM-${String(seq).padStart(5, '0')}`;
           const classId = row.class_name ? classMap.get(row.class_name.toLowerCase()) : null;
 
@@ -121,8 +163,14 @@ export default function BulkImportPage() {
           seq++;
         } catch (err: any) {
           failed++;
-          errors.push(err.message || `Row ${i + 1}: Unknown error`);
+          errors.push(`Row ${row.row}: ${err.message || 'Unknown error'}`);
         }
+      }
+
+      // Count skipped invalid rows
+      const skipped = previewData.length - validRows.length;
+      if (skipped > 0) {
+        errors.push(`${skipped} row(s) skipped due to validation errors`);
       }
 
       setResult({ success, failed, errors });
@@ -132,7 +180,7 @@ export default function BulkImportPage() {
         school_id: school.id,
         action: 'bulk_import',
         entity_type: 'student',
-        new_value: { success, failed, filename: file.name },
+        new_value: { success, failed, skipped, filename: file.name },
       });
 
       if (success > 0) {
@@ -144,6 +192,9 @@ export default function BulkImportPage() {
       setImporting(false);
     }
   };
+
+  const validCount = previewData?.filter(r => r.valid).length || 0;
+  const invalidCount = previewData?.filter(r => !r.valid).length || 0;
 
   return (
     <div className="space-y-6">
@@ -190,6 +241,7 @@ export default function BulkImportPage() {
                   onClick={() => {
                     setFile(null);
                     setResult(null);
+                    setPreviewData(null);
                     if (fileRef.current) fileRef.current.value = '';
                   }}
                 >
@@ -198,19 +250,35 @@ export default function BulkImportPage() {
               </div>
             )}
 
-            <Button onClick={handleImport} disabled={!file || importing} className="w-full">
-              {importing ? (
-                <>
-                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  Importing...
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4 mr-2" />
-                  Import Students
-                </>
-              )}
-            </Button>
+            {!previewData ? (
+              <Button onClick={handlePreview} disabled={!file} className="w-full">
+                <Eye className="w-4 h-4 mr-2" />
+                Preview Data
+              </Button>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex gap-2 text-sm">
+                  <span className="text-green-600">{validCount} valid</span>
+                  {invalidCount > 0 && <span className="text-red-600">{invalidCount} invalid</span>}
+                </div>
+                <Button onClick={handleImport} disabled={importing || validCount === 0} className="w-full">
+                  {importing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4 mr-2" />
+                      Import {validCount} Students
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => setPreviewData(null)} className="w-full">
+                  Reset
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -250,6 +318,51 @@ export default function BulkImportPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Preview Table */}
+      {previewData && !result && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Preview ({previewData.length} rows)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-background">
+                  <tr className="border-b">
+                    <th className="text-left p-2">Row</th>
+                    <th className="text-left p-2">Name</th>
+                    <th className="text-left p-2">Admission #</th>
+                    <th className="text-left p-2">Parent</th>
+                    <th className="text-left p-2">Phone</th>
+                    <th className="text-left p-2">Class</th>
+                    <th className="text-left p-2">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {previewData.map((row) => (
+                    <tr key={row.row} className={`border-b ${!row.valid ? 'bg-red-50' : ''}`}>
+                      <td className="p-2 text-muted-foreground">{row.row}</td>
+                      <td className="p-2 font-medium">{row.full_name || '—'}</td>
+                      <td className="p-2 text-muted-foreground">{row.admission_number || 'Auto'}</td>
+                      <td className="p-2">{row.parent_name || '—'}</td>
+                      <td className="p-2">{row.parent_phone || '—'}</td>
+                      <td className="p-2 text-muted-foreground">{row.class_name || '—'}</td>
+                      <td className="p-2">
+                        {row.valid ? (
+                          <span className="text-green-600 text-xs">Valid</span>
+                        ) : (
+                          <span className="text-red-600 text-xs" title={row.error}>Invalid</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {result && (
         <Card>

@@ -54,12 +54,12 @@ export default async function TeacherDashboardPage() {
 
   // Get unique classes
   const uniqueClasses = Array.from(
-    new Map(assignments.map(a => [a.class_id, a])).values()
+    new Map(assignments.map((a: any) => [a.class_id, a])).values()
   );
 
   // Fetch student counts and recent activity for each class
   const classStats = await Promise.all(
-    uniqueClasses.map(async (assignment) => {
+    uniqueClasses.map(async (assignment: any) => {
       const { count: studentCount } = await supabase
         .from('students')
         .select('*', { count: 'exact', head: true })
@@ -178,7 +178,7 @@ export default async function TeacherDashboardPage() {
       <div className="mb-8">
         <h2 className="text-xl font-semibold mb-4">My Classes</h2>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {classStats.map(({ assignment, studentCount, marksCount, attendanceCount }) => (
+          {classStats.map(({ assignment, studentCount, marksCount, attendanceCount }: any) => (
             <Card key={assignment.class_id}>
               <CardHeader>
                 <CardTitle className="flex items-center justify-between">
@@ -240,11 +240,11 @@ export default async function TeacherDashboardPage() {
           <CardContent>
             {recentMarks && recentMarks.length > 0 ? (
               <ul className="space-y-3">
-                {recentMarks.map((mark) => (
+                {recentMarks.map((mark: any) => (
                   <li key={mark.id} className="text-sm border-b pb-2 last:border-0">
                     <div className="flex justify-between">
                       <span className="font-medium">
-                        {mark.student.full_name}
+                        {mark.student?.full_name || 'Unknown'}
                       </span>
                       <span className="text-amber font-semibold">{mark.score}%</span>
                     </div>
@@ -268,11 +268,11 @@ export default async function TeacherDashboardPage() {
           <CardContent>
             {recentAttendance && recentAttendance.length > 0 ? (
               <ul className="space-y-3">
-                {recentAttendance.map((record) => (
+                {recentAttendance.map((record: any) => (
                   <li key={record.id} className="text-sm border-b pb-2 last:border-0">
                     <div className="flex justify-between">
                       <span className="font-medium">
-                        {record.student.full_name}
+                        {record.student?.full_name || 'Unknown'}
                       </span>
                       <span
                         className={`font-semibold ${

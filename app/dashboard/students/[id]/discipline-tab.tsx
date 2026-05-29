@@ -79,7 +79,7 @@ export function DisciplineTab({ studentId, schoolId }: DisciplineTabProps) {
   const [generatingPdf, setGeneratingPdf] = useState(false);
 
   const form = useForm<FormData>({
-    resolver: zodResolver(formSchema),
+    resolver: zodResolver(formSchema) as any,
     defaultValues: {
       incident_date: new Date().toISOString().split('T')[0],
       incident_type: 'verbal_warning',
@@ -111,7 +111,7 @@ export function DisciplineTab({ studentId, schoolId }: DisciplineTabProps) {
     }
   }
 
-  async function onSubmit( FormData) {
+  async function onSubmit(data: FormData) {
     try {
       const response = await fetch('/api/discipline', {
         method: 'POST',

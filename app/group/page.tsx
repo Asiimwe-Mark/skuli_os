@@ -105,7 +105,7 @@ export default function GroupOverviewPage() {
           .eq("school_id", school.id)
           .eq("status", "confirmed");
 
-        const fee = (payments ?? []).reduce((sum, p) => sum + Number(p.amount), 0);
+        const fee = (payments ?? []).reduce((sum: any, p: any) => sum + Number(p.amount), 0);
         totalFee += fee;
 
         const today = new Date().toISOString().split("T")[0];
@@ -117,7 +117,7 @@ export default function GroupOverviewPage() {
 
         let attRate = 0;
         if (attRecords && attRecords.length > 0) {
-          const present = attRecords.filter((r) => r.status === "present").length;
+          const present = attRecords.filter((r: any) => r.status === "present").length;
           attRate = Math.round((present / attRecords.length) * 100);
           totalAttPct += attRate;
           attSchools++;

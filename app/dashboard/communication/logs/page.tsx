@@ -7,7 +7,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useSchoolStore } from "@/store/school";
 import { cn } from "@/lib/utils/cn";
 import { formatUGX } from "@/lib/utils/currency";
-import { formatDateTime } from "@/lib/utils/dates";
+import { formatDateTime, formatDate } from "@/lib/utils/dates";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";

@@ -212,16 +212,16 @@ export default function PortalFeesPage() {
                 onChange={(e) => {
                   setSelectedStudentId(e.target.value);
                   // Reload fee data for selected student
-                  supabase.rpc("get_student_fee_breakdown", { p_student_id: e.target.value }).then(({ data }) => {
+                  supabase.rpc("get_student_fee_breakdown", { p_student_id: e.target.value }).then(({ data }: any) => {
                     if (data) {
                       setFeeSummary(data);
                       setPayAmount(data.balance?.toString() ?? "");
                     }
                   });
-                  supabase.from("payments").select("id, amount, payment_date, receipt_number, method, status").eq("student_id", e.target.value).order("payment_date", { ascending: false }).then(({ data }) => {
+                  supabase.from("payments").select("id, amount, payment_date, receipt_number, method, status").eq("student_id", e.target.value).order("payment_date", { ascending: false }).then(({ data }: any) => {
                     if (data) setPayments(data);
                   });
-                  supabase.from("student_discounts").select(`*, discount:fee_discounts(*)`).eq("student_id", e.target.value).eq("is_deleted", false).then(({ data }) => {
+                  supabase.from("student_discounts").select(`*, discount:fee_discounts(*)`).eq("student_id", e.target.value).eq("is_deleted", false).then(({ data }: any) => {
                     setDiscounts(data ?? []);
                   });
                 }}

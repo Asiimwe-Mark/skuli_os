@@ -54,7 +54,7 @@ export default async function TeacherProfilePage() {
             <Avatar className="w-20 h-20">
               <AvatarImage src={userProfile.avatar_url || undefined} />
               <AvatarFallback>
-                {userProfile.full_name.split(' ').map((n) => n[0]).join('').toUpperCase()}
+                {userProfile.full_name.split(' ').map((n: any) => n[0]).join('').toUpperCase()}
               </AvatarFallback>
             </Avatar>
             <div>
@@ -77,7 +77,7 @@ export default async function TeacherProfilePage() {
         <CardContent>
           {assignments && assignments.length > 0 ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {assignments.map((a) => (
+              {assignments.map((a: any) => (
                 <div
                   key={`${a.class_id}-${a.subject_id}`}
                   className="border rounded-lg p-4"

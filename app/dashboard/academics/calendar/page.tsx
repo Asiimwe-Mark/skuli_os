@@ -12,11 +12,13 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/components/ui/use-toast';
-import { Plus, Download, Printer, Loader2, X } from 'lucide-react';
+import { Plus, Download, Printer, Loader2, X, Pencil } from 'lucide-react';
 import type { Database } from '@/types/database';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday, isSameDay } from 'date-fns';
 
-type CalendarEvent = Database['public']['Tables']['calendar_events']['Row'];
+type CalendarEvent = Database['public']['Tables']['calendar_events']['Row'] & {
+  class?: { id: string; name: string } | null;
+};
 type Class = Database['public']['Tables']['classes']['Row'];
 
 const EVENT_COLORS: Record<string, string> = {
@@ -36,6 +38,7 @@ export default function CalendarPage() {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [isAddEventOpen, setIsAddEventOpen] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [newEvent, setNewEvent] = useState({
     title: '',
     description: '',
@@ -149,6 +152,58 @@ export default function CalendarPage() {
     } catch (error) {
       console.error('Error deleting event:', error);
       toast({ title: 'Error', description: 'Failed to delete event', variant: 'destructive' });
+    }
+  }
+
+  function startEditEvent(event: CalendarEvent) {
+    setEditingEvent(event);
+    setNewEvent({
+      title: event.title,
+      description: event.description || '',
+      event_date: event.event_date,
+      end_date: event.end_date || '',
+      event_type: event.event_type,
+      affects_attendance: event.affects_attendance,
+      class_id: event.class_id || '',
+      is_public: event.is_public,
+    });
+  }
+
+  async function handleUpdateEvent() {
+    if (!editingEvent) return;
+    try {
+      const { error } = await supabase
+        .from('calendar_events')
+        .update({
+          title: newEvent.title,
+          description: newEvent.description || null,
+          event_date: newEvent.event_date,
+          end_date: newEvent.end_date || null,
+          event_type: newEvent.event_type,
+          affects_attendance: newEvent.affects_attendance,
+          class_id: newEvent.class_id || null,
+          is_public: newEvent.is_public,
+        })
+        .eq('id', editingEvent.id);
+
+      if (error) throw error;
+
+      toast({ title: 'Success', description: 'Event updated successfully' });
+      setEditingEvent(null);
+      setNewEvent({
+        title: '',
+        description: '',
+        event_date: format(new Date(), 'yyyy-MM-dd'),
+        end_date: '',
+        event_type: 'event',
+        affects_attendance: true,
+        class_id: '',
+        is_public: true,
+      });
+      fetchData();
+    } catch (error) {
+      console.error('Error updating event:', error);
+      toast({ title: 'Error', description: 'Failed to update event', variant: 'destructive' });
     }
   }
 
@@ -303,6 +358,103 @@ export default function CalendarPage() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          <Dialog open={!!editingEvent} onOpenChange={(open) => { if (!open) setEditingEvent(null); }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Edit Event</DialogTitle>
+                <DialogDescription>Update the calendar event</DialogDescription>
+              </DialogHeader>
+              <div className="space-y-4 py-4">
+                <div>
+                  <Label htmlFor="edit-title">Title</Label>
+                  <Input
+                    id="edit-title"
+                    value={newEvent.title}
+                    onChange={(e) => setNewEvent(prev => ({ ...prev, title: e.target.value }))}
+                    placeholder="Event title"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="edit-description">Description</Label>
+                  <Textarea
+                    id="edit-description"
+                    value={newEvent.description}
+                    onChange={(e) => setNewEvent(prev => ({ ...prev, description: e.target.value }))}
+                    placeholder="Event details"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="edit-event_date">Start Date</Label>
+                    <Input
+                      id="edit-event_date"
+                      type="date"
+                      value={newEvent.event_date}
+                      onChange={(e) => setNewEvent(prev => ({ ...prev, event_date: e.target.value }))}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-end_date">End Date (optional)</Label>
+                    <Input
+                      id="edit-end_date"
+                      type="date"
+                      value={newEvent.end_date}
+                      onChange={(e) => setNewEvent(prev => ({ ...prev, end_date: e.target.value }))}
+                    />
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="edit-event_type">Event Type</Label>
+                  <Select value={newEvent.event_type} onValueChange={(val) => setNewEvent(prev => ({ ...prev, event_type: val as CalendarEvent['event_type'] }))}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="holiday">Holiday</SelectItem>
+                      <SelectItem value="exam">Exam</SelectItem>
+                      <SelectItem value="event">Event</SelectItem>
+                      <SelectItem value="closure">Closure</SelectItem>
+                      <SelectItem value="meeting">Meeting</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="edit-affects_attendance"
+                    checked={newEvent.affects_attendance}
+                    onCheckedChange={(checked) => setNewEvent(prev => ({ ...prev, affects_attendance: checked }))}
+                  />
+                  <Label htmlFor="edit-affects_attendance">Affects Attendance Calculation</Label>
+                </div>
+                <div>
+                  <Label htmlFor="edit-class_id">Class (optional - leave empty for school-wide)</Label>
+                  <Select value={newEvent.class_id} onValueChange={(val) => setNewEvent(prev => ({ ...prev, class_id: val }))}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="School-wide" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">School-wide</SelectItem>
+                      {classes.map(cls => (
+                        <SelectItem key={cls.id} value={cls.id}>{cls.name}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    id="edit-is_public"
+                    checked={newEvent.is_public}
+                    onCheckedChange={(checked) => setNewEvent(prev => ({ ...prev, is_public: checked }))}
+                  />
+                  <Label htmlFor="edit-is_public">Visible in Parent Portal</Label>
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setEditingEvent(null)}>Cancel</Button>
+                <Button onClick={handleUpdateEvent}>Update Event</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
 
@@ -410,13 +562,22 @@ export default function CalendarPage() {
                     <div key={event.id} className="p-3 border rounded space-y-2">
                       <div className="flex justify-between items-start">
                         <Badge className={EVENT_COLORS[event.event_type]}>{event.event_type}</Badge>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleDeleteEvent(event.id)}
-                        >
-                          <X className="h-3 w-3" />
-                        </Button>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => startEditEvent(event)}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleDeleteEvent(event.id)}
+                          >
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </div>
                       <div className="font-medium">{event.title}</div>
                       {event.description && (

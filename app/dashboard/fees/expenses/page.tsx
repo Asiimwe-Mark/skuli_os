@@ -465,7 +465,7 @@ export default function ExpensesPage() {
                   <RechartsTooltip
                     contentStyle={{ backgroundColor: '#1a1f36', border: '1px solid #2a3050', borderRadius: 8 }}
                     labelStyle={{ color: '#ccc' }}
-                    formatter={(value: number) => formatUGX(value)}
+                    formatter={((value: number) => formatUGX(value)) as any}
                   />
                   <Bar dataKey="Income" fill="#10B981" radius={[4, 4, 0, 0]} />
                   <Bar dataKey="Expenses" fill="#EF4444" radius={[4, 4, 0, 0]} />
@@ -501,7 +501,7 @@ export default function ExpensesPage() {
                     </Pie>
                     <RechartsTooltip
                       contentStyle={{ backgroundColor: '#1a1f36', border: '1px solid #2a3050', borderRadius: 8 }}
-                      formatter={(value: number) => formatUGX(value)}
+                      formatter={((value: number) => formatUGX(value)) as any}
                     />
                   </RechartsPieChart>
                 </ResponsiveContainer>

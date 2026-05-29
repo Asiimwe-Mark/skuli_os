@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils/cn";
+import { createBrowserClient } from "@/lib/supabase/client";
+import { useSchoolStore } from "@/store/school";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,6 +23,8 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import { useToast } from "@/components/ui/use-toast";
 import {
   FileStack,
   Plus,
@@ -28,67 +32,16 @@ import {
   Trash2,
   Copy,
   MessageSquare,
+  Loader2,
 } from "lucide-react";
 
 interface Template {
   id: string;
   name: string;
   body: string;
-  category: string;
   variables: string[];
+  is_default: boolean;
 }
-
-const DEFAULT_TEMPLATES: Template[] = [
-  {
-    id: "1",
-    name: "Fee Reminder",
-    body: "Dear {parent_name}, {student_name}'s fee balance is UGX {balance}. Please clear by the deadline. - {school_name}",
-    category: "fees",
-    variables: ["parent_name", "student_name", "balance", "school_name"],
-  },
-  {
-    id: "2",
-    name: "Payment Receipt",
-    body: "Dear {parent_name}, Payment of UGX {amount} received for {student_name}. Balance: UGX {balance}. Receipt: {receipt_no}. - {school_name}",
-    category: "fees",
-    variables: ["parent_name", "amount", "student_name", "balance", "receipt_no", "school_name"],
-  },
-  {
-    id: "3",
-    name: "Exam Results Ready",
-    body: "Dear {parent_name}, {student_name}'s exam results are ready. Log in to view at skuli.app/portal - {school_name}",
-    category: "academics",
-    variables: ["parent_name", "student_name", "school_name"],
-  },
-  {
-    id: "4",
-    name: "Absence Alert",
-    body: "Dear {parent_name}, {student_name} was absent from school today, {date}. Please contact {school_name} if this is an error.",
-    category: "attendance",
-    variables: ["parent_name", "student_name", "date", "school_name"],
-  },
-  {
-    id: "5",
-    name: "School Closure",
-    body: "Dear Parent, please note that {school_name} will be closed on {date}. Normal classes resume on {return_date}.",
-    category: "general",
-    variables: ["school_name", "date", "return_date"],
-  },
-  {
-    id: "6",
-    name: "Event Reminder",
-    body: "Dear Parent, this is a reminder about {event_name} on {date} at {time}. - {school_name}",
-    category: "general",
-    variables: ["event_name", "date", "time", "school_name"],
-  },
-  {
-    id: "7",
-    name: "Term Opening",
-    body: "Dear {parent_name}, {term} begins on {opening_date}. Fee deadline: {fee_deadline}. - {school_name}",
-    category: "general",
-    variables: ["parent_name", "term", "opening_date", "fee_deadline", "school_name"],
-  },
-];
 
 const CATEGORY_COLORS: Record<string, string> = {
   fees: "bg-emerald/10 text-emerald",
@@ -98,18 +51,44 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 export default function TemplatesPage() {
-  const [templates, setTemplates] = useState<Template[]>(DEFAULT_TEMPLATES);
+  const { school } = useSchoolStore();
+  const { toast } = useToast();
+  const supabase = createBrowserClient();
+  const [templates, setTemplates] = useState<Template[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
   const [name, setName] = useState("");
   const [body, setBody] = useState("");
-  const [category, setCategory] = useState("general");
+
+  useEffect(() => {
+    if (school) fetchTemplates();
+  }, [school]);
+
+  async function fetchTemplates() {
+    if (!school) return;
+    setLoading(true);
+    const { data, error } = await supabase
+      .from("sms_templates")
+      .select("id, name, body, variables, is_default")
+      .eq("school_id", school.id)
+      .eq("is_deleted", false)
+      .order("is_default", { ascending: false })
+      .order("name");
+
+    if (error) {
+      toast({ title: "Failed to load templates", variant: "destructive" });
+    } else {
+      setTemplates(data || []);
+    }
+    setLoading(false);
+  }
 
   const openCreate = () => {
     setEditingTemplate(null);
     setName("");
     setBody("");
-    setCategory("general");
     setDialogOpen(true);
   };
 
@@ -117,50 +96,82 @@ export default function TemplatesPage() {
     setEditingTemplate(template);
     setName(template.name);
     setBody(template.body);
-    setCategory(template.category);
     setDialogOpen(true);
   };
 
-  const handleSave = () => {
-    if (!name.trim() || !body.trim()) return;
+  const handleSave = async () => {
+    if (!name.trim() || !body.trim() || !school) return;
+    setSaving(true);
 
     const variables = [...body.matchAll(/\{(\w+)\}/g)].map((m) => m[1]);
 
     if (editingTemplate) {
-      setTemplates((prev) =>
-        prev.map((t) =>
-          t.id === editingTemplate.id
-            ? { ...t, name, body, category, variables }
-            : t
-        )
-      );
+      const { error } = await supabase
+        .from("sms_templates")
+        .update({ name, body, variables })
+        .eq("id", editingTemplate.id);
+
+      if (error) {
+        toast({ title: "Failed to update template", variant: "destructive" });
+        setSaving(false);
+        return;
+      }
+      toast({ title: "Template updated" });
     } else {
-      setTemplates((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          name,
-          body,
-          category,
-          variables,
-        },
-      ]);
+      const { error } = await supabase.from("sms_templates").insert({
+        school_id: school.id,
+        name,
+        body,
+        variables,
+        is_default: false,
+      });
+
+      if (error) {
+        toast({ title: "Failed to create template", variant: "destructive" });
+        setSaving(false);
+        return;
+      }
+      toast({ title: "Template created" });
     }
 
     setDialogOpen(false);
+    setSaving(false);
+    fetchTemplates();
   };
 
-  const handleDelete = (id: string) => {
-    setTemplates((prev) => prev.filter((t) => t.id !== id));
+  const handleDelete = async (id: string) => {
+    const { error } = await supabase
+      .from("sms_templates")
+      .update({ is_deleted: true })
+      .eq("id", id);
+
+    if (error) {
+      toast({ title: "Failed to delete template", variant: "destructive" });
+    } else {
+      toast({ title: "Template deleted" });
+      fetchTemplates();
+    }
   };
 
   const handleCopy = (body: string) => {
     navigator.clipboard.writeText(body);
+    toast({ title: "Copied to clipboard" });
   };
 
   const insertVariable = (variable: string) => {
     setBody((prev) => prev + `{${variable}}`);
   };
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-40" />)}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <motion.div
@@ -194,14 +205,11 @@ export default function TemplatesPage() {
               <CardHeader className="flex flex-row items-start justify-between pb-3">
                 <div>
                   <CardTitle className="text-base">{template.name}</CardTitle>
-                  <Badge
-                    className={cn(
-                      "text-[10px] mt-1",
-                      CATEGORY_COLORS[template.category]
-                    )}
-                  >
-                    {template.category}
-                  </Badge>
+                  {template.is_default && (
+                    <Badge variant="secondary" className="text-[10px] mt-1">
+                      Default
+                    </Badge>
+                  )}
                 </div>
                 <div className="flex items-center gap-1">
                   <Button
@@ -220,15 +228,17 @@ export default function TemplatesPage() {
                   >
                     <Edit2 className="w-4 h-4" />
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => handleDelete(template.id)}
-                    title="Delete"
-                    className="text-rose hover:text-rose"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </Button>
+                  {!template.is_default && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => handleDelete(template.id)}
+                      title="Delete"
+                      className="text-rose hover:text-rose"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
                 </div>
               </CardHeader>
               <CardContent>
@@ -254,6 +264,13 @@ export default function TemplatesPage() {
         ))}
       </div>
 
+      {templates.length === 0 && (
+        <div className="text-center py-12 text-muted-foreground">
+          <MessageSquare className="w-12 h-12 mx-auto mb-4 opacity-50" />
+          <p>No templates yet. Create one to get started.</p>
+        </div>
+      )}
+
       {/* Create/Edit Dialog */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="max-w-lg">
@@ -274,20 +291,6 @@ export default function TemplatesPage() {
             </div>
 
             <div className="space-y-2">
-              <Label>Category</Label>
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                className="w-full h-10 px-3 rounded-md bg-navy-50 border border-input text-foreground text-sm"
-              >
-                <option value="general">General</option>
-                <option value="fees">Fees</option>
-                <option value="academics">Academics</option>
-                <option value="attendance">Attendance</option>
-              </select>
-            </div>
-
-            <div className="space-y-2">
               <Label>Message Body</Label>
               <div className="flex flex-wrap gap-1 mb-2">
                 {[
@@ -302,6 +305,7 @@ export default function TemplatesPage() {
                 ].map((v) => (
                   <button
                     key={v}
+                    type="button"
                     onClick={() => insertVariable(v)}
                     className="px-2 py-0.5 rounded bg-navy-50 text-xs text-amber hover:bg-navy-50/80"
                   >
@@ -325,7 +329,10 @@ export default function TemplatesPage() {
             <Button variant="ghost" onClick={() => setDialogOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={handleSave} disabled={!name.trim() || !body.trim()}>
+            <Button onClick={handleSave} disabled={!name.trim() || !body.trim() || saving}>
+              {saving ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : null}
               {editingTemplate ? "Update" : "Create"}
             </Button>
           </DialogFooter>

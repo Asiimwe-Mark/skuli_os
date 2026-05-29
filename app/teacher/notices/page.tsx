@@ -46,7 +46,7 @@ export default async function TeacherNoticesPage() {
         <CardContent>
           {announcements && announcements.length > 0 ? (
             <ul className="space-y-4">
-              {announcements.map((announcement) => (
+              {announcements.map((announcement: any) => (
                 <li
                   key={announcement.id}
                   className="border-b pb-4 last:border-0"

@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
 
     const csv = rows
       .map((row) =>
-        row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(",")
+        row.map((cell: any) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
       )
       .join("\n");
 

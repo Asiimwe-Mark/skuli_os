@@ -108,7 +108,7 @@ export default function AssetsPage() {
     purchase_date: '',
     purchase_price: '',
     current_value: '',
-    condition: 'good' as const,
+    condition: 'good' as 'excellent' | 'good' | 'fair' | 'poor' | 'written_off',
     location: '',
     assigned_to: '',
     notes: '',

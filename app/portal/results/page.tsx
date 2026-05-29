@@ -194,7 +194,7 @@ export default function PortalResultsPage() {
       .eq("student_id", selectedStudentId)
       .eq("term_id", card.term_id);
 
-    const subjects: SubjectMarks[] = (marksData ?? []).map((m) => ({
+    const subjects: SubjectMarks[] = (marksData ?? []).map((m: any) => ({
       subject: m.subject?.name ?? "Unknown",
       bot: m.bot_score,
       mid: m.mid_score,
@@ -314,7 +314,7 @@ export default function PortalResultsPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {(viewingReportDetail?.subjects ?? viewingReport.subjects).map((s, i) => (
+                  {(viewingReportDetail?.subjects ?? viewingReport.subjects).map((s: any, i: number) => (
                     <tr key={i}>
                       <td className="py-2.5 text-gray-900">{s.subject}</td>
                       <td className="py-2.5 text-center font-medium">
@@ -327,7 +327,7 @@ export default function PortalResultsPage() {
                         {s.eot !== null ? s.eot : "—"}
                       </td>
                       <td className="py-2.5 text-center font-bold">
-                        {"total" in s ? s.total : s.marks}
+                        {s.total}
                       </td>
                       <td className="py-2.5 text-center">
                         <span

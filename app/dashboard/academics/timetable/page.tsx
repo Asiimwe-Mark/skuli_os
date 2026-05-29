@@ -16,9 +16,12 @@ import { Plus, Download, Printer, AlertTriangle, X, Loader2 } from 'lucide-react
 import type { Database } from '@/types/database';
 
 type TimetablePeriod = Database['public']['Tables']['timetable_periods']['Row'];
-type TimetableSlot = Database['public']['Tables']['timetable_slots']['Row'];
+type TimetableSlot = Database['public']['Tables']['timetable_slots']['Row'] & {
+  subject?: { id: string; name: string | null; color?: string | null } | null;
+  teacher?: { id: string; full_name: string | null } | null;
+};
 type Class = Database['public']['Tables']['classes']['Row'];
-type Subject = Database['public']['Tables']['subjects']['Row'];
+type Subject = Database['public']['Tables']['subjects']['Row'] & { color?: string | null };
 type User = Database['public']['Tables']['users']['Row'];
 type AcademicYear = Database['public']['Tables']['academic_years']['Row'];
 

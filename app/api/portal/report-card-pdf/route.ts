@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
     // Get student info
     const { data: student } = await supabase
       .from("students")
-      .select("full_name, admission_number, photo_url, current_class:classes(name), school:schools(name, address, motto, logo_url)")
+      .select("full_name, admission_number, photo_url, school_id, current_class:classes(name), school:schools(name, address, motto, logo_url)")
       .eq("id", studentId)
       .single();
 
@@ -83,7 +83,32 @@ export async function GET(request: NextRequest) {
         .gte("date", termDates.start_date)
         .lte("date", termDates.end_date);
 
-      daysOpen = attRecords?.length || 0;
+      // Get holidays that affect attendance
+      const studentAny = student as any;
+      const schoolId = studentAny?.school_id;
+      let holidayCount = 0;
+      if (schoolId) {
+        const { data: holidays } = await supabase
+          .from("calendar_events")
+          .select("event_date, end_date")
+          .eq("school_id", schoolId)
+          .eq("affects_attendance", true)
+          .eq("is_deleted", false)
+          .lte("event_date", termDates.end_date)
+          .or(`end_date.gte.${termDates.start_date},end_date.is.null`);
+
+        const holidayDates = new Set<string>();
+        (holidays || []).forEach((h: any) => {
+          const start = new Date(h.event_date);
+          const end = h.end_date ? new Date(h.end_date) : start;
+          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            holidayDates.add(d.toISOString().split("T")[0]);
+          }
+        });
+        holidayCount = holidayDates.size;
+      }
+
+      daysOpen = (attRecords?.length || 0) - holidayCount;
       daysPresent = (attRecords || []).filter((r: { status: string }) => r.status === "present" || r.status === "late").length;
     }
 

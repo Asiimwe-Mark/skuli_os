@@ -74,7 +74,27 @@ export async function GET(request: NextRequest) {
       .gte("date", term.start_date)
       .lte("date", term.end_date);
 
-    const totalDays = records?.length || 0;
+    // Get holidays that affect attendance for this term
+    const { data: holidays } = await ctx.supabase
+      .from("calendar_events")
+      .select("event_date, end_date")
+      .eq("school_id", schoolId)
+      .eq("affects_attendance", true)
+      .eq("is_deleted", false)
+      .lte("event_date", term.end_date)
+      .or(`end_date.gte.${term.start_date},end_date.is.null`);
+
+    // Count unique holiday dates
+    const holidayDates = new Set<string>();
+    (holidays || []).forEach((h: any) => {
+      const start = new Date(h.event_date);
+      const end = h.end_date ? new Date(h.end_date) : start;
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        holidayDates.add(d.toISOString().split("T")[0]);
+      }
+    });
+
+    const totalDays = (records?.length || 0) - holidayDates.size;
     const totalPresent = (records || []).filter(
       (r: { status: string }) => r.status === "present" || r.status === "late"
     ).length;

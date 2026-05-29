@@ -51,7 +51,6 @@ const styles = StyleSheet.create({
     color: '#666666',
   },
   table: {
-    display: 'table',
     width: 'auto',
     borderStyle: 'solid',
     borderWidth: 1,
@@ -119,7 +118,7 @@ const TimetablePDFDocument: React.FC<TimetablePDFProps> = ({
 
   return (
     <Document>
-      <Page size="LANDSCAPE_A4" style={styles.page}>
+      <Page size="A4" orientation="landscape" style={styles.page}>
         <View style={styles.header}>
           <Text style={styles.schoolName}>{schoolName}</Text>
           <Text style={styles.title}>Class Timetable - {className}</Text>

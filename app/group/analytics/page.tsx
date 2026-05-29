@@ -61,7 +61,7 @@ export default function GroupAnalyticsPage() {
         return;
       }
 
-      const names = schools.map((s) => s.name);
+      const names = schools.map((s: any) => s.name);
       setSchoolNames(names);
 
       // 1. Fee collection by school
@@ -73,7 +73,7 @@ export default function GroupAnalyticsPage() {
           .eq("school_id", school.id)
           .eq("status", "confirmed");
 
-        const total = (payments ?? []).reduce((sum, p) => sum + Number(p.amount), 0);
+        const total = (payments ?? []).reduce((sum: any, p: any) => sum + Number(p.amount), 0);
         feeData.push({ name: school.name, amount: total });
       }
       setFeeBySchool(feeData);
@@ -102,7 +102,7 @@ export default function GroupAnalyticsPage() {
             .lte("date", endStr);
 
           if (records && records.length > 0) {
-            const present = records.filter((r) => r.status === "present").length;
+            const present = records.filter((r: any) => r.status === "present").length;
             weekData[school.name] = { present, total: records.length };
           }
         }
@@ -141,7 +141,7 @@ export default function GroupAnalyticsPage() {
             .eq("class_id", cls.id);
 
           if (marks && marks.length > 0) {
-            const avgPct = marks.reduce((sum, m) => sum + (Number(m.score) / Number(m.max_score)) * 100, 0) / marks.length;
+            const avgPct = marks.reduce((sum: any, m: any) => sum + (Number(m.score) / Number(m.max_score)) * 100, 0) / marks.length;
             const existing = classMap.get(cls.name) ?? {};
             existing[school.name] = { total: avgPct, count: 1 };
             classMap.set(cls.name, existing);

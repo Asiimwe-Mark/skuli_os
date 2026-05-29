@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import { errorResponse, getSupabaseAndUser, requireSchool, requireRole } from '@/lib/api-helpers';
+import { errorResponse, successResponse, getSupabaseAndUser, requireSchool, requireRole } from '@/lib/api-helpers';
 
 const disciplineSummarySchema = z.object({
   student_id: z.string().uuid(),
@@ -13,18 +13,17 @@ export async function POST(request: NextRequest) {
     const validation = disciplineSummarySchema.safeParse(body);
 
     if (!validation.success) {
-      return errorResponse('Invalid request data', 400, validation.error.errors);
+      return errorResponse('Invalid request data', 400);
     }
 
     const { student_id } = validation.data;
 
-    // Authenticate and authorize
-    const { supabase, user } = await getSupabaseAndUser();
-    await requireSchool(supabase, user.id);
-    await requireRole(user, ['SCHOOL_ADMIN', 'TEACHER', 'BURSAR']);
+    const ctx = await getSupabaseAndUser();
+    const schoolId = requireSchool(ctx);
+    requireRole(ctx, ['SCHOOL_ADMIN', 'TEACHER', 'BURSAR']);
 
     // Fetch student details
-    const {  student, error: studentError } = await supabase
+    const { data: student, error: studentError } = await ctx.supabase
       .from('students')
       .select(`
         id,
@@ -41,7 +40,7 @@ export async function POST(request: NextRequest) {
         )
       `)
       .eq('id', student_id)
-      .eq('school_id', user.school_id)
+      .eq('school_id', schoolId)
       .single();
 
     if (studentError || !student) {
@@ -49,7 +48,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Fetch discipline records for this student
-    const {  records, error: recordsError } = await supabase
+    const { data: records, error: recordsError } = await ctx.supabase
       .from('discipline_records')
       .select(`
         id,
@@ -64,7 +63,7 @@ export async function POST(request: NextRequest) {
         )
       `)
       .eq('student_id', student_id)
-      .eq('school_id', user.school_id)
+      .eq('school_id', schoolId)
       .eq('is_deleted', false)
       .order('incident_date', { ascending: false });
 
@@ -140,6 +139,14 @@ export async function POST(request: NextRequest) {
           // Add new page if running out of space
           const newPage = pdfDoc.addPage([595.28, 841.89]);
           yPosition = 780;
+
+          // Redraw headers on new page
+          newPage.drawText('Date', { x: 70, y: yPosition, size: 9, font: boldFont });
+          newPage.drawText('Type', { x: 150, y: yPosition, size: 9, font: boldFont });
+          newPage.drawText('Description', { x: 250, y: yPosition, size: 9, font: boldFont });
+          newPage.drawText('Action Taken', { x: 400, y: yPosition, size: 9, font: boldFont });
+          newPage.drawText('Notified', { x: 520, y: yPosition, size: 9, font: boldFont });
+          yPosition -= 20;
         }
 
         const dateStr = new Date(record.incident_date).toLocaleDateString('en-GB');
@@ -148,11 +155,11 @@ export async function POST(request: NextRequest) {
         const actionStr = record.action_taken ? (record.action_taken.length > 30 ? record.action_taken.substring(0, 30) + '...' : record.action_taken) : '—';
         const notifiedStr = record.parent_notified ? 'Yes' : 'No';
 
-        newPage.drawText(dateStr, { x: 70, y: yPosition, size: 8, font: font });
-        newPage.drawText(typeStr, { x: 150, y: yPosition, size: 8, font: font });
-        newPage.drawText(descStr, { x: 250, y: yPosition, size: 8, font: font });
-        newPage.drawText(actionStr, { x: 400, y: yPosition, size: 8, font: font });
-        newPage.drawText(notifiedStr, { x: 520, y: yPosition, size: 8, font: font });
+        page.drawText(dateStr, { x: 70, y: yPosition, size: 8, font: font });
+        page.drawText(typeStr, { x: 150, y: yPosition, size: 8, font: font });
+        page.drawText(descStr, { x: 250, y: yPosition, size: 8, font: font });
+        page.drawText(actionStr, { x: 400, y: yPosition, size: 8, font: font });
+        page.drawText(notifiedStr, { x: 520, y: yPosition, size: 8, font: font });
 
         yPosition -= 20;
       }
@@ -170,7 +177,7 @@ export async function POST(request: NextRequest) {
 
     // Serialize and return PDF
     const pdfBytes = await pdfDoc.save();
-    return new Response(pdfBytes, {
+    return new Response(pdfBytes as unknown as BodyInit, {
       headers: {
         'Content-Type': 'application/pdf',
         'Content-Disposition': `attachment; filename="discipline-summary-${studentData.admission_number || student_id}.pdf"`,

@@ -24,7 +24,7 @@ export async function GET() {
     if (!categories) return successResponse([]);
 
     // Get expense counts per category
-    const categoryIds = categories.map((c) => c.id);
+    const categoryIds = categories.map((c: any) => c.id);
     const { data: countData } = await ctx.supabase
       .from("expenses")
       .select("category_id")
@@ -32,11 +32,11 @@ export async function GET() {
       .eq("is_deleted", false);
 
     const countMap = new Map<string, number>();
-    countData?.forEach((e) => {
+    countData?.forEach((e: any) => {
       countMap.set(e.category_id, (countMap.get(e.category_id) || 0) + 1);
     });
 
-    const result = categories.map((c) => ({
+    const result = categories.map((c: any) => ({
       ...c,
       expense_count: countMap.get(c.id) || 0,
     }));

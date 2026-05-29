@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
         expense_rows,
         total_income,
         total_expenses,
-      })
+      }) as any
     );
 
     return new Response(new Uint8Array(buffer), {

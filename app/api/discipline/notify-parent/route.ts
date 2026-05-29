@@ -15,18 +15,17 @@ export async function POST(request: NextRequest) {
     const validation = notifyParentSchema.safeParse(body);
 
     if (!validation.success) {
-      return errorResponse('Invalid request data', 400, validation.error.errors);
+      return errorResponse('Invalid request data', 400);
     }
 
     const { student_id, record_id, message_override } = validation.data;
 
-    // Authenticate and authorize
-    const { supabase, user } = await getSupabaseAndUser();
-    await requireSchool(supabase, user.id);
-    await requireRole(user, ['SCHOOL_ADMIN', 'TEACHER']);
+    const ctx = await getSupabaseAndUser();
+    const schoolId = requireSchool(ctx);
+    requireRole(ctx, ['SCHOOL_ADMIN', 'TEACHER']);
 
     // Fetch discipline record with student and school details
-    const {  record, error: recordError } = await supabase
+    const { data: record, error: recordError } = await ctx.supabase
       .from('discipline_records')
       .select(`
         id,
@@ -46,7 +45,7 @@ export async function POST(request: NextRequest) {
         )
       `)
       .eq('id', record_id)
-      .eq('school_id', user.school_id)
+      .eq('school_id', schoolId)
       .single();
 
     if (recordError || !record) {
@@ -86,7 +85,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Update record to mark parent as notified
-    const { error: updateError } = await supabase
+    const { error: updateError } = await ctx.supabase
       .from('discipline_records')
       .update({
         parent_notified: true,
@@ -100,14 +99,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Log audit trail
-    await supabase.from('audit_logs').insert({
+    await ctx.supabase.from('audit_logs').insert({
       action: 'parent_notified',
       entity_type: 'discipline_record',
       entity_id: record_id,
       old_value: { parent_notified: false },
       new_value: { parent_notified: true },
-      changed_by: user.id,
-      school_id: user.school_id,
+      changed_by: ctx.user.id,
+      school_id: schoolId,
     });
 
     return successResponse({

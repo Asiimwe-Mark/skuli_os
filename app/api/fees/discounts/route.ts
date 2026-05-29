@@ -24,7 +24,7 @@ export async function GET() {
     if (!discounts) return successResponse([]);
 
     // Get student counts per discount
-    const discountIds = discounts.map((d) => d.id);
+    const discountIds = discounts.map((d: any) => d.id);
     const { data: countData } = await ctx.supabase
       .from("student_discounts")
       .select("discount_id")
@@ -32,11 +32,11 @@ export async function GET() {
       .eq("is_deleted", false);
 
     const countMap = new Map<string, number>();
-    countData?.forEach((sd) => {
+    countData?.forEach((sd: any) => {
       countMap.set(sd.discount_id, (countMap.get(sd.discount_id) || 0) + 1);
     });
 
-    const result = discounts.map((d) => ({
+    const result = discounts.map((d: any) => ({
       ...d,
       student_count: countMap.get(d.id) || 0,
     }));

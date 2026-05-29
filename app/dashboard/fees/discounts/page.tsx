@@ -111,7 +111,7 @@ export default function DiscountsPage() {
       if (!discountsData || discountsData.length === 0) return [];
 
       // Fetch student counts per discount
-      const discountIds = discountsData.map((d) => d.id);
+      const discountIds = discountsData.map((d: any) => d.id);
       const { data: countData } = await supabase
         .from("student_discounts")
         .select("discount_id")
@@ -119,11 +119,11 @@ export default function DiscountsPage() {
         .eq("is_deleted", false);
 
       const countMap = new Map<string, number>();
-      countData?.forEach((sd) => {
+      countData?.forEach((sd: any) => {
         countMap.set(sd.discount_id, (countMap.get(sd.discount_id) || 0) + 1);
       });
 
-      return discountsData.map((d) => ({
+      return discountsData.map((d: any) => ({
         ...d,
         student_count: countMap.get(d.id) || 0,
       })) as DiscountWithCount[];

@@ -4,7 +4,6 @@ import { errorResponse, successResponse, getSupabaseAndUser, requireSchool, requ
 
 const createDisciplineSchema = z.object({
   student_id: z.string().uuid(),
-  school_id: z.string().uuid(),
   incident_date: z.string().min(1),
   incident_type: z.enum([
     'verbal_warning',
@@ -26,22 +25,21 @@ export async function POST(request: NextRequest) {
     const validation = createDisciplineSchema.safeParse(body);
 
     if (!validation.success) {
-      return errorResponse('Invalid request data', 400, validation.error.errors);
+      return errorResponse('Invalid request data', 400);
     }
 
-    const { student_id, school_id, incident_date, incident_type, description, action_taken, parent_notified } = validation.data;
+    const { student_id, incident_date, incident_type, description, action_taken, parent_notified } = validation.data;
 
-    // Authenticate and authorize
-    const { supabase, user } = await getSupabaseAndUser();
-    await requireSchool(supabase, user.id);
-    await requireRole(user, ['SCHOOL_ADMIN', 'TEACHER']);
+    const ctx = await getSupabaseAndUser();
+    const schoolId = requireSchool(ctx);
+    requireRole(ctx, ['SCHOOL_ADMIN', 'TEACHER']);
 
     // Verify student belongs to this school
-    const {  student, error: studentError } = await supabase
+    const { data: student, error: studentError } = await ctx.supabase
       .from('students')
       .select('id')
       .eq('id', student_id)
-      .eq('school_id', school_id)
+      .eq('school_id', schoolId)
       .single();
 
     if (studentError || !student) {
@@ -49,18 +47,18 @@ export async function POST(request: NextRequest) {
     }
 
     // Create discipline record
-    const {  record, error: createError } = await supabase
+    const { data: record, error: createError } = await ctx.supabase
       .from('discipline_records')
       .insert({
         student_id,
-        school_id,
+        school_id: schoolId,
         incident_date,
         incident_type,
         description,
         action_taken: action_taken || null,
         parent_notified,
         parent_notified_at: parent_notified ? new Date().toISOString() : null,
-        recorded_by: user.id,
+        recorded_by: ctx.user.id,
       })
       .select()
       .single();
@@ -71,14 +69,14 @@ export async function POST(request: NextRequest) {
     }
 
     // Log audit trail
-    await supabase.from('audit_logs').insert({
+    await ctx.supabase.from('audit_logs').insert({
       action: 'create',
       entity_type: 'discipline_record',
       entity_id: record.id,
       old_value: null,
       new_value: record,
-      changed_by: user.id,
-      school_id: school_id,
+      changed_by: ctx.user.id,
+      school_id: schoolId,
     });
 
     return successResponse(record);
@@ -97,13 +95,12 @@ export async function GET(request: NextRequest) {
       return errorResponse('student_id is required', 400);
     }
 
-    // Authenticate and authorize
-    const { supabase, user } = await getSupabaseAndUser();
-    await requireSchool(supabase, user.id);
-    await requireRole(user, ['SCHOOL_ADMIN', 'TEACHER', 'BURSAR']);
+    const ctx = await getSupabaseAndUser();
+    const schoolId = requireSchool(ctx);
+    requireRole(ctx, ['SCHOOL_ADMIN', 'TEACHER', 'BURSAR']);
 
     // Fetch discipline records for this student
-    const {  records, error: fetchError } = await supabase
+    const { data: records, error: fetchError } = await ctx.supabase
       .from('discipline_records')
       .select(`
         id,
@@ -118,7 +115,7 @@ export async function GET(request: NextRequest) {
         )
       `)
       .eq('student_id', student_id)
-      .eq('school_id', user.school_id)
+      .eq('school_id', schoolId)
       .eq('is_deleted', false)
       .order('incident_date', { ascending: false });
 
@@ -127,7 +124,7 @@ export async function GET(request: NextRequest) {
       return errorResponse('Failed to fetch discipline records', 500);
     }
 
-    return successResponse({ records });
+    return successResponse({ records: records || [] });
   } catch (error) {
     console.error('Error fetching discipline records:', error);
     return errorResponse('Internal server error', 500);

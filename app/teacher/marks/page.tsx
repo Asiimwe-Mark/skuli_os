@@ -121,10 +121,10 @@ export default function TeacherMarksPage() {
   // Sync marks state when data loads
   useEffect(() => {
     if (!students.length) return;
-    const marksMap = new Map(existingMarks.map((m) => [m.student_id, m]));
+    const marksMap = new Map(existingMarks.map((m: any) => [m.student_id, m as any]));
     setMarks(
       students.map((e: any) => {
-        const existing = marksMap.get(e.student_id);
+        const existing = marksMap.get(e.student_id) as any;
         return {
           student_id: e.student_id,
           student_name: e.students?.full_name || 'Unknown',
@@ -180,7 +180,7 @@ export default function TeacherMarksPage() {
             .single();
           if (data) {
             setMarks((prev) =>
-              prev.map((m) =>
+              prev.map((m: MarkEntry) =>
                 m.student_id === mark.student_id ? { ...m, existing_id: data.id } : m
               )
             );
@@ -277,7 +277,7 @@ export default function TeacherMarksPage() {
                 {assignments
                   .filter((a) => a.class_id === selectedClass && a.subject_id)
                   .map((a) => (
-                    <option key={a.subject_id} value={a.subject_id}>
+                    <option key={a.subject_id!} value={a.subject_id!}>
                       {a.subject?.name}
                     </option>
                   ))}
@@ -345,7 +345,7 @@ export default function TeacherMarksPage() {
                       <td className="px-4 py-3 text-sm text-gray-600">{mark.admission_number}</td>
                       <td className="px-4 py-3">
                         <Input
-                          ref={(el) => (scoreRefs.current[index] = el)}
+                          ref={(el: HTMLInputElement | null) => { scoreRefs.current[index] = el; }}
                           type="number"
                           min="0"
                           max="100"

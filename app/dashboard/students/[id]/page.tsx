@@ -1281,7 +1281,7 @@ export default function StudentProfilePage() {
 
           {/* ===== TAB: DISCIPLINE ===== */}
           <TabsContent value="discipline">
-            <DisciplineTab studentId={student.id} schoolId={schoolId} canEdit={canEditStudents} />
+            <DisciplineTab studentId={studentId} schoolId={schoolId!} />
           </TabsContent>
 
           {/* ===== TAB: EDIT ===== */}
