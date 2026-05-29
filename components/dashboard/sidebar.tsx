@@ -42,6 +42,10 @@ import {
   TrendingDown,
   Library,
   Box,
+  Upload,
+  Shield,
+  Calendar,
+  Clock,
   type LucideIcon,
 } from "lucide-react";
 import { createBrowserClient } from "@/lib/supabase/client";
@@ -61,49 +65,52 @@ const NAV_ITEMS: NavItem[] = [
     icon: LayoutDashboard,
   },
   {
-    label: "Analytics",
-    href: "/dashboard/analytics",
-    icon: BarChart3,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
-  },
-  {
-    label: "Fees",
-    icon: Wallet,
-    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
-    children: [
-      { label: "Fee Structure", href: "/dashboard/fees/structure", icon: CreditCard },
-      { label: "Discounts", href: "/dashboard/fees/discounts", icon: CreditCard },
-      { label: "Expenses", href: "/dashboard/fees/expenses", icon: TrendingDown },
-      { label: "Categories", href: "/dashboard/fees/expenses/categories", icon: CreditCard },
-      { label: "Fee Accounts", href: "/dashboard/fees/accounts", icon: FileText },
-      { label: "Payments", href: "/dashboard/fees/payments", icon: Receipt },
-      { label: "Defaulters", href: "/dashboard/fees/defaulters", icon: AlertTriangle },
-      { label: "Reports", href: "/dashboard/fees/reports", icon: BarChart3 },
-      { label: "Statements", href: "/dashboard/fees/statements", icon: FileText },
-      { label: "Receipts", href: "/dashboard/fees/receipts", icon: Receipt },
-    ],
-  },
-  {
     label: "Students",
     icon: GraduationCap,
     roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
     children: [
       { label: "All Students", href: "/dashboard/students", icon: Users },
       { label: "Enroll Student", href: "/dashboard/students/enroll", icon: UserPlus },
-      { label: "Classes", href: "/dashboard/students/classes", icon: School },
+      { label: "Bulk Import", href: "/dashboard/students/bulk-import", icon: Upload },
       { label: "Promote", href: "/dashboard/students/promote", icon: GraduationCap },
+      { label: "Classes", href: "/dashboard/students/classes", icon: School },
+      { label: "Alumni", href: "/dashboard/students/alumni", icon: GraduationCap },
+    ],
+  },
+  {
+    label: "Fees",
+    icon: Wallet,
+    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+    children: [
+      { label: "Fee Accounts", href: "/dashboard/fees/accounts", icon: FileText },
+      { label: "Record Payment", href: "/dashboard/fees/payments", icon: Receipt },
+      { label: "Fee Structure", href: "/dashboard/fees/structure", icon: CreditCard },
+      { label: "Discounts", href: "/dashboard/fees/discounts", icon: CreditCard },
+      { label: "Defaulters", href: "/dashboard/fees/defaulters", icon: AlertTriangle },
+      { label: "Receipts", href: "/dashboard/fees/receipts", icon: Receipt },
+      { label: "Statements", href: "/dashboard/fees/statements", icon: FileText },
+      { label: "Expenses", href: "/dashboard/fees/expenses", icon: TrendingDown },
+      { label: "Reports", href: "/dashboard/fees/reports", icon: BarChart3 },
     ],
   },
   {
     label: "Academics",
     icon: BookOpen,
     children: [
-      { label: "Subjects", href: "/dashboard/academics/subjects", icon: BookOpen, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
       { label: "Marks Entry", href: "/dashboard/academics/marks", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"] },
       { label: "Review Marks", href: "/dashboard/academics/marks/review", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
       { label: "Report Cards", href: "/dashboard/academics/report-cards", icon: FileText, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
-      { label: "Timetable", href: "/dashboard/academics/timetable", icon: CalendarCheck, roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"] },
-      { label: "Calendar", href: "/dashboard/academics/calendar", icon: CalendarCheck, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
+      { label: "Subjects", href: "/dashboard/academics/subjects", icon: BookOpen, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
+      { label: "Timetable", href: "/dashboard/academics/timetable", icon: Clock, roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"] },
+      { label: "Calendar", href: "/dashboard/academics/calendar", icon: Calendar, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
+    ],
+  },
+  {
+    label: "Attendance",
+    icon: CalendarCheck,
+    children: [
+      { label: "Take Attendance", href: "/dashboard/attendance/take", icon: ClipboardList },
+      { label: "Overview", href: "/dashboard/attendance", icon: CalendarCheck },
     ],
   },
   {
@@ -111,24 +118,10 @@ const NAV_ITEMS: NavItem[] = [
     icon: MessageSquare,
     roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
     children: [
+      { label: "Compose", href: "/dashboard/communication/compose", icon: Send },
       { label: "Inbox", href: "/dashboard/communication/inbox", icon: Inbox },
-      { label: "Send Message", href: "/dashboard/communication/compose", icon: Send },
-      { label: "SMS Logs", href: "/dashboard/communication/logs", icon: FileText },
       { label: "Templates", href: "/dashboard/communication/templates", icon: FileStack },
-    ],
-  },
-  {
-    label: "Attendance",
-    href: "/dashboard/attendance",
-    icon: CalendarCheck,
-  },
-  {
-    label: "Library",
-    icon: Library,
-    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
-    children: [
-      { label: "Book Catalog", href: "/dashboard/library", icon: BookOpen },
-      { label: "Issues & Returns", href: "/dashboard/library/issues", icon: ClipboardList },
+      { label: "SMS Logs", href: "/dashboard/communication/logs", icon: FileText },
     ],
   },
   {
@@ -149,8 +142,17 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
+    label: "Analytics",
+    icon: BarChart3,
+    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    children: [
+      { label: "Overview", href: "/dashboard/analytics", icon: BarChart3 },
+      { label: "Custom Reports", href: "/dashboard/analytics/reports", icon: FileText },
+    ],
+  },
+  {
     label: "Library",
-    icon: BookOpen,
+    icon: Library,
     roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
     children: [
       { label: "Book Catalog", href: "/dashboard/library", icon: BookOpen },
@@ -158,7 +160,7 @@ const NAV_ITEMS: NavItem[] = [
     ],
   },
   {
-    label: "Operations",
+    label: "Assets",
     icon: Box,
     roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
     children: [
@@ -173,8 +175,9 @@ const NAV_ITEMS: NavItem[] = [
       { label: "School Profile", href: "/dashboard/settings/school", icon: School },
       { label: "Users & Roles", href: "/dashboard/settings/users", icon: Users },
       { label: "API Keys", href: "/dashboard/settings/api", icon: Key },
-      { label: "Billing", href: "/dashboard/settings/billing", icon: CreditCard },
       { label: "Notifications", href: "/dashboard/settings/notifications", icon: Bell },
+      { label: "Billing", href: "/dashboard/settings/billing", icon: CreditCard },
+      { label: "Audit Log", href: "/dashboard/settings/audit-log", icon: Shield },
     ],
   },
 ];

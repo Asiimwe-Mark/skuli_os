@@ -1,5 +1,5 @@
 // ==================== Enums ====================
-export type UserRole = 'SUPER_ADMIN' | 'SCHOOL_ADMIN' | 'BURSAR' | 'TEACHER' | 'PARENT';
+export type UserRole = 'SUPER_ADMIN' | 'SCHOOL_ADMIN' | 'BURSAR' | 'TEACHER' | 'PARENT' | 'GROUP_ADMIN';
 export type SubscriptionPlan = 'starter' | 'growth' | 'pro' | 'trial';
 export type SubscriptionStatus = 'active' | 'past_due' | 'cancelled' | 'trial';
 export type TermName = 'Term1' | 'Term2' | 'Term3';
