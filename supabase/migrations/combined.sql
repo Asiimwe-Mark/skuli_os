@@ -126,6 +126,8 @@ CREATE TYPE school_type AS ENUM (
     'both'
 );
 
+CREATE TYPE discount_type AS ENUM ('percentage', 'fixed_amount');
+
 
 -- ============================================
 -- Migration: 00002_create_tables.sql
@@ -1948,3 +1950,856 @@ CREATE INDEX IF NOT EXISTS idx_marks_class_term_subject
 -- SMS delivery queries (composite)
 CREATE INDEX IF NOT EXISTS idx_sms_logs_status_date
     ON sms_logs(school_id, status, sent_at);
+
+
+-- ============================================
+-- Migration: 00016_teacher_role_and_assignments.sql
+-- ============================================
+
+-- ============================================
+-- Migration: 00016_teacher_role_and_assignments.sql
+-- ============================================
+
+-- Add TEACHER role to user_role enum
+ALTER TYPE user_role ADD VALUE IF NOT EXISTS 'TEACHER';
+
+-- teacher_class_assignments: which teacher owns which classes/subjects
+CREATE TABLE IF NOT EXISTS teacher_class_assignments (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  teacher_id  uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  class_id    uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  subject_id  uuid REFERENCES subjects(id) ON DELETE CASCADE, -- null = class teacher (homeroom)
+  is_class_teacher boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  is_deleted  boolean NOT NULL DEFAULT false,
+  UNIQUE (school_id, teacher_id, class_id, subject_id)
+);
+
+ALTER TABLE teacher_class_assignments ENABLE ROW LEVEL SECURITY;
+
+-- School admins can manage all assignments
+CREATE POLICY "school_admin_manage_assignments"
+  ON teacher_class_assignments FOR ALL
+  USING (school_id = get_user_school_id() AND get_user_role() IN ('SCHOOL_ADMIN'))
+  WITH CHECK (school_id = get_user_school_id() AND get_user_role() IN ('SCHOOL_ADMIN'));
+
+-- Teachers can view their own assignments
+CREATE POLICY "teacher_view_own_assignments"
+  ON teacher_class_assignments FOR SELECT
+  USING (teacher_id = auth.uid() AND school_id = get_user_school_id());
+
+-- Teachers can insert/update marks only for their assigned class+subject
+CREATE POLICY "teacher_write_own_marks"
+  ON marks FOR INSERT
+  WITH CHECK (
+    school_id = get_user_school_id()
+    AND get_user_role() = 'TEACHER'
+    AND EXISTS (
+      SELECT 1 FROM teacher_class_assignments tca
+      WHERE tca.teacher_id = auth.uid()
+        AND tca.class_id = marks.class_id
+        AND tca.subject_id = marks.subject_id
+        AND tca.is_deleted = false
+    )
+  );
+
+-- Allow teachers to update marks they created
+CREATE POLICY "teacher_update_own_marks"
+  ON marks FOR UPDATE
+  USING (
+    school_id = get_user_school_id()
+    AND get_user_role() = 'TEACHER'
+    AND EXISTS (
+      SELECT 1 FROM teacher_class_assignments tca
+      WHERE tca.teacher_id = auth.uid()
+        AND tca.class_id = marks.class_id
+        AND tca.subject_id = marks.subject_id
+        AND tca.is_deleted = false
+    )
+  );
+
+-- Teachers can only write attendance for their homeroom class
+CREATE POLICY "teacher_write_own_attendance"
+  ON attendance_records FOR INSERT
+  WITH CHECK (
+    school_id = get_user_school_id()
+    AND get_user_role() = 'TEACHER'
+    AND EXISTS (
+      SELECT 1 FROM teacher_class_assignments tca
+      WHERE tca.teacher_id = auth.uid()
+        AND tca.class_id = attendance_records.class_id
+        AND tca.is_class_teacher = true
+        AND tca.is_deleted = false
+    )
+  );
+
+-- Allow teachers to update attendance they created
+CREATE POLICY "teacher_update_own_attendance"
+  ON attendance_records FOR UPDATE
+  USING (
+    school_id = get_user_school_id()
+    AND get_user_role() = 'TEACHER'
+    AND EXISTS (
+      SELECT 1 FROM teacher_class_assignments tca
+      WHERE tca.teacher_id = auth.uid()
+        AND tca.class_id = attendance_records.class_id
+        AND tca.is_class_teacher = true
+        AND tca.is_deleted = false
+    )
+  );
+
+-- Index for fast lookups of teacher assignments
+CREATE INDEX idx_teacher_class_assignments_teacher
+  ON teacher_class_assignments(teacher_id, school_id, is_deleted)
+  WHERE is_deleted = false;
+
+CREATE INDEX idx_teacher_class_assignments_class
+  ON teacher_class_assignments(class_id, school_id, is_deleted)
+  WHERE is_deleted = false;
+
+
+-- ============================================
+-- Migration: 00017_timetable.sql
+-- ============================================
+
+-- Migration 00017: Timetable Builder
+-- Adds support for school periods and class timetables
+
+CREATE TABLE IF NOT EXISTS timetable_periods (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  name        text NOT NULL,       -- e.g. "Period 1"
+  start_time  time NOT NULL,       -- e.g. 08:00
+  end_time    time NOT NULL,
+  sort_order  int NOT NULL DEFAULT 0,
+  is_break    boolean NOT NULL DEFAULT false, -- lunch, recess
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS timetable_slots (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  class_id    uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+  period_id   uuid NOT NULL REFERENCES timetable_periods(id) ON DELETE CASCADE,
+  day_of_week int NOT NULL CHECK (day_of_week BETWEEN 1 AND 5), -- 1=Mon, 5=Fri
+  subject_id  uuid REFERENCES subjects(id),
+  teacher_id  uuid REFERENCES users(id),
+  room        text,
+  academic_year_id uuid REFERENCES academic_years(id),
+  is_deleted  boolean NOT NULL DEFAULT false,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (school_id, class_id, period_id, day_of_week, academic_year_id)
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_timetable_periods_school ON timetable_periods(school_id, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_timetable_slots_class ON timetable_slots(class_id, day_of_week, is_deleted);
+CREATE INDEX IF NOT EXISTS idx_timetable_slots_teacher ON timetable_slots(teacher_id, day_of_week, period_id, is_deleted);
+
+-- RLS
+ALTER TABLE timetable_periods ENABLE ROW LEVEL SECURITY;
+ALTER TABLE timetable_slots ENABLE ROW LEVEL SECURITY;
+
+-- Policies
+CREATE POLICY "school_admin_manage_periods" ON timetable_periods FOR ALL
+  USING (school_id = get_user_school_id());
+
+CREATE POLICY "school_admin_manage_slots" ON timetable_slots FOR ALL
+  USING (school_id = get_user_school_id());
+
+-- Teachers can view slots for their assigned classes
+CREATE POLICY "teacher_view_slots" ON timetable_slots FOR SELECT
+  USING (
+    school_id = get_user_school_id() 
+    AND EXISTS (
+      SELECT 1 FROM teacher_class_assignments tca
+      WHERE tca.teacher_id = auth.uid()
+        AND tca.class_id = timetable_slots.class_id
+        AND tca.is_deleted = false
+    )
+  );
+
+
+-- ============================================
+-- Migration: 00018_academic_calendar.sql
+-- ============================================
+
+-- Migration 00018: Academic Calendar with Holidays
+-- Creates calendar_events table for managing school holidays, exams, events, and closures
+
+CREATE TABLE calendar_events (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  title       text NOT NULL,
+  description text,
+  event_date  date NOT NULL,
+  end_date    date,
+  event_type  text NOT NULL DEFAULT 'event'
+              CHECK (event_type IN ('holiday', 'exam', 'event', 'closure', 'meeting')),
+  affects_attendance boolean NOT NULL DEFAULT true,
+  class_id    uuid REFERENCES classes(id) ON DELETE SET NULL,
+  is_public   boolean NOT NULL DEFAULT true,
+  created_by  uuid REFERENCES users(id) ON DELETE SET NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  is_deleted  boolean NOT NULL DEFAULT false
+);
+
+ALTER TABLE calendar_events ENABLE ROW LEVEL SECURITY;
+
+-- School admins can manage all calendar events
+CREATE POLICY "school_admin_manage_calendar" ON calendar_events FOR ALL
+  USING (school_id = get_user_school_id() AND get_user_role() IN ('SCHOOL_ADMIN', 'ADMIN'));
+
+-- Teachers can view and create events for their classes
+CREATE POLICY "teacher_manage_class_calendar" ON calendar_events FOR ALL
+  USING (
+    school_id = get_user_school_id()
+    AND get_user_role() = 'TEACHER'
+    AND (
+      class_id IS NULL
+      OR EXISTS (
+        SELECT 1 FROM teacher_class_assignments tca
+        WHERE tca.teacher_id = auth.uid()
+          AND tca.class_id = calendar_events.class_id
+          AND tca.is_deleted = false
+      )
+    )
+  );
+
+-- Parents can view public events for their children's school/class
+CREATE POLICY "portal_view_public_calendar" ON calendar_events FOR SELECT
+  USING (
+    is_public = true
+    AND school_id IN (
+      SELECT s.school_id
+      FROM students s
+      JOIN parent_students ps ON ps.student_id = s.id
+      WHERE ps.parent_id = auth.uid()
+    )
+    AND (
+      class_id IS NULL
+      OR class_id IN (
+        SELECT student.class_id
+        FROM students student
+        JOIN parent_students ps ON ps.student_id = student.id
+        WHERE ps.parent_id = auth.uid()
+      )
+    )
+  );
+
+-- Index for efficient date-based queries
+CREATE INDEX idx_calendar_events_date ON calendar_events(school_id, event_date)
+  WHERE is_deleted = false;
+
+-- Index for class-specific events
+CREATE INDEX idx_calendar_events_class ON calendar_events(class_id)
+  WHERE is_deleted = false;
+
+-- Comment on table
+COMMENT ON TABLE calendar_events IS 'Stores school calendar events including holidays, exams, meetings, and closures. affects_attendance=true events are excluded from attendance percentage calculations.';
+
+
+-- ============================================
+-- Migration: 00019_discipline.sql
+-- ============================================
+
+-- Migration 00019: Student Discipline Log
+-- Creates discipline_records table with RLS policies
+
+-- Add incident_type to check constraint
+CREATE TYPE IF NOT EXISTS discipline_incident_type AS ENUM (
+  'verbal_warning',
+  'written_warning',
+  'detention',
+  'suspension',
+  'parent_called',
+  'referred_to_head',
+  'other'
+);
+
+CREATE TABLE IF NOT EXISTS discipline_records (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  student_id      uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  incident_date   date NOT NULL,
+  incident_type   discipline_incident_type NOT NULL,
+  description     text NOT NULL,
+  action_taken    text,
+  recorded_by     uuid REFERENCES users(id),
+  parent_notified boolean NOT NULL DEFAULT false,
+  parent_notified_at timestamptz,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  is_deleted      boolean NOT NULL DEFAULT false
+);
+
+-- Enable Row Level Security
+ALTER TABLE discipline_records ENABLE ROW LEVEL SECURITY;
+
+-- Drop existing policies if they exist to avoid conflicts
+DROP POLICY IF EXISTS "school_manage_discipline" ON discipline_records;
+DROP POLICY IF EXISTS "super_admin_discipline" ON discipline_records;
+
+-- School admins and teachers can manage discipline records for their school
+CREATE POLICY "school_manage_discipline"
+  ON discipline_records FOR ALL
+  USING (
+    school_id = get_user_school_id()
+    AND get_user_role() IN ('SCHOOL_ADMIN', 'TEACHER')
+  );
+
+-- Super admins have full access
+CREATE POLICY "super_admin_discipline"
+  ON discipline_records FOR ALL
+  USING (get_user_role() = 'SUPER_ADMIN');
+
+-- Index for fast lookups by student and date
+CREATE INDEX IF NOT EXISTS idx_discipline_student
+  ON discipline_records(school_id, student_id, incident_date DESC)
+  WHERE is_deleted = false;
+
+-- Comment on table
+COMMENT ON TABLE discipline_records IS 'Stores student disciplinary incidents and actions taken';
+
+
+-- ============================================
+-- Migration: 00020_fee_discounts.sql
+-- ============================================
+
+-- =============================================================================
+-- SKULI SaaS: Fee Discounts / Scholarships
+-- Migration 00020
+-- =============================================================================
+
+-- ---------------------------------------------------------------------------
+-- 1. fee_discounts — defines discount types per school
+-- ---------------------------------------------------------------------------
+CREATE TABLE fee_discounts (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id     uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  name          text NOT NULL,
+  discount_type discount_type NOT NULL DEFAULT 'percentage',
+  value         numeric NOT NULL,
+  max_amount    numeric,
+  is_recurring  boolean NOT NULL DEFAULT true,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  is_deleted    boolean NOT NULL DEFAULT false
+);
+
+CREATE INDEX idx_fee_discounts_school ON fee_discounts(school_id) WHERE is_deleted = false;
+
+-- ---------------------------------------------------------------------------
+-- 2. student_discounts — assigns discounts to students
+-- ---------------------------------------------------------------------------
+CREATE TABLE student_discounts (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id     uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  student_id    uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  discount_id   uuid NOT NULL REFERENCES fee_discounts(id) ON DELETE CASCADE,
+  term_id       uuid REFERENCES terms(id),
+  approved_by   uuid REFERENCES users(id),
+  note          text,
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now(),
+  is_deleted    boolean NOT NULL DEFAULT false
+);
+
+CREATE INDEX idx_student_discounts_school ON student_discounts(school_id) WHERE is_deleted = false;
+CREATE INDEX idx_student_discounts_student ON student_discounts(student_id) WHERE is_deleted = false;
+CREATE INDEX idx_student_discounts_discount ON student_discounts(discount_id) WHERE is_deleted = false;
+CREATE INDEX idx_student_discounts_term ON student_discounts(term_id) WHERE is_deleted = false;
+
+-- Conditional unique indexes to enforce uniqueness with nullable term_id
+CREATE UNIQUE INDEX uq_student_discounts_with_term
+  ON student_discounts(student_id, discount_id, term_id)
+  WHERE term_id IS NOT NULL AND is_deleted = false;
+
+CREATE UNIQUE INDEX uq_student_discounts_no_term
+  ON student_discounts(student_id, discount_id)
+  WHERE term_id IS NULL AND is_deleted = false;
+
+-- ---------------------------------------------------------------------------
+-- 3. RLS Policies
+-- ---------------------------------------------------------------------------
+ALTER TABLE fee_discounts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE student_discounts ENABLE ROW LEVEL SECURITY;
+
+-- fee_discounts: Super admin full access
+CREATE POLICY "super_admin_all_fee_discounts" ON fee_discounts FOR ALL
+  USING (get_user_role() = 'SUPER_ADMIN');
+
+-- fee_discounts: Admin/Bursar full access within school
+CREATE POLICY "school_manage_discounts" ON fee_discounts FOR ALL
+  USING (school_id = get_user_school_id()
+    AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR'));
+
+-- student_discounts: Super admin full access
+CREATE POLICY "super_admin_all_student_discounts" ON student_discounts FOR ALL
+  USING (get_user_role() = 'SUPER_ADMIN');
+
+-- student_discounts: Admin/Bursar full access within school
+CREATE POLICY "school_manage_student_discounts" ON student_discounts FOR ALL
+  USING (school_id = get_user_school_id()
+    AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR'));
+
+-- student_discounts: Parents read-only for own children
+CREATE POLICY "parent_read_student_discounts" ON student_discounts FOR SELECT
+  USING (
+    school_id = get_user_school_id()
+    AND get_user_role() = 'PARENT'
+    AND student_id IN (
+      SELECT s.id FROM students s
+      WHERE s.parent_phone = (SELECT phone FROM users WHERE id = auth.uid())
+        AND s.school_id = get_user_school_id()
+        AND s.is_deleted = false
+    )
+  );
+
+-- ---------------------------------------------------------------------------
+-- 4. updated_at triggers
+-- ---------------------------------------------------------------------------
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON fee_discounts
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER set_updated_at BEFORE UPDATE ON student_discounts
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- 5. Updated recalculate_fee_account() — subtracts applicable discounts
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION recalculate_fee_account(p_account_id uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_account fee_accounts%ROWTYPE;
+    v_total_expected numeric;
+    v_total_paid numeric;
+    v_total_discount numeric;
+    v_balance numeric;
+    v_status fee_account_status;
+BEGIN
+    -- Fetch the account
+    SELECT * INTO v_account FROM fee_accounts WHERE id = p_account_id;
+
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Fee account % not found', p_account_id;
+    END IF;
+
+    -- Calculate total_expected from fee_structures for this term/class
+    SELECT COALESCE(SUM(fs.amount), 0)
+    INTO v_total_expected
+    FROM fee_structures fs
+    LEFT JOIN students st ON st.id = v_account.student_id
+    WHERE fs.term_id = v_account.term_id
+      AND fs.school_id = v_account.school_id
+      AND fs.is_deleted = false
+      AND (fs.class_id IS NULL OR fs.class_id = st.current_class_id);
+
+    -- Calculate total discount applicable to this student/term
+    SELECT COALESCE(SUM(
+      CASE
+        WHEN fd.discount_type = 'percentage' THEN
+          LEAST(v_total_expected * fd.value / 100, COALESCE(fd.max_amount, v_total_expected * fd.value / 100))
+        ELSE fd.value
+      END
+    ), 0)
+    INTO v_total_discount
+    FROM student_discounts sd
+    JOIN fee_discounts fd ON fd.id = sd.discount_id
+    WHERE sd.student_id = v_account.student_id
+      AND (sd.term_id = v_account.term_id OR sd.term_id IS NULL)
+      AND sd.is_deleted = false
+      AND fd.is_deleted = false;
+
+    -- Apply discount, ensure non-negative
+    v_total_expected := GREATEST(v_total_expected - v_total_discount, 0);
+
+    -- Calculate total_paid from confirmed fee_payments
+    SELECT COALESCE(SUM(fp.amount), 0)
+    INTO v_total_paid
+    FROM fee_payments fp
+    WHERE fp.fee_account_id = p_account_id
+      AND fp.status = 'confirmed'
+      AND fp.is_deleted = false;
+
+    -- Calculate balance
+    v_balance := v_total_expected - v_total_paid;
+
+    -- Determine status
+    IF v_balance = 0 AND v_total_expected > 0 THEN
+        v_status := 'paid';
+    ELSIF v_balance > 0 AND v_total_paid > 0 THEN
+        v_status := 'partial';
+    ELSIF v_balance < 0 THEN
+        v_status := 'overpaid';
+    ELSE
+        v_status := 'unpaid';
+    END IF;
+
+    -- Update the account
+    UPDATE fee_accounts
+    SET total_expected = v_total_expected,
+        total_paid = v_total_paid,
+        balance = v_balance,
+        status = v_status
+    WHERE id = p_account_id;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 6. Updated create_fee_accounts_for_term() — subtracts discounts on creation
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION create_fee_accounts_for_term(
+    p_school_id uuid,
+    p_term_id uuid
+)
+RETURNS int
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_count int := 0;
+    v_rec record;
+    v_academic_year_id uuid;
+    v_total_expected numeric;
+    v_total_discount numeric;
+BEGIN
+    -- Get the academic year for this term
+    SELECT academic_year_id INTO v_academic_year_id
+    FROM terms
+    WHERE id = p_term_id AND school_id = p_school_id;
+
+    IF v_academic_year_id IS NULL THEN
+        RAISE EXCEPTION 'Term % not found for school %', p_term_id, p_school_id;
+    END IF;
+
+    -- Loop through all enrolled students for this term
+    FOR v_rec IN
+        SELECT DISTINCT ce.student_id
+        FROM class_enrollments ce
+        JOIN students s ON s.id = ce.student_id
+        WHERE ce.term_id = p_term_id
+          AND s.school_id = p_school_id
+          AND s.status = 'active'
+          AND s.is_deleted = false
+          AND ce.is_deleted = false
+          AND NOT EXISTS (
+              SELECT 1 FROM fee_accounts fa
+              WHERE fa.student_id = ce.student_id
+                AND fa.term_id = p_term_id
+                AND fa.is_deleted = false
+          )
+    LOOP
+        -- Calculate total_expected for this student
+        SELECT COALESCE(SUM(fs.amount), 0)
+        INTO v_total_expected
+        FROM fee_structures fs
+        JOIN students st ON st.id = v_rec.student_id
+        WHERE fs.term_id = p_term_id
+          AND fs.school_id = p_school_id
+          AND fs.is_deleted = false
+          AND (fs.class_id IS NULL OR fs.class_id = st.current_class_id);
+
+        -- Calculate discount for this student/term
+        SELECT COALESCE(SUM(
+          CASE
+            WHEN fd.discount_type = 'percentage' THEN
+              LEAST(v_total_expected * fd.value / 100, COALESCE(fd.max_amount, v_total_expected * fd.value / 100))
+            ELSE fd.value
+          END
+        ), 0)
+        INTO v_total_discount
+        FROM student_discounts sd
+        JOIN fee_discounts fd ON fd.id = sd.discount_id
+        WHERE sd.student_id = v_rec.student_id
+          AND (sd.term_id = p_term_id OR sd.term_id IS NULL)
+          AND sd.is_deleted = false
+          AND fd.is_deleted = false;
+
+        v_total_expected := GREATEST(v_total_expected - v_total_discount, 0);
+
+        INSERT INTO fee_accounts (
+            school_id,
+            student_id,
+            term_id,
+            academic_year_id,
+            total_expected,
+            total_paid,
+            balance,
+            status
+        ) VALUES (
+            p_school_id,
+            v_rec.student_id,
+            p_term_id,
+            v_academic_year_id,
+            v_total_expected,
+            0,
+            v_total_expected,
+            CASE WHEN v_total_expected > 0 THEN 'unpaid'::fee_account_status ELSE 'paid'::fee_account_status END
+        );
+
+        v_count := v_count + 1;
+    END LOOP;
+
+    RETURN v_count;
+END;
+$$;
+
+
+-- ============================================
+-- Migration: 00021_expenses.sql
+-- ============================================
+
+-- Expense payment method enum
+CREATE TYPE expense_payment_method AS ENUM ('cash', 'bank', 'mobile_money', 'cheque');
+
+-- Expense categories
+CREATE TABLE expense_categories (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  name        text NOT NULL,
+  is_deleted  boolean NOT NULL DEFAULT false
+);
+
+-- Expenses
+CREATE TABLE expenses (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  category_id     uuid REFERENCES expense_categories(id),
+  term_id         uuid REFERENCES terms(id),
+  description     text NOT NULL,
+  amount          numeric NOT NULL,
+  expense_date    date NOT NULL,
+  payment_method  expense_payment_method,
+  receipt_number  text,
+  recorded_by     uuid REFERENCES users(id),
+  notes           text,
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  is_deleted      boolean NOT NULL DEFAULT false
+);
+
+-- RLS
+ALTER TABLE expense_categories ENABLE ROW LEVEL SECURITY;
+ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "super_admin_all_expense_categories" ON expense_categories
+  FOR ALL USING (get_user_role() = 'SUPER_ADMIN');
+
+CREATE POLICY "school_manage_expense_cats" ON expense_categories
+  FOR ALL USING (school_id = get_user_school_id());
+
+CREATE POLICY "super_admin_all_expenses" ON expenses
+  FOR ALL USING (get_user_role() = 'SUPER_ADMIN');
+
+CREATE POLICY "school_manage_expenses" ON expenses
+  FOR ALL USING (
+    school_id = get_user_school_id()
+    AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR')
+  );
+
+-- Index for dashboard queries
+CREATE INDEX idx_expenses_date ON expenses(school_id, expense_date, term_id)
+  WHERE is_deleted = false;
+
+
+-- ============================================
+-- Migration: 00022_meetings.sql
+-- ============================================
+
+-- Migration 00022: Parent-Teacher Meeting Scheduler
+-- Creates meeting_slots and meeting_bookings tables with RLS and helper function
+
+-- Meeting slots (teacher availability)
+CREATE TABLE meeting_slots (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  teacher_id      uuid NOT NULL REFERENCES staff(id) ON DELETE CASCADE,
+  slot_date       date NOT NULL,
+  start_time      time NOT NULL,
+  end_time        time NOT NULL,
+  duration_minutes int NOT NULL DEFAULT 15,
+  is_booked       boolean NOT NULL DEFAULT false,
+  is_deleted      boolean NOT NULL DEFAULT false
+);
+
+-- Meeting bookings (parent reservations)
+CREATE TABLE meeting_bookings (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  slot_id         uuid NOT NULL REFERENCES meeting_slots(id) ON DELETE CASCADE,
+  school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  student_id      uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  parent_name     text NOT NULL,
+  parent_phone    text NOT NULL,
+  notes           text,
+  status          text NOT NULL DEFAULT 'confirmed'
+                  CHECK (status IN ('confirmed', 'cancelled', 'completed')),
+  reminder_sent   boolean NOT NULL DEFAULT false,
+  created_at      timestamptz NOT NULL DEFAULT now()
+);
+
+-- Indexes
+CREATE INDEX idx_meeting_slots_teacher_date ON meeting_slots(school_id, teacher_id, slot_date)
+  WHERE is_deleted = false;
+
+CREATE INDEX idx_meeting_slots_available ON meeting_slots(school_id, slot_date, is_booked)
+  WHERE is_deleted = false AND is_booked = false;
+
+CREATE INDEX idx_meeting_bookings_slot ON meeting_bookings(slot_id)
+  WHERE status = 'confirmed';
+
+CREATE INDEX idx_meeting_bookings_reminder ON meeting_bookings(school_id, reminder_sent, status)
+  WHERE status = 'confirmed' AND reminder_sent = false;
+
+-- RLS
+ALTER TABLE meeting_slots ENABLE ROW LEVEL SECURITY;
+ALTER TABLE meeting_bookings ENABLE ROW LEVEL SECURITY;
+
+-- Admins can manage all slots for their school
+CREATE POLICY "school_manage_slots" ON meeting_slots FOR ALL
+  USING (school_id = get_user_school_id());
+
+-- Admins can manage all bookings for their school
+CREATE POLICY "school_manage_bookings" ON meeting_bookings FOR ALL
+  USING (school_id = get_user_school_id());
+
+-- Parents can view bookings for their linked students
+CREATE POLICY "portal_view_bookings" ON meeting_bookings FOR SELECT
+  USING (student_id IN (
+    SELECT student_id FROM parent_students WHERE parent_id = auth.uid()
+  ));
+
+-- Parents can insert bookings for their linked students
+CREATE POLICY "portal_insert_bookings" ON meeting_bookings FOR INSERT
+  WITH CHECK (student_id IN (
+    SELECT student_id FROM parent_students WHERE parent_id = auth.uid()
+  ));
+
+-- Parents can update (cancel) their own bookings
+CREATE POLICY "portal_update_bookings" ON meeting_bookings FOR UPDATE
+  USING (student_id IN (
+    SELECT student_id FROM parent_students WHERE parent_id = auth.uid()
+  ));
+
+-- Helper function: generate meeting slots for a teacher on a given date
+CREATE OR REPLACE FUNCTION generate_meeting_slots(
+  p_school_id uuid,
+  p_teacher_id uuid,
+  p_slot_date date,
+  p_start_time time,
+  p_end_time time,
+  p_duration_minutes int DEFAULT 15
+) RETURNS void AS $$
+DECLARE
+  slot_start time;
+  slot_end time;
+BEGIN
+  slot_start := p_start_time;
+  LOOP
+    slot_end := slot_start + (p_duration_minutes || ' minutes')::interval;
+    EXIT WHEN slot_end > p_end_time;
+
+    -- Skip if slot already exists
+    IF NOT EXISTS (
+      SELECT 1 FROM meeting_slots
+      WHERE school_id = p_school_id
+        AND teacher_id = p_teacher_id
+        AND slot_date = p_slot_date
+        AND start_time = slot_start
+        AND is_deleted = false
+    ) THEN
+      INSERT INTO meeting_slots (school_id, teacher_id, slot_date, start_time, end_time, duration_minutes)
+      VALUES (p_school_id, p_teacher_id, p_slot_date, slot_start, slot_end, p_duration_minutes);
+    END IF;
+
+    slot_start := slot_end;
+  END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+
+-- ============================================
+-- Migration: 00023_message_threads.sql
+-- ============================================
+
+-- Migration 00023: Two-Way Parent Messaging
+-- Creates message_threads and thread_messages tables with RLS
+
+-- Message threads (one per parent phone per school)
+CREATE TABLE message_threads (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  parent_phone    text NOT NULL,
+  student_id      uuid REFERENCES students(id),
+  last_message_at timestamptz NOT NULL DEFAULT now(),
+  is_read         boolean NOT NULL DEFAULT false,
+  is_deleted      boolean NOT NULL DEFAULT false,
+  UNIQUE (school_id, parent_phone)
+);
+
+-- Thread messages (individual messages)
+CREATE TABLE thread_messages (
+  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  thread_id       uuid NOT NULL REFERENCES message_threads(id) ON DELETE CASCADE,
+  school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  direction       text NOT NULL CHECK (direction IN ('inbound', 'outbound')),
+  body            text NOT NULL,
+  sender_name     text,
+  at_message_id   text,
+  status          text NOT NULL DEFAULT 'delivered'
+                  CHECK (status IN ('sent', 'delivered', 'failed')),
+  sent_at         timestamptz NOT NULL DEFAULT now(),
+  is_deleted      boolean NOT NULL DEFAULT false
+);
+
+-- Indexes
+CREATE INDEX idx_threads_last_msg ON message_threads(school_id, last_message_at DESC)
+  WHERE is_deleted = false;
+
+CREATE INDEX idx_thread_messages_thread ON thread_messages(thread_id, sent_at)
+  WHERE is_deleted = false;
+
+-- RLS
+ALTER TABLE message_threads ENABLE ROW LEVEL SECURITY;
+ALTER TABLE thread_messages ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "school_manage_threads" ON message_threads FOR ALL
+  USING (school_id = get_user_school_id());
+
+CREATE POLICY "school_manage_thread_msgs" ON thread_messages FOR ALL
+  USING (school_id = get_user_school_id());
+
+
+-- ============================================
+-- Migration: 00024_push_subscriptions.sql
+-- ============================================
+
+-- Push notification subscriptions for PWA
+CREATE TABLE push_subscriptions (
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+  user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  endpoint    text NOT NULL,
+  p256dh      text NOT NULL,
+  auth        text NOT NULL,
+  created_at  timestamptz NOT NULL DEFAULT now(),
+  is_deleted  boolean NOT NULL DEFAULT false,
+  UNIQUE(user_id, endpoint)
+);
+
+ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;
+
+-- Users manage their own subscriptions
+CREATE POLICY "users_own_push_subscriptions" ON push_subscriptions FOR ALL
+  USING (user_id = auth.uid());
+
+-- School admins can view subscriptions in their school
+CREATE POLICY "school_admin_view_push_subscriptions" ON push_subscriptions FOR SELECT
+  USING (school_id = get_user_school_id() AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN'));
+
+-- SUPER_ADMIN sees all
+CREATE POLICY "super_admin_push_subscriptions" ON push_subscriptions FOR ALL
+  USING (get_user_role() = 'SUPER_ADMIN');
