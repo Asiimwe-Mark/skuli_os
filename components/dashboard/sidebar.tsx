@@ -61,6 +61,12 @@ const NAV_ITEMS: NavItem[] = [
     icon: LayoutDashboard,
   },
   {
+    label: "Analytics",
+    href: "/dashboard/analytics",
+    icon: BarChart3,
+    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+  },
+  {
     label: "Fees",
     icon: Wallet,
     roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
