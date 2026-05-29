@@ -40,6 +40,7 @@ import {
   Key,
   Bell,
   TrendingDown,
+  Library,
   type LucideIcon,
 } from "lucide-react";
 import { createBrowserClient } from "@/lib/supabase/client";
@@ -115,6 +116,15 @@ const NAV_ITEMS: NavItem[] = [
     icon: CalendarCheck,
   },
   {
+    label: "Library",
+    icon: Library,
+    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+    children: [
+      { label: "Book Catalog", href: "/dashboard/library", icon: BookOpen },
+      { label: "Issues & Returns", href: "/dashboard/library/issues", icon: ClipboardList },
+    ],
+  },
+  {
     label: "Staff & Payroll",
     icon: Users,
     roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
@@ -129,6 +139,15 @@ const NAV_ITEMS: NavItem[] = [
     roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
     children: [
       { label: "Schedule Meetings", href: "/dashboard/meetings", icon: CalendarCheck },
+    ],
+  },
+  {
+    label: "Library",
+    icon: BookOpen,
+    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+    children: [
+      { label: "Book Catalog", href: "/dashboard/library", icon: BookOpen },
+      { label: "Issues & Returns", href: "/dashboard/library/issues", icon: ClipboardList },
     ],
   },
   {
