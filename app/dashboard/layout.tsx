@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { CommandPalette } from "@/components/dashboard/command-palette";
@@ -15,6 +15,8 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const overrideSchoolId = searchParams.get("school_id");
   const supabase = createBrowserClient();
   const { setSchool, setUser, setCurrentTerm, setCurrentAcademicYear, setLoading } =
     useSchoolStore();
@@ -45,12 +47,15 @@ export default function DashboardLayout({
 
       setUser(userProfile);
 
-      if (userProfile.school_id) {
+      // Determine which school to load (GROUP_ADMIN can override via ?school_id=)
+      const effectiveSchoolId = overrideSchoolId || userProfile.school_id;
+
+      if (effectiveSchoolId) {
         // Load school
         const { data: school } = await supabase
           .from("schools")
           .select("*")
-          .eq("id", userProfile.school_id)
+          .eq("id", effectiveSchoolId)
           .single();
 
         if (school) setSchool(school);
@@ -59,7 +64,7 @@ export default function DashboardLayout({
         const { data: term } = await supabase
           .from("terms")
           .select("*, academic_years(*)")
-          .eq("school_id", userProfile.school_id)
+          .eq("school_id", effectiveSchoolId)
           .eq("is_current", true)
           .single();
 
@@ -76,7 +81,7 @@ export default function DashboardLayout({
     }
 
     loadContext();
-  }, [supabase, router, setSchool, setUser, setCurrentTerm, setCurrentAcademicYear, setLoading]);
+  }, [supabase, router, overrideSchoolId, setSchool, setUser, setCurrentTerm, setCurrentAcademicYear, setLoading]);
 
   if (!ready) {
     return (
