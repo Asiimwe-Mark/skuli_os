@@ -145,6 +145,13 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
+const GROUP_NAV_ITEMS: NavItem[] = [
+  { label: "Overview", href: "/group", icon: LayoutDashboard },
+  { label: "Schools", href: "/group/schools", icon: School },
+  { label: "Analytics", href: "/group/analytics", icon: BarChart3 },
+  { label: "Settings", href: "/group/settings", icon: Settings },
+];
+
 function SidebarItem({ item, depth = 0 }: { item: NavItem; depth?: number }) {
   const pathname = usePathname();
   const [expanded, setExpanded] = useState(
@@ -243,6 +250,7 @@ export function Sidebar() {
   const { school, user, userRole } = useSchoolStore();
   const { sidebarCollapsed, toggleSidebar } = useUIStore();
   const supabase = createBrowserClient();
+  const navItems = userRole === 'GROUP_ADMIN' ? GROUP_NAV_ITEMS : NAV_ITEMS;
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -262,6 +270,7 @@ export function Sidebar() {
     BURSAR: "bg-emerald/10 text-emerald",
     TEACHER: "bg-blue-400/10 text-blue-400",
     PARENT: "bg-pink-400/10 text-pink-400",
+    GROUP_ADMIN: "bg-cyan-400/10 text-cyan-400",
   };
 
   return (
@@ -307,7 +316,7 @@ export function Sidebar() {
       {/* Navigation */}
       <ScrollArea className="flex-1 px-3 py-4">
         <nav className="space-y-1">
-          {NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <SidebarItem key={item.label} item={item} />
           ))}
         </nav>
