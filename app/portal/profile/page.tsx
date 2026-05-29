@@ -12,7 +12,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToast } from '@/components/ui/use-toast';
-import { User, Phone, Mail, Lock, Loader2, CheckCircle2 } from 'lucide-react';
+import { User, Phone, Mail, Lock, Loader2, CheckCircle2, Bell } from 'lucide-react';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 const phoneSchema = z.object({
@@ -51,6 +51,10 @@ export default function PortalProfilePage() {
   const [emailSaving, setEmailSaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
 
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
+  const [pushSupported, setPushSupported] = useState(true);
+
   useEffect(() => {
     async function loadProfile() {
       const { data: { user: authUser } } = await supabase.auth.getUser();
@@ -73,6 +77,15 @@ export default function PortalProfilePage() {
       }
 
       setLoading(false);
+
+      // Check push notification status
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        setPushEnabled(!!sub);
+      } else {
+        setPushSupported(false);
+      }
     }
     loadProfile();
   }, [supabase, phoneForm, emailForm]);
@@ -135,6 +148,63 @@ export default function PortalProfilePage() {
       toast({ title: 'Error', description: message, variant: 'destructive' });
     } finally {
       setPasswordSaving(false);
+    }
+  }
+
+  async function handlePushToggle() {
+    if (!user) return;
+    setPushLoading(true);
+
+    try {
+      if (pushEnabled) {
+        // Unsubscribe
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          });
+          await sub.unsubscribe();
+        }
+        setPushEnabled(false);
+        toast({ title: 'Notifications disabled', description: 'You will no longer receive push notifications.' });
+      } else {
+        // Request permission
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          toast({ title: 'Permission denied', description: 'Please allow notifications in your browser settings.', variant: 'destructive' });
+          setPushLoading(false);
+          return;
+        }
+
+        // Subscribe
+        const reg = await navigator.serviceWorker.ready;
+        const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!;
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: vapidKey,
+        });
+
+        const subJson = sub.toJSON();
+        await fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: subJson.endpoint,
+            keys: subJson.keys,
+          }),
+        });
+
+        setPushEnabled(true);
+        toast({ title: 'Notifications enabled', description: 'You will receive push notifications for important updates.' });
+      }
+    } catch (err) {
+      console.error('Push toggle error:', err);
+      toast({ title: 'Error', description: 'Failed to update notification settings.', variant: 'destructive' });
+    } finally {
+      setPushLoading(false);
     }
   }
 
@@ -301,6 +371,33 @@ export default function PortalProfilePage() {
           </form>
         </CardContent>
       </Card>
+
+      {/* Push Notifications */}
+      {pushSupported && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Bell className="w-5 h-5 text-indigo-600" />
+              Notifications
+            </CardTitle>
+            <CardDescription>Get notified for payments, report cards, absences, meetings, and messages</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <button
+              onClick={handlePushToggle}
+              disabled={pushLoading}
+              className="flex items-center gap-3 w-full"
+            >
+              <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${pushEnabled ? 'bg-indigo-600' : 'bg-gray-200'}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${pushEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+              </div>
+              <span className="text-sm font-medium text-gray-700">
+                {pushLoading ? 'Updating...' : pushEnabled ? 'Push notifications enabled' : 'Push notifications disabled'}
+              </span>
+            </button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
