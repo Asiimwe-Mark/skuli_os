@@ -121,6 +121,15 @@ export default function PortalLayout({
     checkAuth();
   }, [router, supabase]);
 
+  // Register service worker for PWA
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch((err) => {
+        console.error("SW registration failed:", err);
+      });
+    }
+  }, []);
+
   async function handleLogout() {
     await supabase.auth.signOut();
     router.push("/login");
@@ -139,6 +148,9 @@ export default function PortalLayout({
 
   return (
     <div className="min-h-screen bg-white text-gray-900">
+      {/* PWA Manifest */}
+      <link rel="manifest" href="/manifest.json" />
+      <meta name="theme-color" content="#f59e0b" />
       {/* Top Bar */}
       <header className="sticky top-0 z-40 border-b border-gray-200 bg-white shadow-sm">
         <div className="flex h-14 items-center justify-between px-4">
