@@ -7,6 +7,7 @@ interface SchoolStore {
   currentAcademicYear: AcademicYear | null;
   user: UserProfile | null;
   userRole: UserRole | null;
+  group: { id: string; name: string; code: string } | null;
   isLoading: boolean;
 
   // Aliases for convenience (agents used different names)
@@ -18,6 +19,7 @@ interface SchoolStore {
   setCurrentAcademicYear: (year: AcademicYear | null) => void;
   setUser: (user: UserProfile | null) => void;
   setUserRole: (role: UserRole | null) => void;
+  setGroup: (group: SchoolStore['group']) => void;
   setLoading: (loading: boolean) => void;
   reset: () => void;
 }
@@ -28,6 +30,7 @@ export const useSchoolStore = create<SchoolStore>((set) => ({
   currentAcademicYear: null,
   user: null,
   userRole: null,
+  group: null,
   isLoading: true,
   term: null,
   academicYear: null,
@@ -37,6 +40,7 @@ export const useSchoolStore = create<SchoolStore>((set) => ({
   setCurrentAcademicYear: (currentAcademicYear) => set({ currentAcademicYear, academicYear: currentAcademicYear }),
   setUser: (user) => set({ user, userRole: user?.role ?? null }),
   setUserRole: (userRole) => set({ userRole }),
+  setGroup: (group) => set({ group }),
   setLoading: (isLoading) => set({ isLoading }),
   reset: () =>
     set({
@@ -45,6 +49,7 @@ export const useSchoolStore = create<SchoolStore>((set) => ({
       currentAcademicYear: null,
       user: null,
       userRole: null,
+      group: null,
       isLoading: true,
       term: null,
       academicYear: null,

@@ -78,6 +78,13 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // Group admin portal
+  if (pathname.startsWith('/group') && role !== 'GROUP_ADMIN' && role !== 'SUPER_ADMIN') {
+    const url = request.nextUrl.clone();
+    url.pathname = '/dashboard';
+    return NextResponse.redirect(url);
+  }
+
   // Teachers can only access /dashboard/classes, /dashboard/academics, /dashboard/attendance
   if (role === 'TEACHER') {
     const allowedPrefixes = [
