@@ -95,3 +95,42 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
+
+// Display push notifications
+self.addEventListener("push", (event) => {
+  if (!event.data) return;
+
+  const data = event.data.json();
+  const options = {
+    body: data.body || "",
+    icon: "/icons/icon-192.svg",
+    badge: "/icons/icon-192.svg",
+    data: { url: data.url || "/portal" },
+    tag: data.tag || undefined,
+    renotify: true,
+  };
+
+  event.waitUntil(
+    self.registration.showNotification(data.title || "SKULI", options)
+  );
+});
+
+// Handle notification clicks — open the URL
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+
+  const url = event.notification.data?.url || "/portal";
+
+  event.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((windowClients) => {
+      // Focus existing window if open
+      for (const client of windowClients) {
+        if (client.url.includes(url) && "focus" in client) {
+          return client.focus();
+        }
+      }
+      // Otherwise open a new window
+      return clients.openWindow(url);
+    })
+  );
+});
