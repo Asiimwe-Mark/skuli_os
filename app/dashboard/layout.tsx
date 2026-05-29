@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
@@ -9,11 +9,7 @@ import { useSchoolStore } from "@/store/school";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { motion } from "framer-motion";
 
-export default function DashboardLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+function DashboardShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const overrideSchoolId = searchParams.get("school_id");
@@ -107,5 +103,21 @@ export default function DashboardLayout({
         {children}
       </main>
     </div>
+  );
+}
+
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-navy flex items-center justify-center">
+        <div className="w-12 h-12 border-2 border-amber border-t-transparent rounded-full animate-spin" />
+      </div>
+    }>
+      <DashboardShell>{children}</DashboardShell>
+    </Suspense>
   );
 }
