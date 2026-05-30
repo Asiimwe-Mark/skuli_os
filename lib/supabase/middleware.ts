@@ -85,20 +85,11 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Teachers can only access /dashboard/classes, /dashboard/academics, /dashboard/attendance
-  if (role === 'TEACHER') {
-    const allowedPrefixes = [
-      '/dashboard/classes',
-      '/dashboard/academics',
-      '/dashboard/attendance',
-      '/dashboard/settings',
-    ];
-    const isAllowed = allowedPrefixes.some(prefix => pathname.startsWith(prefix));
-    if (!isAllowed && pathname !== '/dashboard') {
-      const url = request.nextUrl.clone();
-      url.pathname = '/dashboard/classes';
-      return NextResponse.redirect(url);
-    }
+  // Teachers can only access /teacher/* routes
+  if (role === 'TEACHER' && pathname.startsWith('/dashboard')) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/teacher';
+    return NextResponse.redirect(url);
   }
 
   // Bursar cannot access academic record editing

@@ -9,6 +9,8 @@
     "lint": "eslint",
     "seed": "node scripts/seed-admin.mjs",
     "seed:admin": "node scripts/seed-admin.mjs",
+    "seed:data": "node scripts/seed-data.mjs",
+    "seed:clean": "node scripts/seed-data.mjs --clean",
     "migrate": "node scripts/run-migrations.mjs"
   },
   "dependencies": {

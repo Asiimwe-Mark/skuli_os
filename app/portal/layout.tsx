@@ -17,6 +17,7 @@ import {
   GraduationCap,
   Loader2,
   UserCheck,
+  CalendarDays,
 } from "lucide-react";
 
 interface Child {
@@ -31,6 +32,7 @@ const navItems = [
   { href: "/portal/fees", label: "Fees", icon: CreditCard },
   { href: "/portal/results", label: "Results", icon: FileText },
   { href: "/portal/meetings", label: "Meetings", icon: UserCheck },
+  { href: "/portal/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/portal/profile", label: "Profile", icon: User },
 ];
 
