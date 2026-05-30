@@ -75,12 +75,25 @@ export default function PortalLayout({
         return;
       }
 
-      // Load profile (non-blocking — portal still renders if this fails)
+      // Load profile with role check
       const { data: profile } = await supabase
         .from("users")
-        .select("full_name, phone")
+        .select("full_name, phone, role")
         .eq("id", user.id)
         .maybeSingle();
+
+      // Role guard: redirect non-parents away from portal
+      if (profile?.role && profile.role !== "PARENT") {
+        const roleRedirects: Record<string, string> = {
+          SUPER_ADMIN: "/admin",
+          SCHOOL_ADMIN: "/dashboard",
+          BURSAR: "/dashboard/fees",
+          TEACHER: "/teacher",
+          GROUP_ADMIN: "/group",
+        };
+        router.push(roleRedirects[profile.role] || "/login");
+        return;
+      }
 
       if (profile?.full_name) {
         setParentName(profile.full_name);

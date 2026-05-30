@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Input } from "@/components/ui/input";
-import { Building2, Search, Plus, Eye } from "lucide-react";
+import { Building2, Search, Plus, Eye, Shield, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Database } from "@/types/database";
@@ -33,6 +33,7 @@ export default function AdminSchoolsPage() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [addForm, setAddForm] = useState({ name: '', district: '', admin_email: '', admin_name: '', subscription_plan: 'starter' });
   const [adding, setAdding] = useState(false);
+  const [impersonatingId, setImpersonatingId] = useState<string | null>(null);
 
   const { data: schools = [], isLoading } = useQuery<SchoolRow[]>({
     queryKey: ["admin-schools"],
@@ -95,6 +96,39 @@ export default function AdminSchoolsPage() {
                   <span className="text-sm text-white/60 min-w-[80px] text-right">
                     {formatUGX(planPrices[s.subscription_plan] || 0)}/mo
                   </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
+                    disabled={impersonatingId === s.id}
+                    onClick={async () => {
+                      setImpersonatingId(s.id);
+                      try {
+                        const res = await fetch("/api/admin/impersonate", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ school_id: s.id }),
+                        });
+                        const d = await res.json();
+                        if (d.success && d.data?.url) {
+                          window.open(d.data.url, "_blank");
+                        } else {
+                          toast({ title: "Failed to impersonate", description: d.error, variant: "destructive" });
+                        }
+                      } catch {
+                        toast({ title: "Failed to impersonate", variant: "destructive" });
+                      } finally {
+                        setImpersonatingId(null);
+                      }
+                    }}
+                  >
+                    {impersonatingId === s.id ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <Shield className="h-4 w-4 mr-1" />
+                    )}
+                    {impersonatingId === s.id ? "Loading..." : "Impersonate"}
+                  </Button>
                   <Button
                     variant="outline"
                     size="sm"

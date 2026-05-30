@@ -43,6 +43,19 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
       setUser(userProfile);
 
+      // Role guard: redirect users who don't belong in /dashboard
+      const allowedDashboardRoles = ["SCHOOL_ADMIN", "BURSAR"];
+      if (!allowedDashboardRoles.includes(userProfile.role)) {
+        const roleRedirects: Record<string, string> = {
+          SUPER_ADMIN: "/admin",
+          TEACHER: "/teacher",
+          PARENT: "/portal",
+          GROUP_ADMIN: "/group",
+        };
+        router.push(roleRedirects[userProfile.role] || "/login");
+        return;
+      }
+
       // Determine which school to load (GROUP_ADMIN can override via ?school_id=)
       const effectiveSchoolId = overrideSchoolId || userProfile.school_id;
 

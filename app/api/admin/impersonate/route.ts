@@ -62,17 +62,11 @@ export async function POST(request: NextRequest) {
       return errorResponse(linkError?.message || "Failed to generate impersonation link", 500);
     }
 
-    // Use the properties hash from the generated link
-    const impersonationToken = Buffer.from(
-      JSON.stringify({
-        target_user_id: schoolAdmin!.id,
-        school_id: school_id,
-        issued_by: ctx.user.id,
-        issued_at: Date.now(),
-        expires_at: Date.now() + 60 * 60 * 1000, // 1 hour
-        properties: linkData.properties,
-      })
-    ).toString("base64");
+    // Build the impersonation URL using the generated action_link
+    const actionLink = linkData.properties?.action_link;
+    if (!actionLink) {
+      return errorResponse("Failed to generate impersonation URL", 500);
+    }
 
     // Audit log
     await adminClient.from("audit_logs").insert({
@@ -89,7 +83,7 @@ export async function POST(request: NextRequest) {
     } as any);
 
     return successResponse({
-      token: impersonationToken,
+      url: actionLink,
       target_user: {
         id: schoolAdmin!.id,
         name: schoolAdmin!.full_name,

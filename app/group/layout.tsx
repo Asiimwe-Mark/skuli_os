@@ -57,6 +57,18 @@ export default function GroupLayout({
         return;
       }
 
+      // Role guard: redirect non-group-admins away from group portal
+      if (userProfile.role !== "GROUP_ADMIN" && userProfile.role !== "SUPER_ADMIN") {
+        const roleRedirects: Record<string, string> = {
+          SCHOOL_ADMIN: "/dashboard",
+          BURSAR: "/dashboard/fees",
+          TEACHER: "/teacher",
+          PARENT: "/portal",
+        };
+        router.push(roleRedirects[userProfile.role] || "/login");
+        return;
+      }
+
       setUser(userProfile);
       setUserRole(userProfile.role);
 

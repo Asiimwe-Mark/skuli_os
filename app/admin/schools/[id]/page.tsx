@@ -71,6 +71,7 @@ export default function AdminSchoolDetailPage() {
   const [trialDate, setTrialDate] = useState("");
   const [showChangePlan, setShowChangePlan] = useState(false);
   const [newPlan, setNewPlan] = useState("");
+  const [impersonating, setImpersonating] = useState(false);
 
   const { data: school, isLoading } = useQuery<School>({
     queryKey: ["admin-school", schoolId],
@@ -698,20 +699,34 @@ export default function AdminSchoolDetailPage() {
                   <Button
                     variant="outline"
                     className="border-amber-400/40 text-amber-400 hover:bg-amber-400/10"
-                    onClick={() => {
-                      fetch("/api/admin/impersonate", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ school_id: schoolId }),
-                      })
-                        .then((r) => r.json())
-                        .then((d) => {
-                          if (d.url) window.open(d.url, "_blank");
+                    disabled={impersonating}
+                    onClick={async () => {
+                      setImpersonating(true);
+                      try {
+                        const res = await fetch("/api/admin/impersonate", {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ school_id: schoolId }),
                         });
+                        const d = await res.json();
+                        if (d.success && d.data?.url) {
+                          window.open(d.data.url, "_blank");
+                        } else {
+                          alert(d.error || "Failed to impersonate");
+                        }
+                      } catch {
+                        alert("Failed to impersonate");
+                      } finally {
+                        setImpersonating(false);
+                      }
                     }}
                   >
-                    <Shield className="w-4 h-4 mr-2" />
-                    Impersonate
+                    {impersonating ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Shield className="w-4 h-4 mr-2" />
+                    )}
+                    {impersonating ? "Loading..." : "Impersonate"}
                   </Button>
                 </div>
 
