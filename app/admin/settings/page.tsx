@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { createBrowserClient } from "@/lib/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,7 +23,6 @@ interface PlatformSettings {
 }
 
 export default function AdminSettingsPage() {
-  const supabase = createBrowserClient();
   const queryClient = useQueryClient();
 
   const [smsRate, setSmsRate] = useState("");
@@ -37,23 +35,21 @@ export default function AdminSettingsPage() {
   const { data: settings, isLoading } = useQuery<PlatformSettings>({
     queryKey: ["admin-platform-settings"],
     queryFn: async () => {
-      const { data: rows } = await supabase
-        .from("platform_settings")
-        .select("key, value")
-        .in("key", ["sms_rate_ugx", "transaction_fee_pct", "feature_flags"]);
+      const res = await fetch("/api/admin/platform-settings");
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
 
+      const rows = json.data as { key: string; value: unknown }[];
       const result: PlatformSettings = {
         sms_rate_ugx: 25,
         transaction_fee_pct: 1.5,
         feature_flags: {},
       };
 
-      if (rows) {
-        for (const row of rows) {
-          if (row.key === "sms_rate_ugx") result.sms_rate_ugx = Number(row.value);
-          else if (row.key === "transaction_fee_pct") result.transaction_fee_pct = Number(row.value);
-          else if (row.key === "feature_flags") result.feature_flags = row.value as Record<string, Record<string, boolean>>;
-        }
+      for (const row of rows) {
+        if (row.key === "sms_rate_ugx") result.sms_rate_ugx = Number(row.value);
+        else if (row.key === "transaction_fee_pct") result.transaction_fee_pct = Number(row.value);
+        else if (row.key === "feature_flags") result.feature_flags = row.value as Record<string, Record<string, boolean>>;
       }
 
       setSmsRate(String(result.sms_rate_ugx));
@@ -64,10 +60,16 @@ export default function AdminSettingsPage() {
 
   const saveMutation = useMutation({
     mutationFn: async () => {
-      await supabase.from("platform_settings").upsert([
-        { key: "sms_rate_ugx", value: Number(smsRate) },
-        { key: "transaction_fee_pct", value: Number(txFee) },
-      ] as Record<string, unknown>[], { onConflict: "key" });
+      await fetch("/api/admin/platform-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "sms_rate_ugx", value: Number(smsRate) }),
+      });
+      await fetch("/api/admin/platform-settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "transaction_fee_pct", value: Number(txFee) }),
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-platform-settings"] });
@@ -82,22 +84,11 @@ export default function AdminSettingsPage() {
     setBroadcastDone(false);
 
     try {
-      const { data: admins } = await supabase
-        .from("users")
-        .select("id, school_id")
-        .eq("role", "SCHOOL_ADMIN")
-        .eq("is_active", true);
-
-      if (admins && admins.length > 0) {
-        const notifications = admins.map((admin: { school_id: string; id: string }) => ({
-          school_id: admin.school_id,
-          recipient_user_id: admin.id,
-          title: "Platform Announcement",
-          body: broadcast,
-          type: "info",
-        }));
-        await supabase.from("in_app_notifications").insert(notifications as Record<string, unknown>[]);
-      }
+      await fetch("/api/admin/platform-settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "broadcast", title: "Platform Announcement", message: broadcast }),
+      });
 
       setBroadcastDone(true);
       setBroadcast("");
@@ -113,10 +104,11 @@ export default function AdminSettingsPage() {
     if (!newFlags[plan]) newFlags[plan] = {};
     newFlags[plan][flag] = value;
 
-    await supabase.from("platform_settings").upsert(
-      { key: "feature_flags", value: newFlags } as Record<string, unknown>,
-      { onConflict: "key" }
-    );
+    await fetch("/api/admin/platform-settings", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key: "feature_flags", value: newFlags }),
+    });
     queryClient.invalidateQueries({ queryKey: ["admin-platform-settings"] });
   };
 

@@ -1,9 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useSchoolStore } from "@/store/school";
-import { createBrowserClient } from "@/lib/supabase/client";
-import { formatUGX } from "@/lib/utils/currency";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
@@ -23,7 +20,7 @@ const CHART_COLORS = ["#f59e0b", "#10b981", "#3b82f6", "#8b5cf6", "#ef4444", "#0
 
 interface FeeBySchool {
   name: string;
-  amount: number;
+  value: number;
 }
 
 interface AttendanceByWeek {
@@ -31,140 +28,38 @@ interface AttendanceByWeek {
   [schoolName: string]: number | string;
 }
 
-interface AcademicByClass {
-  className: string;
-  [schoolName: string]: number | string;
+interface MarksBySchool {
+  name: string;
+  value: number;
 }
 
 export default function GroupAnalyticsPage() {
-  const { group } = useSchoolStore();
-  const supabase = createBrowserClient();
   const [loading, setLoading] = useState(true);
   const [feeBySchool, setFeeBySchool] = useState<FeeBySchool[]>([]);
   const [attendanceByWeek, setAttendanceByWeek] = useState<AttendanceByWeek[]>([]);
-  const [academicByClass, setAcademicByClass] = useState<AcademicByClass[]>([]);
+  const [marksBySchool, setMarksBySchool] = useState<MarksBySchool[]>([]);
   const [schoolNames, setSchoolNames] = useState<string[]>([]);
 
   useEffect(() => {
     async function loadData() {
-      if (!group) return;
+      const res = await fetch("/api/group/analytics");
+      const json = await res.json();
 
-      const { data: schools } = await supabase
-        .from("schools")
-        .select("id, name")
-        .eq("group_id", group.id)
-        .eq("is_deleted", false)
-        .order("name");
+      if (json.success && json.data) {
+        const data = json.data;
+        setFeeBySchool((data.fee_by_school ?? []).map((d: any) => ({ name: d.name, value: d.value })));
+        setAttendanceByWeek(data.attendance_by_week ?? []);
+        setMarksBySchool((data.marks_by_school ?? []).map((d: any) => ({ name: d.name, value: d.value })));
 
-      if (!schools || schools.length === 0) {
-        setLoading(false);
-        return;
+        // Extract school names from fee data
+        const names = (data.fee_by_school ?? []).map((d: any) => d.name);
+        setSchoolNames(names);
       }
-
-      const names = schools.map((s: any) => s.name);
-      setSchoolNames(names);
-
-      // 1. Fee collection by school
-      const feeData: FeeBySchool[] = [];
-      for (const school of schools) {
-        const { data: payments } = await supabase
-          .from("fee_payments")
-          .select("amount")
-          .eq("school_id", school.id)
-          .eq("status", "confirmed");
-
-        const total = (payments ?? []).reduce((sum: any, p: any) => sum + Number(p.amount), 0);
-        feeData.push({ name: school.name, amount: total });
-      }
-      setFeeBySchool(feeData);
-
-      // 2. Attendance rate by school over weeks (last 8 weeks)
-      const weekMap = new Map<string, Record<string, { present: number; total: number }>>();
-      const now = new Date();
-
-      for (let w = 7; w >= 0; w--) {
-        const weekStart = new Date(now);
-        weekStart.setDate(now.getDate() - w * 7);
-        const weekEnd = new Date(weekStart);
-        weekEnd.setDate(weekStart.getDate() + 6);
-        const weekLabel = `W${8 - w}`;
-        const startStr = weekStart.toISOString().split("T")[0];
-        const endStr = weekEnd.toISOString().split("T")[0];
-
-        const weekData: Record<string, { present: number; total: number }> = {};
-
-        for (const school of schools) {
-          const { data: records } = await supabase
-            .from("attendance_records")
-            .select("status")
-            .eq("school_id", school.id)
-            .gte("date", startStr)
-            .lte("date", endStr);
-
-          if (records && records.length > 0) {
-            const present = records.filter((r: any) => r.status === "present").length;
-            weekData[school.name] = { present, total: records.length };
-          }
-        }
-
-        weekMap.set(weekLabel, weekData);
-      }
-
-      const attData: AttendanceByWeek[] = [];
-      for (const [week, schoolData] of weekMap) {
-        const row: AttendanceByWeek = { week };
-        for (const school of schools) {
-          const d = schoolData[school.name];
-          row[school.name] = d && d.total > 0 ? Math.round((d.present / d.total) * 100) : 0;
-        }
-        attData.push(row);
-      }
-      setAttendanceByWeek(attData);
-
-      // 3. Academic performance — average marks by class across schools
-      const classMap = new Map<string, Record<string, { total: number; count: number }>>();
-
-      for (const school of schools) {
-        const { data: classes } = await supabase
-          .from("classes")
-          .select("id, name")
-          .eq("school_id", school.id)
-          .eq("is_deleted", false);
-
-        if (!classes) continue;
-
-        for (const cls of classes) {
-          const { data: marks } = await supabase
-            .from("marks")
-            .select("score, max_score")
-            .eq("school_id", school.id)
-            .eq("class_id", cls.id);
-
-          if (marks && marks.length > 0) {
-            const avgPct = marks.reduce((sum: any, m: any) => sum + (Number(m.score) / Number(m.max_score)) * 100, 0) / marks.length;
-            const existing = classMap.get(cls.name) ?? {};
-            existing[school.name] = { total: avgPct, count: 1 };
-            classMap.set(cls.name, existing);
-          }
-        }
-      }
-
-      const acData: AcademicByClass[] = [];
-      for (const [className, schoolData] of classMap) {
-        const row: AcademicByClass = { className };
-        for (const school of schools) {
-          const d = schoolData[school.name];
-          row[school.name] = d ? Math.round(d.total / d.count) : 0;
-        }
-        acData.push(row);
-      }
-      setAcademicByClass(acData);
-
       setLoading(false);
     }
 
     loadData();
-  }, [group, supabase]);
+  }, []);
 
   if (loading) {
     return (
@@ -199,10 +94,10 @@ export default function GroupAnalyticsPage() {
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: "rgba(255,255,255,0.5)" }} />
                   <YAxis tick={{ fontSize: 11, fill: "rgba(255,255,255,0.5)" }} tickFormatter={(v) => `${(v / 1000000).toFixed(1)}M`} />
                   <Tooltip
-                    formatter={(value) => [formatUGX(Number(value)), "Amount"]}
+                    formatter={(value) => [`UGX ${Number(value).toLocaleString()}`, "Amount"]}
                     contentStyle={{ background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
                   />
-                  <Bar dataKey="amount" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="value" fill="#f59e0b" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -243,30 +138,22 @@ export default function GroupAnalyticsPage() {
         )}
 
         {/* Academic Performance */}
-        {academicByClass.length > 0 && (
+        {marksBySchool.length > 0 && (
           <Card className="border-border-subtle bg-surface lg:col-span-2">
             <CardHeader>
-              <CardTitle className="text-lg">Academic Performance by Class</CardTitle>
+              <CardTitle className="text-lg">Academic Performance by School</CardTitle>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={academicByClass}>
+                <BarChart data={marksBySchool}>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
-                  <XAxis dataKey="className" tick={{ fontSize: 11, fill: "rgba(255,255,255,0.5)" }} />
+                  <XAxis dataKey="name" tick={{ fontSize: 11, fill: "rgba(255,255,255,0.5)" }} />
                   <YAxis tick={{ fontSize: 11, fill: "rgba(255,255,255,0.5)" }} domain={[0, 100]} />
                   <Tooltip
                     formatter={(value) => [`${value}%`, "Average"]}
                     contentStyle={{ background: "#1a1a2e", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }}
                   />
-                  <Legend wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }} />
-                  {schoolNames.map((name, i) => (
-                    <Bar
-                      key={name}
-                      dataKey={name}
-                      fill={CHART_COLORS[i % CHART_COLORS.length]}
-                      radius={[4, 4, 0, 0]}
-                    />
-                  ))}
+                  <Bar dataKey="value" fill="#10b981" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>

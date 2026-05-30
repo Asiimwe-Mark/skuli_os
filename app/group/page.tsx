@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useSchoolStore } from "@/store/school";
-import { createBrowserClient } from "@/lib/supabase/client";
 import { formatUGX } from "@/lib/utils/currency";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -17,9 +16,8 @@ import {
 interface SchoolSummary {
   id: string;
   name: string;
-  studentCount: number;
-  feeCollected: number;
-  attendanceRate: number;
+  student_count: number;
+  fee_collected: number;
 }
 
 function StatCard({
@@ -60,87 +58,27 @@ function StatCard({
 
 export default function GroupOverviewPage() {
   const { group } = useSchoolStore();
-  const supabase = createBrowserClient();
   const [loading, setLoading] = useState(true);
   const [totalStudents, setTotalStudents] = useState(0);
   const [totalFees, setTotalFees] = useState(0);
-  const [avgAttendance, setAvgAttendance] = useState(0);
   const [schoolSummaries, setSchoolSummaries] = useState<SchoolSummary[]>([]);
 
   useEffect(() => {
     async function loadData() {
-      if (!group) return;
+      const res = await fetch("/api/group/schools");
+      const json = await res.json();
 
-      const { data: schools } = await supabase
-        .from("schools")
-        .select("id, name")
-        .eq("group_id", group.id)
-        .eq("is_deleted", false);
-
-      if (!schools || schools.length === 0) {
-        setLoading(false);
-        return;
+      if (json.success && json.data) {
+        const { schools, totals } = json.data;
+        setSchoolSummaries(schools ?? []);
+        setTotalStudents(totals?.students ?? 0);
+        setTotalFees(totals?.fees ?? 0);
       }
-
-      let totalStud = 0;
-      let totalFee = 0;
-      let totalAttPct = 0;
-      let attSchools = 0;
-      const summaries: SchoolSummary[] = [];
-
-      for (const school of schools) {
-        const { count: studCount } = await supabase
-          .from("students")
-          .select("id", { count: "exact", head: true })
-          .eq("school_id", school.id)
-          .eq("is_deleted", false)
-          .eq("status", "active");
-
-        const sc = studCount ?? 0;
-        totalStud += sc;
-
-        const { data: payments } = await supabase
-          .from("fee_payments")
-          .select("amount")
-          .eq("school_id", school.id)
-          .eq("status", "confirmed");
-
-        const fee = (payments ?? []).reduce((sum: any, p: any) => sum + Number(p.amount), 0);
-        totalFee += fee;
-
-        const today = new Date().toISOString().split("T")[0];
-        const { data: attRecords } = await supabase
-          .from("attendance_records")
-          .select("status")
-          .eq("school_id", school.id)
-          .eq("date", today);
-
-        let attRate = 0;
-        if (attRecords && attRecords.length > 0) {
-          const present = attRecords.filter((r: any) => r.status === "present").length;
-          attRate = Math.round((present / attRecords.length) * 100);
-          totalAttPct += attRate;
-          attSchools++;
-        }
-
-        summaries.push({
-          id: school.id,
-          name: school.name,
-          studentCount: sc,
-          feeCollected: fee,
-          attendanceRate: attRate,
-        });
-      }
-
-      setTotalStudents(totalStud);
-      setTotalFees(totalFee);
-      setAvgAttendance(attSchools > 0 ? Math.round(totalAttPct / attSchools) : 0);
-      setSchoolSummaries(summaries);
       setLoading(false);
     }
 
     loadData();
-  }, [group, supabase]);
+  }, []);
 
   if (loading) {
     return (
@@ -180,8 +118,8 @@ export default function GroupOverviewPage() {
           delay={0.1}
         />
         <StatCard
-          label="Avg Attendance Today"
-          value={`${avgAttendance}%`}
+          label="Schools"
+          value={String(schoolSummaries.length)}
           icon={CalendarCheck}
           color="bg-blue-500/10 text-blue-400"
           delay={0.2}
@@ -206,20 +144,14 @@ export default function GroupOverviewPage() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className="grid grid-cols-3 gap-2 text-center">
+                  <div className="grid grid-cols-2 gap-2 text-center">
                     <div>
-                      <p className="text-lg font-bold">{school.studentCount}</p>
+                      <p className="text-lg font-bold">{school.student_count}</p>
                       <p className="text-[10px] text-foreground/60">Students</p>
                     </div>
                     <div>
-                      <p className="text-lg font-bold">{formatUGX(school.feeCollected)}</p>
+                      <p className="text-lg font-bold">{formatUGX(school.fee_collected)}</p>
                       <p className="text-[10px] text-foreground/60">Fees</p>
-                    </div>
-                    <div>
-                      <p className="text-lg font-bold">
-                        {school.attendanceRate > 0 ? `${school.attendanceRate}%` : "—"}
-                      </p>
-                      <p className="text-[10px] text-foreground/60">Attendance</p>
                     </div>
                   </div>
                 </CardContent>

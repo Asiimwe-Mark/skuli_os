@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { createBrowserClient } from "@/lib/supabase/client";
 import { formatUGX } from "@/lib/utils/currency";
 import { formatDate } from "@/lib/utils/dates";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,27 +17,6 @@ import {
   Building2,
 } from "lucide-react";
 
-interface School {
-  id: string;
-  name: string;
-  subscription_plan: string;
-  subscription_status: string;
-  created_at: string;
-}
-
-interface Invoice {
-  id: string;
-  school_id: string;
-  plan: string;
-  amount: number;
-  currency: string;
-  period_start: string;
-  period_end: string;
-  status: string;
-  paid_at: string | null;
-  created_at: string;
-}
-
 const PLAN_PRICES: Record<string, number> = {
   starter: 50000,
   growth: 120000,
@@ -46,82 +24,50 @@ const PLAN_PRICES: Record<string, number> = {
 };
 
 export default function AdminRevenuePage() {
-  const supabase = createBrowserClient();
   const [search, setSearch] = useState("");
 
-  const { data: schools = [], isLoading: schoolsLoading } = useQuery<School[]>({
-    queryKey: ["admin-schools-revenue"],
+  const { data, isLoading } = useQuery({
+    queryKey: ["admin-revenue"],
     queryFn: async () => {
-      const { data } = await supabase
-        .from("schools")
-        .select("id, name, subscription_plan, subscription_status")
-        .eq("is_deleted", false);
-      return (data || []) as School[];
+      const res = await fetch("/api/admin/revenue");
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error);
+      return json.data;
     },
   });
 
-  const { data: invoices = [], isLoading: invoicesLoading } = useQuery<Invoice[]>({
-    queryKey: ["admin-invoices"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("subscription_invoices")
-        .select("*")
-        .order("created_at", { ascending: false });
-      return (data || []) as Invoice[];
-    },
-  });
-
-  const schoolMap = useMemo(() => {
-    const map: Record<string, School> = {};
-    for (const s of schools) map[s.id] = s;
-    return map;
-  }, [schools]);
-
-  const activeSchools = schools.filter(
-    (s) => s.subscription_status === "active" || s.subscription_status === "trial"
-  );
-
-  const mrr = activeSchools.reduce(
-    (sum, s) => sum + (PLAN_PRICES[s.subscription_plan] || 0),
-    0
-  );
-
-  const starterCount = activeSchools.filter((s) => s.subscription_plan === "starter").length;
-  const growthCount = activeSchools.filter((s) => s.subscription_plan === "growth").length;
-  const proCount = activeSchools.filter((s) => s.subscription_plan === "pro").length;
-
-  // Churn metrics
-  const startOfMonth = new Date();
-  startOfMonth.setDate(1);
-  startOfMonth.setHours(0, 0, 0, 0);
-
-  const cancelledSchools = schools.filter(
-    (s) => s.subscription_status === "cancelled"
-  ).length;
-  const activeAtStart = activeSchools.length + cancelledSchools;
-  const churnRate = activeAtStart > 0 ? Math.round((cancelledSchools / activeAtStart) * 100) : 0;
-  const newThisMonth = schools.filter((s) => new Date(s.created_at) >= startOfMonth).length;
+  const mrr = data?.mrr ?? 0;
+  const arr = data?.arr ?? 0;
+  const revenueByPlan = data?.revenue_by_plan ?? {};
+  const starterCount = revenueByPlan?.starter?.count ?? 0;
+  const growthCount = revenueByPlan?.growth?.count ?? 0;
+  const proCount = revenueByPlan?.pro?.count ?? 0;
+  const activeSchoolsCount = starterCount + growthCount + proCount;
+  const churnRate = data?.churn_rate ?? 0;
+  const cancelledSchools = data?.churn_this_month ?? 0;
+  const newThisMonth = data?.new_schools_this_month ?? 0;
   const netNewThisMonth = newThisMonth - cancelledSchools;
+  const upcomingRenewals = data?.upcoming_renewals ?? [];
+  const invoices = data?.all_invoices ?? [];
 
-  // Upcoming renewals — schools whose subscription period ends in next 7 days
-  const now = new Date();
-  const nextWeek = new Date(now.getTime() + 7 * 86400000);
-  const upcomingRenewals = invoices.filter((inv) => {
-    if (inv.status !== "paid") return false;
-    const endDate = new Date(inv.period_end);
-    return endDate >= now && endDate <= nextWeek;
-  });
+  // Build school map from invoices' joined data
+  const schoolMap: Record<string, { name: string; subscription_plan: string }> = {};
+  for (const inv of invoices) {
+    if (inv.school?.name && !schoolMap[inv.school_id]) {
+      schoolMap[inv.school_id] = { name: inv.school.name, subscription_plan: inv.school.subscription_plan };
+    }
+  }
 
-  const filteredInvoices = invoices.filter((inv) => {
+  const filteredInvoices = invoices.filter((inv: any) => {
     if (!search) return true;
-    const schoolName = schoolMap[inv.school_id]?.name || "";
+    const schoolName = inv.school?.name || schoolMap[inv.school_id]?.name || "";
     return schoolName.toLowerCase().includes(search.toLowerCase());
   });
 
   const handleCSVExport = () => {
     const headers = ["School", "Plan", "Amount", "Status", "Period Start", "Period End", "Paid At"];
-    const rows = filteredInvoices.map((inv) => [
-      schoolMap[inv.school_id]?.name || inv.school_id,
+    const rows = filteredInvoices.map((inv: any) => [
+      inv.school?.name || inv.school_id,
       inv.plan,
       inv.amount,
       inv.status,
@@ -139,7 +85,7 @@ export default function AdminRevenuePage() {
     URL.revokeObjectURL(url);
   };
 
-  if (schoolsLoading || invoicesLoading) {
+  if (isLoading) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-bold text-white">Revenue</h1>
@@ -177,7 +123,7 @@ export default function AdminRevenuePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-white/60">ARR</p>
-                <p className="text-2xl font-bold text-white">{formatUGX(mrr * 12)}</p>
+                <p className="text-2xl font-bold text-white">{formatUGX(arr)}</p>
               </div>
               <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-emerald-500/10 text-emerald-400">
                 <DollarSign className="w-6 h-6" />
@@ -191,7 +137,7 @@ export default function AdminRevenuePage() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm text-white/60">Active Schools</p>
-                <p className="text-2xl font-bold text-white">{activeSchools.length}</p>
+                <p className="text-2xl font-bold text-white">{activeSchoolsCount}</p>
               </div>
               <div className="w-12 h-12 rounded-xl flex items-center justify-center bg-blue-500/10 text-blue-400">
                 <Building2 className="w-6 h-6" />
@@ -286,21 +232,19 @@ export default function AdminRevenuePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {upcomingRenewals.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-white/5">
-                      <td className="py-3 text-white font-medium">
-                        {schoolMap[inv.school_id]?.name || inv.school_id}
-                      </td>
+                  {upcomingRenewals.map((school: any) => (
+                    <tr key={school.id} className="hover:bg-white/5">
+                      <td className="py-3 text-white font-medium">{school.name}</td>
                       <td className="py-3">
                         <Badge variant="outline" className="text-xs border-white/20 text-white/80 capitalize">
-                          {inv.plan}
+                          {school.subscription_plan}
                         </Badge>
                       </td>
-                      <td className="py-3 text-white/60">{formatDate(inv.period_end)}</td>
-                      <td className="py-3 text-white">{formatUGX(inv.amount)}</td>
+                      <td className="py-3 text-white/60">{formatDate(school.next_billing_date)}</td>
+                      <td className="py-3 text-white">{formatUGX(PLAN_PRICES[school.subscription_plan] || 0)}</td>
                       <td className="py-3">
                         <span className="text-xs px-2 py-1 rounded bg-emerald-500/10 text-emerald-400">
-                          {inv.status}
+                          {school.subscription_status}
                         </span>
                       </td>
                     </tr>
@@ -357,10 +301,10 @@ export default function AdminRevenuePage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {filteredInvoices.map((inv) => (
+                  {filteredInvoices.map((inv: any) => (
                     <tr key={inv.id} className="hover:bg-white/5">
                       <td className="py-3 text-white font-medium">
-                        {schoolMap[inv.school_id]?.name || inv.school_id}
+                        {inv.school?.name || inv.school_id}
                       </td>
                       <td className="py-3">
                         <Badge variant="outline" className="text-xs border-white/20 text-white/80 capitalize">
