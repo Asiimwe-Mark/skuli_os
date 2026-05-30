@@ -59,7 +59,7 @@ function LoginForm() {
     const roleRedirects: Record<string, string> = {
       SUPER_ADMIN: "/admin",
       SCHOOL_ADMIN: "/dashboard",
-      BURSAR: "/dashboard",
+      BURSAR: "/dashboard/fees",
       TEACHER: "/teacher",
       PARENT: "/portal",
       GROUP_ADMIN: "/group",

@@ -65,11 +65,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Overview",
     href: "/dashboard",
     icon: LayoutDashboard,
+    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
   },
   {
     label: "Students",
     icon: GraduationCap,
-    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
     children: [
       { label: "All Students", href: "/dashboard/students", icon: Users },
       { label: "Enroll Student", href: "/dashboard/students/enroll", icon: UserPlus },
@@ -100,6 +101,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Academics",
     icon: BookOpen,
+    roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
     children: [
       { label: "Marks Entry", href: "/dashboard/academics/marks", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"] },
       { label: "Review Marks", href: "/dashboard/academics/marks/review", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
@@ -112,6 +114,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Attendance",
     icon: CalendarCheck,
+    roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
     children: [
       { label: "Take Attendance", href: "/dashboard/attendance/take", icon: ClipboardList },
       { label: "Overview", href: "/dashboard/attendance", icon: CalendarCheck },
@@ -157,7 +160,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Library",
     icon: Library,
-    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
     children: [
       { label: "Book Catalog", href: "/dashboard/library", icon: BookOpen },
       { label: "Issues & Returns", href: "/dashboard/library/issues", icon: ClipboardList },

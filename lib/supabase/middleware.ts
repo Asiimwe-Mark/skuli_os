@@ -59,47 +59,64 @@ export async function updateSession(request: NextRequest) {
 
   const role = userData?.role;
 
-  // Role-based route protection
-  if (pathname.startsWith('/dashboard') && !role) {
-    const url = request.nextUrl.clone();
-    url.pathname = '/login';
-    return NextResponse.redirect(url);
-  }
+  // Default redirect for wrong-section access: send each role to their own home
+  const roleHome: Record<string, string> = {
+    SUPER_ADMIN: '/admin',
+    SCHOOL_ADMIN: '/dashboard',
+    BURSAR: '/dashboard',
+    TEACHER: '/teacher',
+    PARENT: '/portal',
+    GROUP_ADMIN: '/group',
+  };
+  const home = roleHome[role || ''] || '/login';
+
+  // ── Section guards ──────────────────────────────────────────────────
+  // Each role may only access their own section. The sidebar handles
+  // fine-grained page filtering within a section.
 
   if (pathname.startsWith('/admin') && role !== 'SUPER_ADMIN') {
     const url = request.nextUrl.clone();
-    url.pathname = '/dashboard';
+    url.pathname = home;
     return NextResponse.redirect(url);
   }
 
   if (pathname.startsWith('/portal') && role !== 'PARENT') {
     const url = request.nextUrl.clone();
-    url.pathname = '/dashboard';
+    url.pathname = home;
     return NextResponse.redirect(url);
   }
 
-  // Group admin portal
   if (pathname.startsWith('/group') && role !== 'GROUP_ADMIN' && role !== 'SUPER_ADMIN') {
     const url = request.nextUrl.clone();
-    url.pathname = '/dashboard';
+    url.pathname = home;
     return NextResponse.redirect(url);
   }
 
-  // Teacher portal — only teachers can access /teacher/* routes
   if (pathname.startsWith('/teacher') && role !== 'TEACHER') {
     const url = request.nextUrl.clone();
-    url.pathname = '/dashboard';
+    url.pathname = home;
     return NextResponse.redirect(url);
   }
 
-  // Role-based route protection — only block roles from sections they truly
-  // cannot access. Sidebar handles fine-grained page filtering per role.
-
-  // Bursar cannot access academic record editing
-  if (role === 'BURSAR' && pathname.startsWith('/dashboard/academics/marks')) {
+  if (pathname.startsWith('/dashboard') && !['SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN'].includes(role || '')) {
     const url = request.nextUrl.clone();
-    url.pathname = '/dashboard/fees';
+    url.pathname = home;
     return NextResponse.redirect(url);
+  }
+
+  // ── Sub-page restrictions within a section ──────────────────────────
+
+  // Bursar: only financial pages (fees, communication)
+  if (role === 'BURSAR' && pathname.startsWith('/dashboard')) {
+    const allowed = ['/dashboard/fees', '/dashboard/communication'];
+    const isAllowed = allowed.some(
+      (p) => pathname === p || pathname.startsWith(p + '/')
+    );
+    if (!isAllowed) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/dashboard/fees';
+      return NextResponse.redirect(url);
+    }
   }
 
   return supabaseResponse;

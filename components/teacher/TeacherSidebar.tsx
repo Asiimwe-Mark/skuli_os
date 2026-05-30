@@ -89,11 +89,11 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
   const subjectClasses = assignments.filter(a => !a.is_class_teacher && a.subject);
 
   return (
-    <div className="fixed left-0 top-0 h-full w-64 bg-white border-r border-gray-200 flex flex-col">
+    <div className="fixed left-0 top-0 h-full w-64 bg-navy border-r border-white/10 flex flex-col z-40">
       {/* Logo */}
-      <div className="h-16 flex items-center px-6 border-b border-gray-200">
+      <div className="h-16 flex items-center px-6 border-b border-white/10">
         <Link href="/teacher" className="flex items-center gap-2">
-          <span className="text-2xl font-bold text-navy">
+          <span className="text-2xl font-bold text-white">
             SK<span className="text-amber">U</span>LI
           </span>
         </Link>
@@ -101,7 +101,7 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
 
       {/* Navigation */}
       <nav className="flex-1 py-4 overflow-y-auto">
-        <ul className="space-y-1 px-3">
+        <ul className="space-y-0.5 px-3">
           {navItems.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -111,16 +111,16 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
                 <Link
                   href={item.href}
                   className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
                     isActive
-                      ? 'bg-navy text-white'
-                      : 'text-gray-700 hover:bg-gray-100'
+                      ? 'bg-amber/15 text-amber'
+                      : 'text-white/70 hover:bg-white/10 hover:text-white'
                   )}
                 >
                   <Icon className="w-5 h-5" />
                   <span className="flex-1">{item.label}</span>
                   {badge > 0 && (
-                    <span className="flex items-center gap-1 text-xs font-semibold bg-amber-500 text-white rounded-full px-2 py-0.5">
+                    <span className="flex items-center gap-1 text-xs font-semibold bg-amber text-navy rounded-full px-2 py-0.5">
                       <Clock className="w-3 h-3" />
                       {badge}
                     </span>
@@ -134,17 +134,17 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
         {/* Assigned Classes Section */}
         {assignments.length > 0 && (
           <div className="mt-6 px-3">
-            <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">
+            <h3 className="text-xs font-semibold text-white/40 uppercase tracking-wider mb-2">
               My Classes
             </h3>
             <div className="space-y-2">
               {homeroomClasses.length > 0 && (
                 <div className="space-y-1">
-                  <span className="text-xs text-gray-400">Homeroom</span>
+                  <span className="text-xs text-white/30">Homeroom</span>
                   {homeroomClasses.map((a) => (
                     <div
                       key={a.class_id}
-                      className="text-sm text-gray-700 px-2 py-1"
+                      className="text-sm text-white/60 px-2 py-1"
                     >
                       {a.class?.name}{a.class?.stream ? ` - ${a.class.stream}` : ''}
                     </div>
@@ -153,11 +153,11 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
               )}
               {subjectClasses.length > 0 && (
                 <div className="space-y-1">
-                  <span className="text-xs text-gray-400">Subjects</span>
+                  <span className="text-xs text-white/30">Subjects</span>
                   {subjectClasses.map((a) => (
                     <div
                       key={`${a.class_id}-${a.subject_id}`}
-                      className="text-sm text-gray-700 px-2 py-1"
+                      className="text-sm text-white/60 px-2 py-1"
                     >
                       {a.subject?.name} - {a.class?.name}
                     </div>
@@ -170,28 +170,28 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
       </nav>
 
       {/* Teacher Profile Footer */}
-      <div className="p-4 border-t border-gray-200">
+      <div className="p-4 border-t border-white/10">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="w-full justify-start gap-3 h-auto py-2 px-2">
+            <Button variant="ghost" className="w-full justify-start gap-3 h-auto py-2 px-2 text-white hover:bg-white/10">
               <Avatar className="w-8 h-8">
                 <AvatarImage src={teacher.avatar_url || undefined} />
-                <AvatarFallback>
+                <AvatarFallback className="bg-amber/20 text-amber text-xs font-bold">
                   {teacher.full_name.split(' ').map(n => n[0]).join('').toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 text-left overflow-hidden">
-                <p className="text-sm font-medium truncate">{teacher.full_name}</p>
-                <p className="text-xs text-gray-500 truncate">Teacher</p>
+                <p className="text-sm font-medium truncate text-white">{teacher.full_name}</p>
+                <p className="text-xs text-white/50 truncate">Teacher</p>
               </div>
-              <ChevronDown className="w-4 h-4 text-gray-400" />
+              <ChevronDown className="w-4 h-4 text-white/50" />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuItem onClick={() => router.push('/teacher/profile')}>
+          <DropdownMenuContent align="end" className="w-48 bg-navy border-white/10">
+            <DropdownMenuItem onClick={() => router.push('/teacher/profile')} className="text-white hover:bg-white/10">
               Profile
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={handleLogout} className="text-rose">
+            <DropdownMenuItem onClick={handleLogout} className="text-rose hover:bg-white/10">
               <LogOut className="w-4 h-4 mr-2" />
               Logout
             </DropdownMenuItem>
