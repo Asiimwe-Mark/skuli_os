@@ -1,7 +1,6 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { createBrowserClient } from '@/lib/supabase/client';
 import { useSchoolStore } from '@/store/school';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -49,8 +48,6 @@ export default function AlumniPage() {
     profession: '',
   });
 
-  const supabase = createBrowserClient();
-
   useEffect(() => {
     if (!school) return;
     fetchAlumni();
@@ -59,17 +56,16 @@ export default function AlumniPage() {
   const fetchAlumni = async () => {
     if (!school) return;
     setLoading(true);
-    const { data, error } = await supabase
-      .from('alumni')
-      .select('*')
-      .eq('school_id', school.id)
-      .eq('is_deleted', false)
-      .order('graduation_year', { ascending: false });
-
-    if (error) {
+    try {
+      const res = await fetch('/api/students/alumni?limit=200');
+      const result = await res.json();
+      if (result.success) {
+        setAlumni(result.data.alumni || []);
+      } else {
+        toast({ title: 'Failed to load alumni', variant: 'destructive' });
+      }
+    } catch {
       toast({ title: 'Failed to load alumni', variant: 'destructive' });
-    } else {
-      setAlumni(data || []);
     }
     setLoading(false);
   };
@@ -96,37 +92,45 @@ export default function AlumniPage() {
   }, [alumni, yearFilter, search]);
 
   const handleAdd = async () => {
-    if (!school || !form.first_name || !form.last_name) return;
+    if (!form.first_name || !form.last_name) return;
     setSaving(true);
 
-    const { error } = await supabase.from('alumni').insert({
-      school_id: school.id,
-      first_name: form.first_name,
-      last_name: form.last_name,
-      admission_number: form.admission_number || null,
-      graduation_year: parseInt(form.graduation_year),
-      last_class: form.last_class || null,
-      phone: form.phone || null,
-      email: form.email || null,
-      profession: form.profession || null,
-    });
-
-    if (error) {
-      toast({ title: 'Failed to add alumni', variant: 'destructive' });
-    } else {
-      toast({ title: 'Alumni added successfully' });
-      setDialogOpen(false);
-      setForm({
-        first_name: '',
-        last_name: '',
-        admission_number: '',
-        graduation_year: new Date().getFullYear().toString(),
-        last_class: '',
-        phone: '',
-        email: '',
-        profession: '',
+    try {
+      const res = await fetch('/api/students/alumni', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          first_name: form.first_name,
+          last_name: form.last_name,
+          graduation_year: parseInt(form.graduation_year),
+          last_class: form.last_class || undefined,
+          admission_number: form.admission_number || undefined,
+          phone: form.phone || undefined,
+          email: form.email || undefined,
+          profession: form.profession || undefined,
+        }),
       });
-      fetchAlumni();
+      const result = await res.json();
+
+      if (!result.success) {
+        toast({ title: 'Failed to add alumni', description: result.error, variant: 'destructive' });
+      } else {
+        toast({ title: 'Alumni added successfully' });
+        setDialogOpen(false);
+        setForm({
+          first_name: '',
+          last_name: '',
+          admission_number: '',
+          graduation_year: new Date().getFullYear().toString(),
+          last_class: '',
+          phone: '',
+          email: '',
+          profession: '',
+        });
+        fetchAlumni();
+      }
+    } catch {
+      toast({ title: 'Failed to add alumni', variant: 'destructive' });
     }
     setSaving(false);
   };

@@ -2,7 +2,6 @@
 
 import { useState, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { createBrowserClient } from '@/lib/supabase/client';
 import { useSchoolStore } from '@/store/school';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -114,77 +113,43 @@ export default function BulkImportPage() {
     if (!file || !school || !previewData) return;
 
     setImporting(true);
-    const supabase = createBrowserClient();
 
     try {
-      const validRows = previewData.filter(r => r.valid);
-      let success = 0;
-      let failed = 0;
-      const errors: string[] = [];
+      const validRows = previewData.filter(r => r.valid).map(r => ({
+        first_name: r.full_name.split(' ')[0] || r.full_name,
+        last_name: r.full_name.split(' ').slice(1).join(' ') || '',
+        admission_number: r.admission_number || undefined,
+        date_of_birth: r.date_of_birth || undefined,
+        gender: r.gender || undefined,
+        parent_name: r.parent_name,
+        parent_phone: r.parent_phone,
+        parent_email: r.parent_email || undefined,
+        class_name: r.class_name || undefined,
+      }));
 
-      // Get classes for mapping
-      const { data: classes } = await supabase
-        .from('classes')
-        .select('id, name')
-        .eq('school_id', school.id);
-
-      const classMap = new Map(classes?.map((c: any) => [c.name.toLowerCase(), c.id]) || []);
-
-      // Get current student count for admission number generation
-      const { count } = await supabase
-        .from('students')
-        .select('*', { count: 'exact', head: true })
-        .eq('school_id', school.id);
-
-      let seq = (count ?? 0) + 1;
-
-      for (const row of validRows) {
-        try {
-          const admissionNumber = row.admission_number || `ADM-${String(seq).padStart(5, '0')}`;
-          const classId = row.class_name ? classMap.get(row.class_name.toLowerCase()) : null;
-
-          const { error } = await supabase.from('students').insert({
-            school_id: school.id,
-            full_name: row.full_name,
-            admission_number: admissionNumber,
-            date_of_birth: row.date_of_birth || null,
-            gender: row.gender || null,
-            parent_name: row.parent_name,
-            parent_phone: row.parent_phone,
-            parent_email: row.parent_email || null,
-            current_class_id: classId,
-            enrollment_date: new Date().toISOString().split('T')[0],
-            status: 'active',
-          });
-
-          if (error) throw new Error(error.message);
-
-          success++;
-          seq++;
-        } catch (err: any) {
-          failed++;
-          errors.push(`Row ${row.row}: ${err.message || 'Unknown error'}`);
-        }
-      }
-
-      // Count skipped invalid rows
-      const skipped = previewData.length - validRows.length;
-      if (skipped > 0) {
-        errors.push(`${skipped} row(s) skipped due to validation errors`);
-      }
-
-      setResult({ success, failed, errors });
-
-      // Audit log
-      await supabase.from('audit_logs').insert({
-        school_id: school.id,
-        action: 'bulk_import',
-        entity_type: 'student',
-        new_value: { success, failed, skipped, filename: file.name },
+      const response = await fetch('/api/students/bulk-import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rows: validRows }),
       });
+      const result = await response.json();
 
-      if (success > 0) {
-        toast({ title: `Imported ${success} students successfully` });
+      if (!result.success) {
+        toast({ title: 'Import failed', description: result.error, variant: 'destructive' });
+        setImporting(false);
+        return;
+      }
+
+      const { imported, skipped, errors: apiErrors } = result.data;
+      const allErrors = apiErrors.map((e: { row: number; reason: string }) => `Row ${e.row}: ${e.reason}`);
+      if (skipped > 0) {
+        allErrors.push(`${skipped} row(s) skipped`);
+      }
+
+      setResult({ success: imported, failed: apiErrors.length, errors: allErrors });
+
+      if (imported > 0) {
+        toast({ title: `Imported ${imported} students successfully` });
       }
     } catch (err: any) {
       toast({ title: 'Import failed', description: err.message, variant: 'destructive' });
