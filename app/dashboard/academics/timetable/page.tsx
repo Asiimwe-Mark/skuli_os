@@ -12,7 +12,7 @@ import { Switch } from '@/components/ui/switch';
 import { Badge } from '@/components/ui/badge';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { useToast } from '@/components/ui/use-toast';
-import { Plus, Download, Printer, AlertTriangle, X, Loader2 } from 'lucide-react';
+import { Plus, Download, Printer, Loader2 } from 'lucide-react';
 import type { Database } from '@/types/database';
 
 type TimetablePeriod = Database['public']['Tables']['timetable_periods']['Row'];
@@ -45,7 +45,6 @@ export default function TimetablePage() {
   const [isEditSlotOpen, setIsEditSlotOpen] = useState(false);
   const [newPeriod, setNewPeriod] = useState({ name: '', startTime: '08:00', endTime: '08:40', isBreak: false });
   const [slotForm, setSlotForm] = useState({ subjectId: '', teacherId: '', room: '' });
-  const [teacherConflicts, setTeacherConflicts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     fetchData();
@@ -57,14 +56,13 @@ export default function TimetablePage() {
       const [classesRes, yearsRes, periodsRes, subjectsRes, teachersRes] = await Promise.all([
         supabase.from('classes').select('*').eq('is_deleted', false).order('name'),
         supabase.from('academic_years').select('*').eq('is_current', true).single(),
-        supabase.from('timetable_periods').select('*').eq('is_deleted', false).order('sort_order'),
+        fetch('/api/timetable/periods').then(r => r.json()),
         supabase.from('subjects').select('*').eq('is_deleted', false).order('name'),
         supabase.from('users').select('*').eq('role', 'TEACHER').eq('is_deleted', false),
       ]);
 
       if (classesRes.error) throw classesRes.error;
       if (yearsRes.error && yearsRes.status !== 406) throw yearsRes.error;
-      if (periodsRes.error) throw periodsRes.error;
       if (subjectsRes.error) throw subjectsRes.error;
       if (teachersRes.error) throw teachersRes.error;
 
@@ -91,16 +89,8 @@ export default function TimetablePage() {
   }, [selectedClassId, selectedAcademicYearId]);
 
   async function fetchSlots() {
-    const { data, error } = await supabase
-      .from('timetable_slots')
-      .select(`
-        *,
-        subject:subjects(id, name, color),
-        teacher:users(id, full_name)
-      `)
-      .eq('class_id', selectedClassId)
-      .eq('academic_year_id', selectedAcademicYearId)
-      .eq('is_deleted', false);
+    const res = await fetch(`/api/timetable/slots?class_id=${selectedClassId}&academic_year_id=${selectedAcademicYearId}`);
+    const { data, error } = await res.json();
 
     if (error) {
       toast({ title: 'Error', description: 'Failed to load slots', variant: 'destructive' });
@@ -108,46 +98,24 @@ export default function TimetablePage() {
     }
 
     setSlots(data || []);
-    checkConflicts(data || []);
-  }
-
-  async function checkConflicts(currentSlots: TimetableSlot[]) {
-    const conflicts = new Set<string>();
-
-    for (const slot of currentSlots) {
-      if (!slot.teacher_id) continue;
-
-      const { data: otherSlots } = await supabase
-        .from('timetable_slots')
-        .select('id, class_id')
-        .eq('teacher_id', slot.teacher_id)
-        .eq('period_id', slot.period_id)
-        .eq('day_of_week', slot.day_of_week)
-        .eq('academic_year_id', selectedAcademicYearId)
-        .eq('is_deleted', false)
-        .neq('id', slot.id);
-
-      if (otherSlots && otherSlots.length > 0) {
-        conflicts.add(`${slot.period_id}-${slot.day_of_week}`);
-      }
-    }
-
-    setTeacherConflicts(conflicts);
   }
 
   async function handleAddPeriod() {
     try {
       const sortOrder = periods.length + 1;
-      const { error } = await supabase.from('timetable_periods').insert({
-        school_id: (await supabase.auth.getSession()).data.session?.user.user_metadata?.school_id,
-        name: newPeriod.name,
-        start_time: newPeriod.startTime,
-        end_time: newPeriod.endTime,
-        is_break: newPeriod.isBreak,
-        sort_order: sortOrder,
+      const res = await fetch('/api/timetable/periods', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: newPeriod.name,
+          start_time: newPeriod.startTime,
+          end_time: newPeriod.endTime,
+          is_break: newPeriod.isBreak,
+          sort_order: sortOrder,
+        }),
       });
-
-      if (error) throw error;
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error);
 
       toast({ title: 'Success', description: 'Period added successfully' });
       setIsAddPeriodOpen(false);
@@ -180,25 +148,10 @@ export default function TimetablePage() {
     if (!editingSlot || !selectedClassId || !selectedAcademicYearId) return;
 
     try {
-      const existingSlot = slots.find(
-        s => s.period_id === editingSlot.periodId && s.day_of_week === editingSlot.day
-      );
-
-      if (existingSlot) {
-        const { error } = await supabase
-          .from('timetable_slots')
-          .update({
-            subject_id: slotForm.subjectId || null,
-            teacher_id: slotForm.teacherId || null,
-            room: slotForm.room || null,
-          })
-          .eq('id', existingSlot.id);
-
-        if (error) throw error;
-        toast({ title: 'Success', description: 'Slot updated successfully' });
-      } else {
-        const { error } = await supabase.from('timetable_slots').insert({
-          school_id: (await supabase.auth.getSession()).data.session?.user.user_metadata?.school_id,
+      const res = await fetch('/api/timetable/slots', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
           class_id: selectedClassId,
           period_id: editingSlot.periodId,
           day_of_week: editingSlot.day,
@@ -206,12 +159,19 @@ export default function TimetablePage() {
           teacher_id: slotForm.teacherId || null,
           room: slotForm.room || null,
           academic_year_id: selectedAcademicYearId,
-        });
+        }),
+      });
 
-        if (error) throw error;
-        toast({ title: 'Success', description: 'Slot created successfully' });
+      if (res.status === 409) {
+        const { error } = await res.json();
+        toast({ title: 'Teacher Conflict', description: error, variant: 'destructive' });
+        return;
       }
 
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error);
+
+      toast({ title: 'Success', description: 'Slot saved successfully' });
       setIsEditSlotOpen(false);
       setEditingSlot(null);
       fetchSlots();
@@ -230,12 +190,9 @@ export default function TimetablePage() {
       );
 
       if (existingSlot) {
-        const { error } = await supabase
-          .from('timetable_slots')
-          .update({ is_deleted: true })
-          .eq('id', existingSlot.id);
-
-        if (error) throw error;
+        const res = await fetch(`/api/timetable/slots?id=${existingSlot.id}`, { method: 'DELETE' });
+        const result = await res.json();
+        if (!result.success) throw new Error(result.error);
         toast({ title: 'Success', description: 'Slot deleted successfully' });
       }
 
@@ -434,8 +391,6 @@ export default function TimetablePage() {
                     {DAYS.map((_, index) => {
                       const dayNum = index + 1;
                       const slot = getSlotForCell(dayNum, period.id);
-                      const conflictKey = `${period.id}-${dayNum}`;
-                      const hasConflict = teacherConflicts.has(conflictKey);
                       const isBreak = period.is_break;
 
                       if (isBreak) {
@@ -459,10 +414,7 @@ export default function TimetablePage() {
                           onClick={() => handleCellClick(dayNum, period.id)}
                         >
                           {slot ? (
-                            <div className={`h-full p-2 rounded ${getSubjectColor(slot.subject_id)} relative`}>
-                              {hasConflict && (
-                                <AlertTriangle className="absolute top-1 right-1 h-4 w-4 text-red-500" />
-                              )}
+                            <div className={`h-full p-2 rounded ${getSubjectColor(slot.subject_id)}`}>
                               <div className="font-medium text-sm truncate">
                                 {slot.subject?.name || 'No Subject'}
                               </div>

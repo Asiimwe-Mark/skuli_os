@@ -52,24 +52,17 @@ export default function CalendarPage() {
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [currentMonth]);
 
   async function fetchData() {
     try {
       setLoading(true);
+      const month = format(currentMonth, 'yyyy-MM');
       const [eventsRes, classesRes] = await Promise.all([
-        supabase
-          .from('calendar_events')
-          .select(`
-            *,
-            class:classes(id, name)
-          `)
-          .eq('is_deleted', false)
-          .order('event_date', { ascending: true }),
+        fetch(`/api/calendar?month=${month}`).then(r => r.json()),
         supabase.from('classes').select('*').eq('is_deleted', false).order('name'),
       ]);
 
-      if (eventsRes.error) throw eventsRes.error;
       if (classesRes.error) throw classesRes.error;
 
       setEvents(eventsRes.data || []);
@@ -96,28 +89,22 @@ export default function CalendarPage() {
 
   async function handleAddEvent() {
     try {
-      const session = await supabase.auth.getSession();
-      const schoolId = session.data.session?.user.user_metadata?.school_id;
-
-      if (!schoolId) {
-        toast({ title: 'Error', description: 'School ID not found', variant: 'destructive' });
-        return;
-      }
-
-      const { error } = await supabase.from('calendar_events').insert({
-        school_id: schoolId,
-        title: newEvent.title,
-        description: newEvent.description || null,
-        event_date: newEvent.event_date,
-        end_date: newEvent.end_date || null,
-        event_type: newEvent.event_type,
-        affects_attendance: newEvent.affects_attendance,
-        class_id: newEvent.class_id || null,
-        is_public: newEvent.is_public,
-        created_by: session.data.session?.user.id,
+      const res = await fetch('/api/calendar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: newEvent.title,
+          description: newEvent.description || null,
+          event_date: newEvent.event_date,
+          end_date: newEvent.end_date || null,
+          event_type: newEvent.event_type,
+          affects_attendance: newEvent.affects_attendance,
+          class_id: newEvent.class_id || null,
+          is_public: newEvent.is_public,
+        }),
       });
-
-      if (error) throw error;
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error);
 
       toast({ title: 'Success', description: 'Event added successfully' });
       setIsAddEventOpen(false);
@@ -140,12 +127,9 @@ export default function CalendarPage() {
 
   async function handleDeleteEvent(eventId: string) {
     try {
-      const { error } = await supabase
-        .from('calendar_events')
-        .update({ is_deleted: true })
-        .eq('id', eventId);
-
-      if (error) throw error;
+      const res = await fetch(`/api/calendar?id=${eventId}`, { method: 'DELETE' });
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error);
 
       toast({ title: 'Success', description: 'Event deleted successfully' });
       fetchData();
@@ -172,9 +156,11 @@ export default function CalendarPage() {
   async function handleUpdateEvent() {
     if (!editingEvent) return;
     try {
-      const { error } = await supabase
-        .from('calendar_events')
-        .update({
+      const res = await fetch('/api/calendar', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: editingEvent.id,
           title: newEvent.title,
           description: newEvent.description || null,
           event_date: newEvent.event_date,
@@ -183,10 +169,10 @@ export default function CalendarPage() {
           affects_attendance: newEvent.affects_attendance,
           class_id: newEvent.class_id || null,
           is_public: newEvent.is_public,
-        })
-        .eq('id', editingEvent.id);
-
-      if (error) throw error;
+        }),
+      });
+      const result = await res.json();
+      if (!result.success) throw new Error(result.error);
 
       toast({ title: 'Success', description: 'Event updated successfully' });
       setEditingEvent(null);
