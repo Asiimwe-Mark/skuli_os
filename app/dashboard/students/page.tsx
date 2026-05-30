@@ -42,6 +42,7 @@ import {
   MoreHorizontal,
   ArrowUpRight,
   Columns3,
+  AlertTriangle,
 } from "lucide-react";
 import type { Student, Class } from "@/types";
 
@@ -79,6 +80,7 @@ export default function StudentsPage() {
   const [genderFilter, setGenderFilter] = useState("all");
   const [sortBy, setSortBy] = useState<string>("full_name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [disciplineCounts, setDisciplineCounts] = useState<Record<string, number>>({});
   const [columnsOpen, setColumnsOpen] = useState(false);
   const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
     if (typeof window === "undefined") return {
@@ -209,6 +211,36 @@ export default function StudentsPage() {
   useEffect(() => {
     loadStudents();
   }, [loadStudents]);
+
+  // Fetch discipline incident counts for visible students
+  useEffect(() => {
+    if (!school || students.length === 0) {
+      setDisciplineCounts({});
+      return;
+    }
+
+    const studentIds = students.map((s) => s.id);
+
+    async function fetchCounts() {
+      const { data } = await supabase
+        .from("discipline_records")
+        .select("student_id")
+        .eq("school_id", school!.id)
+        .eq("is_deleted", false)
+        .in("student_id", studentIds);
+
+      if (data) {
+        const counts: Record<string, number> = {};
+        for (const row of data) {
+          counts[row.student_id] = (counts[row.student_id] || 0) + 1;
+        }
+        setDisciplineCounts(counts);
+      }
+    }
+
+    fetchCounts();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [students, school]);
 
   function getInitials(name: string) {
     return name
@@ -548,9 +580,24 @@ export default function StudentsPage() {
                             </div>
                           )}
                           <div className="min-w-0">
-                            <p className="text-sm font-medium truncate">
-                              {student.full_name}
-                            </p>
+                            <div className="flex items-center gap-1.5">
+                              <p className="text-sm font-medium truncate">
+                                {student.full_name}
+                              </p>
+                              {(disciplineCounts[student.id] || 0) >= 3 && (
+                                <Badge
+                                  variant="outline"
+                                  className="shrink-0 border-amber-500 text-amber-600 bg-amber-50 text-[10px] px-1.5 py-0"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    router.push(`/dashboard/students/${student.id}?tab=discipline`);
+                                  }}
+                                >
+                                  <AlertTriangle className="w-3 h-3 mr-0.5" />
+                                  {disciplineCounts[student.id]} incidents
+                                </Badge>
+                              )}
+                            </div>
                             <p className="text-xs text-foreground/50 capitalize">
                               {student.gender || "---"}
                             </p>

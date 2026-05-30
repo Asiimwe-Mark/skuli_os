@@ -70,7 +70,8 @@ export default function PortalLayout({
       } = await supabase.auth.getUser();
 
       if (!user) {
-        router.push("/login");
+        // Middleware handles auth — don't redirect from client to avoid race
+        setLoading(false);
         return;
       }
 
@@ -81,7 +82,15 @@ export default function PortalLayout({
         .single();
 
       if (!profile || profile.role !== "PARENT") {
-        router.push("/login");
+        // Not a parent — send to their correct section, not login
+        const roleRedirects: Record<string, string> = {
+          SUPER_ADMIN: "/admin",
+          SCHOOL_ADMIN: "/dashboard",
+          BURSAR: "/dashboard",
+          TEACHER: "/teacher",
+          GROUP_ADMIN: "/group",
+        };
+        router.push(roleRedirects[profile?.role || ""] || "/dashboard");
         return;
       }
 
@@ -151,27 +160,27 @@ export default function PortalLayout({
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-white">
+      <div className="flex h-screen items-center justify-center bg-navy">
         <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
-          <p className="text-sm text-gray-500">Loading portal...</p>
+          <Loader2 className="h-8 w-8 animate-spin text-amber" />
+          <p className="text-sm text-white/60">Loading portal...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
+    <div className="min-h-screen bg-background text-foreground">
       {/* PWA Manifest */}
       <link rel="manifest" href="/manifest.json" />
-      <meta name="theme-color" content="#f59e0b" />
+      <meta name="theme-color" content="#0a1628" />
       {/* Top Bar */}
-      <header className="sticky top-0 z-40 border-b border-gray-200 bg-white shadow-sm">
+      <header className="sticky top-0 z-40 border-b border-white/10 bg-navy shadow-sm">
         <div className="flex h-14 items-center justify-between px-4">
           {/* Logo */}
           <Link href="/portal" className="flex items-center gap-2">
-            <GraduationCap className="h-6 w-6 text-indigo-600" />
-            <span className="text-lg font-bold text-indigo-600">SKULI</span>
+            <GraduationCap className="h-6 w-6 text-amber" />
+            <span className="text-lg font-bold text-white">SKULI</span>
           </Link>
 
           {/* Child Selector */}
@@ -179,10 +188,10 @@ export default function PortalLayout({
             <div className="relative">
               <button
                 onClick={() => setShowChildSelector(!showChildSelector)}
-                className="flex items-center gap-1.5 rounded-lg border border-gray-200 bg-gray-50 px-3 py-1.5 text-sm font-medium transition-colors hover:bg-gray-100"
+                className="flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-white/20"
               >
                 <span>{selectedChild.full_name}</span>
-                <ChevronDown className="h-4 w-4 text-gray-500" />
+                <ChevronDown className="h-4 w-4 text-white/60" />
               </button>
 
               <AnimatePresence>
@@ -191,7 +200,7 @@ export default function PortalLayout({
                     initial={{ opacity: 0, y: -4 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -4 }}
-                    className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                    className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-white/10 bg-navy py-1 shadow-lg"
                   >
                     {childrenList.map((child) => (
                       <button
@@ -201,12 +210,14 @@ export default function PortalLayout({
                           setShowChildSelector(false);
                         }}
                         className={cn(
-                          "flex w-full flex-col px-4 py-2 text-left text-sm transition-colors hover:bg-gray-50",
-                          selectedChild.id === child.id && "bg-indigo-50 text-indigo-700"
+                          "flex w-full flex-col px-4 py-2 text-left text-sm transition-colors hover:bg-white/10",
+                          selectedChild.id === child.id
+                            ? "bg-amber/10 text-amber"
+                            : "text-white"
                         )}
                       >
                         <span className="font-medium">{child.full_name}</span>
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-white/50">
                           {child.class_name} &middot; {child.admission_number}
                         </span>
                       </button>
@@ -218,7 +229,7 @@ export default function PortalLayout({
           )}
 
           {childrenList.length === 1 && selectedChild && (
-            <span className="text-sm font-medium text-gray-700">
+            <span className="text-sm font-medium text-white/80">
               {selectedChild.full_name}
             </span>
           )}
@@ -226,7 +237,7 @@ export default function PortalLayout({
           {/* Logout */}
           <button
             onClick={handleLogout}
-            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-900"
+            className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm text-white/70 transition-colors hover:bg-white/10 hover:text-white"
           >
             <LogOut className="h-4 w-4" />
             <span className="hidden sm:inline">Logout</span>
@@ -234,23 +245,65 @@ export default function PortalLayout({
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="pb-20 sm:pb-6">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={pathname}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.2 }}
-          >
-            <PortalProvider>{children}</PortalProvider>
-          </motion.div>
-        </AnimatePresence>
-      </main>
+      {/* Desktop Side Navigation */}
+      <div className="flex">
+        <nav className="hidden sm:flex w-56 shrink-0 flex-col border-r border-white/10 bg-navy min-h-[calc(100vh-3.5rem)]">
+          <div className="flex flex-col gap-0.5 p-3">
+            {navItems.map((item) => {
+              const isActive = pathname === item.href;
+              const Icon = item.icon;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className={cn(
+                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-all",
+                    isActive
+                      ? "bg-amber/15 text-amber"
+                      : "text-white/70 hover:bg-white/10 hover:text-white"
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+          {parentName && (
+            <div className="mt-auto border-t border-white/10 p-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-amber/20 text-xs font-bold text-amber">
+                  {parentName.charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-white">
+                    {parentName}
+                  </p>
+                  <p className="text-xs text-white/50">Parent</p>
+                </div>
+              </div>
+            </div>
+          )}
+        </nav>
+
+        {/* Main Content */}
+        <main className="flex-1 pb-20 sm:pb-6">
+          <AnimatePresence mode="wait">
+            <motion.div
+              key={pathname}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.2 }}
+            >
+              <PortalProvider>{children}</PortalProvider>
+            </motion.div>
+          </AnimatePresence>
+        </main>
+      </div>
 
       {/* Bottom Navigation (Mobile) */}
-      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-gray-200 bg-white sm:hidden">
+      <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-white/10 bg-navy sm:hidden">
         <div className="flex items-center justify-around px-2 py-1">
           {mobileNavPrimary.map((item) => {
             const isActive = pathname === item.href;
@@ -262,8 +315,8 @@ export default function PortalLayout({
                 className={cn(
                   "flex flex-col items-center gap-0.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
                   isActive
-                    ? "text-indigo-600"
-                    : "text-gray-500 active:text-gray-700"
+                    ? "text-amber"
+                    : "text-white/50 active:text-white/70"
                 )}
               >
                 <Icon className="h-5 w-5" />
@@ -278,8 +331,8 @@ export default function PortalLayout({
               className={cn(
                 "flex flex-col items-center gap-0.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
                 mobileNavMore.some((i) => i.href === pathname)
-                  ? "text-indigo-600"
-                  : "text-gray-500 active:text-gray-700"
+                  ? "text-amber"
+                  : "text-white/50 active:text-white/70"
               )}
             >
               <MoreHorizontal className="h-5 w-5" />
@@ -289,7 +342,7 @@ export default function PortalLayout({
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="absolute bottom-full right-0 mb-2 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+                className="absolute bottom-full right-0 mb-2 w-48 rounded-lg border border-white/10 bg-navy py-1 shadow-lg"
               >
                 {mobileNavMore.map((item) => {
                   const isActive = pathname === item.href;
@@ -300,8 +353,10 @@ export default function PortalLayout({
                       href={item.href}
                       onClick={() => setShowMoreMenu(false)}
                       className={cn(
-                        "flex items-center gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-gray-50",
-                        isActive ? "text-indigo-600 bg-indigo-50" : "text-gray-700"
+                        "flex items-center gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-white/10",
+                        isActive
+                          ? "text-amber bg-amber/10"
+                          : "text-white/70"
                       )}
                     >
                       <Icon className="h-4 w-4" />

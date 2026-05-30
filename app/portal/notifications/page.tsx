@@ -79,7 +79,7 @@ export default function PortalNotificationsPage() {
   if (loading) {
     return (
       <div className="flex h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-amber" />
       </div>
     );
   }
@@ -122,12 +122,12 @@ export default function PortalNotificationsPage() {
       ) : (
         <div className="space-y-2">
           {notifications.map((n) => (
-            <Card key={n.id} className={n.is_read ? 'opacity-60' : 'border-indigo-200'}>
+            <Card key={n.id} className={n.is_read ? 'opacity-60' : 'border-amber/20'}>
               <CardContent className="p-4 flex items-start gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-sm">{n.title}</span>
-                    {!n.is_read && <Badge variant="secondary" className="bg-indigo-100 text-indigo-700 text-[10px]">New</Badge>}
+                    {!n.is_read && <Badge variant="secondary" className="bg-amber/20 text-amber text-[10px]">New</Badge>}
                   </div>
                   <p className="text-sm text-gray-600 mt-1">{n.body}</p>
                   <p className="text-xs text-gray-400 mt-1">{formatRelativeTime(n.created_at)}</p>

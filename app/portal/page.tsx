@@ -213,8 +213,8 @@ export default function PortalDashboard() {
       {linkedStudents.length > 1 && (
         <motion.div variants={fadeUp} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
-              <GraduationCap className="h-5 w-5 text-indigo-600" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber/10">
+              <GraduationCap className="h-5 w-5 text-amber" />
             </div>
             <h2 className="text-sm font-semibold text-gray-900">Select Child</h2>
           </div>
@@ -222,7 +222,7 @@ export default function PortalDashboard() {
             <select
               value={selectedStudentId}
               onChange={(e) => setSelectedStudentId(e.target.value)}
-              className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+              className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-amber focus:outline-none focus:ring-1 focus:ring-amber"
             >
               {linkedStudents.map((ls) => (
                 <option key={ls.student_id} value={ls.student_id}>
@@ -238,8 +238,8 @@ export default function PortalDashboard() {
       {/* Fee Status Card */}
       <motion.div variants={fadeUp} className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
         <div className="mb-3 flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
-            <CreditCard className="h-5 w-5 text-indigo-600" />
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber/10">
+            <CreditCard className="h-5 w-5 text-amber" />
           </div>
           <h2 className="text-sm font-semibold text-gray-900">Fee Status</h2>
         </div>
@@ -276,7 +276,7 @@ export default function PortalDashboard() {
               <button
                 onClick={handleStkPush}
                 disabled={stkLoading}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 active:bg-indigo-800 disabled:opacity-50"
+                className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-amber px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-amber/90 active:bg-amber/80 disabled:opacity-50"
               >
                 {stkLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -305,7 +305,7 @@ export default function PortalDashboard() {
           </div>
           <Link
             href="/portal/fees"
-            className="text-xs font-medium text-indigo-600 hover:underline"
+            className="text-xs font-medium text-amber hover:underline"
           >
             View all
           </Link>
@@ -327,7 +327,7 @@ export default function PortalDashboard() {
                   </p>
                 </div>
                 <button
-                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-indigo-600 transition-colors hover:bg-indigo-50"
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-amber transition-colors hover:bg-amber/10"
                   title="Download receipt"
                 >
                   <Download className="h-3.5 w-3.5" />
@@ -353,7 +353,7 @@ export default function PortalDashboard() {
           </div>
           <Link
             href="/portal/results"
-            className="text-xs font-medium text-indigo-600 hover:underline"
+            className="text-xs font-medium text-amber hover:underline"
           >
             View all
           </Link>
@@ -403,7 +403,7 @@ export default function PortalDashboard() {
             {classPosition !== null && (
               <p className="text-center text-sm text-gray-600">
                 Class Position:{" "}
-                <span className="font-bold text-indigo-600">
+                <span className="font-bold text-amber">
                   {classPosition}
                 </span>
               </p>

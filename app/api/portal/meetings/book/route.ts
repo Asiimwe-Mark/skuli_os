@@ -43,6 +43,7 @@ export async function POST(req: NextRequest) {
       parent_name,
       parent_phone,
       notes,
+      status: "pending",
     })
     .select()
     .single();
@@ -69,7 +70,7 @@ export async function POST(req: NextRequest) {
   await supabase.from("sms_logs").insert({
     school_id: slot.school_id,
     recipient_phone: parent_phone,
-    message_body: `Your meeting with ${staff?.full_name ?? "teacher"} on ${slot.slot_date} at ${slot.start_time} is confirmed. School: ${school?.name ?? ""}`,
+    message_body: `Your meeting request with ${staff?.full_name ?? "teacher"} on ${slot.slot_date} at ${slot.start_time} has been received. Awaiting teacher confirmation. School: ${school?.name ?? ""}`,
     message_type: "meeting_confirmation",
     status: "pending",
     related_entity_type: "meeting_booking",

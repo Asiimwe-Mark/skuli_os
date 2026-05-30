@@ -43,7 +43,7 @@ export default function PortalMessagesPage() {
   if (loading) {
     return (
       <div className="flex h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-amber" />
       </div>
     );
   }
@@ -79,7 +79,7 @@ export default function PortalMessagesPage() {
           {filtered.map((msg) => {
             const isExpanded = expandedId === msg.id;
             return (
-              <Card key={msg.id} className={msg.is_read ? '' : 'border-indigo-200 bg-indigo-50/30'}>
+              <Card key={msg.id} className={msg.is_read ? '' : 'border-amber/20 bg-amber/10/30'}>
                 <CardContent className="p-4">
                   <button
                     onClick={() => setExpandedId(isExpanded ? null : msg.id)}
@@ -92,7 +92,7 @@ export default function PortalMessagesPage() {
                         ) : (
                           <span className="font-medium text-sm truncate">{msg.body.slice(0, 60)}...</span>
                         )}
-                        {!msg.is_read && <Badge variant="secondary" className="bg-indigo-100 text-indigo-700 text-[10px]">New</Badge>}
+                        {!msg.is_read && <Badge variant="secondary" className="bg-amber/20 text-amber text-[10px]">New</Badge>}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
                         <span>{msg.source === 'sms' ? 'SMS' : 'Notification'}</span>

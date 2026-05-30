@@ -221,8 +221,8 @@ export default function PortalMeetingsPage() {
         {linkedStudents.length > 1 && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
-                <UserCheck className="h-5 w-5 text-indigo-600" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber/10">
+                <UserCheck className="h-5 w-5 text-amber" />
               </div>
               <h2 className="text-sm font-semibold text-gray-900">Select Child</h2>
             </div>
@@ -283,8 +283,8 @@ export default function PortalMeetingsPage() {
                     className={cn(
                       "rounded-lg border px-3 py-2 text-sm font-medium transition-colors",
                       selectedSlotId === slot.id
-                        ? "border-indigo-500 bg-indigo-50 text-indigo-700"
-                        : "border-gray-200 hover:border-indigo-200 hover:bg-indigo-50/30"
+                        ? "border-amber bg-amber/10 text-amber"
+                        : "border-gray-200 hover:border-amber/20 hover:bg-amber/10/30"
                     )}
                   >
                     {slot.start_time}
@@ -333,7 +333,7 @@ export default function PortalMeetingsPage() {
           <button
             onClick={handleBook}
             disabled={!selectedSlotId || !parentName || !parentPhone || submitting}
-            className="w-full rounded-lg bg-indigo-600 px-4 py-3 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+            className="w-full rounded-lg bg-amber px-4 py-3 text-sm font-medium text-white hover:bg-amber/90 disabled:opacity-50"
           >
             {submitting ? (
               <Loader2 className="h-4 w-4 animate-spin mx-auto" />

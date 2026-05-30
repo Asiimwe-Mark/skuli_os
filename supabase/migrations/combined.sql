@@ -2635,8 +2635,8 @@ CREATE TABLE meeting_bookings (
   parent_name     text NOT NULL,
   parent_phone    text NOT NULL,
   notes           text,
-  status          text NOT NULL DEFAULT 'confirmed'
-                  CHECK (status IN ('confirmed', 'cancelled', 'completed')),
+  status          text NOT NULL DEFAULT 'pending'
+                  CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
   reminder_sent   boolean NOT NULL DEFAULT false,
   created_at      timestamptz NOT NULL DEFAULT now()
 );
@@ -3624,8 +3624,8 @@ CREATE TABLE IF NOT EXISTS meeting_bookings (
     parent_name     text NOT NULL,
     parent_phone    text NOT NULL,
     notes           text,
-    status          text NOT NULL DEFAULT 'confirmed'
-                    CHECK (status IN ('confirmed', 'cancelled', 'completed')),
+    status          text NOT NULL DEFAULT 'pending'
+                    CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
     reminder_sent   boolean NOT NULL DEFAULT false,
     created_at      timestamptz NOT NULL DEFAULT now()
 );

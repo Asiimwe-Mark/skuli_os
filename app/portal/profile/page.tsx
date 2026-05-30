@@ -230,14 +230,14 @@ export default function PortalProfilePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <User className="w-5 h-5 text-indigo-600" />
+            <User className="w-5 h-5 text-amber" />
             Account Info
           </CardTitle>
         </CardHeader>
         <CardContent>
           <div className="flex items-center gap-4 p-4 bg-gray-50 rounded-lg">
-            <div className="w-12 h-12 bg-indigo-100 rounded-full flex items-center justify-center">
-              <User className="w-6 h-6 text-indigo-600" />
+            <div className="w-12 h-12 bg-amber/20 rounded-full flex items-center justify-center">
+              <User className="w-6 h-6 text-amber" />
             </div>
             <div>
               <p className="font-medium text-gray-900">{profileName || 'Parent'}</p>
@@ -251,7 +251,7 @@ export default function PortalProfilePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Phone className="w-5 h-5 text-indigo-600" />
+            <Phone className="w-5 h-5 text-amber" />
             Phone Number
           </CardTitle>
           <CardDescription>Update your phone number in Uganda format</CardDescription>
@@ -284,7 +284,7 @@ export default function PortalProfilePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Mail className="w-5 h-5 text-indigo-600" />
+            <Mail className="w-5 h-5 text-amber" />
             Email Address
           </CardTitle>
           <CardDescription>Changing your email will require confirmation at the new address</CardDescription>
@@ -318,7 +318,7 @@ export default function PortalProfilePage() {
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-lg">
-            <Lock className="w-5 h-5 text-indigo-600" />
+            <Lock className="w-5 h-5 text-amber" />
             Change Password
           </CardTitle>
           <CardDescription>You&apos;ll need your current password to set a new one</CardDescription>
@@ -377,7 +377,7 @@ export default function PortalProfilePage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-lg">
-              <Bell className="w-5 h-5 text-indigo-600" />
+              <Bell className="w-5 h-5 text-amber" />
               Notifications
             </CardTitle>
             <CardDescription>Get notified for payments, report cards, absences, meetings, and messages</CardDescription>
@@ -388,7 +388,7 @@ export default function PortalProfilePage() {
               disabled={pushLoading}
               className="flex items-center gap-3 w-full"
             >
-              <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${pushEnabled ? 'bg-indigo-600' : 'bg-gray-200'}`}>
+              <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${pushEnabled ? 'bg-amber' : 'bg-gray-200'}`}>
                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${pushEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
               </div>
               <span className="text-sm font-medium text-gray-700">

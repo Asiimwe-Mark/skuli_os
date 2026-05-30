@@ -201,8 +201,8 @@ export default function PortalFeesPage() {
         {linkedStudents.length > 1 && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
-                <Receipt className="h-5 w-5 text-indigo-600" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber/10">
+                <Receipt className="h-5 w-5 text-amber" />
               </div>
               <h2 className="text-sm font-semibold text-gray-900">Select Child</h2>
             </div>
@@ -225,7 +225,7 @@ export default function PortalFeesPage() {
                     setDiscounts(data ?? []);
                   });
                 }}
-                className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-amber focus:outline-none focus:ring-1 focus:ring-amber"
               >
                 {linkedStudents.map((ls) => (
                   <option key={ls.student_id} value={ls.student_id}>
@@ -241,8 +241,8 @@ export default function PortalFeesPage() {
         {/* Fee Breakdown */}
         <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center gap-2">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
-              <Receipt className="h-5 w-5 text-indigo-600" />
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber/10">
+              <Receipt className="h-5 w-5 text-amber" />
             </div>
             <h1 className="text-lg font-bold text-gray-900">
               Current Term Fees
@@ -296,7 +296,7 @@ export default function PortalFeesPage() {
               {feeSummary.balance > 0 && (
                 <button
                   onClick={openPayModal}
-                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 active:bg-indigo-800"
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg bg-amber px-4 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-amber/90 active:bg-amber/80"
                 >
                   <CreditCard className="h-4 w-4" />
                   Pay Now
@@ -441,7 +441,7 @@ export default function PortalFeesPage() {
                         placeholder="07XXXXXXXX"
                         value={payPhone}
                         onChange={(e) => setPayPhone(e.target.value)}
-                        className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm focus:border-amber focus:outline-none focus:ring-1 focus:ring-amber"
                       />
                     </div>
 
@@ -453,7 +453,7 @@ export default function PortalFeesPage() {
                         type="number"
                         value={payAmount}
                         onChange={(e) => setPayAmount(e.target.value)}
-                        className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm focus:border-amber focus:outline-none focus:ring-1 focus:ring-amber"
                       />
                     </div>
 
@@ -463,7 +463,7 @@ export default function PortalFeesPage() {
 
                     <button
                       onClick={handlePayment}
-                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-indigo-700 active:bg-indigo-800"
+                      className="flex w-full items-center justify-center gap-2 rounded-lg bg-amber px-4 py-3.5 text-sm font-semibold text-white transition-colors hover:bg-amber/90 active:bg-amber/80"
                     >
                       <CreditCard className="h-4 w-4" />
                       Confirm Payment
@@ -475,7 +475,7 @@ export default function PortalFeesPage() {
               {/* Processing State */}
               {payState === "processing" && (
                 <div className="flex flex-col items-center py-8">
-                  <Loader2 className="h-12 w-12 animate-spin text-indigo-600" />
+                  <Loader2 className="h-12 w-12 animate-spin text-amber" />
                   <p className="mt-4 text-base font-semibold text-gray-900">
                     Check your phone
                   </p>
@@ -536,7 +536,7 @@ export default function PortalFeesPage() {
                     </button>
                     <button
                       onClick={handlePayment}
-                      className="rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-700"
+                      className="rounded-lg bg-amber px-6 py-2.5 text-sm font-medium text-white transition-colors hover:bg-amber/90"
                     >
                       Retry
                     </button>

@@ -244,7 +244,7 @@ export default function PortalResultsPage() {
               setViewingReport(null);
               setViewingReportDetail(null);
             }}
-            className="mb-4 flex items-center gap-1.5 text-sm font-medium text-indigo-600 hover:underline"
+            className="mb-4 flex items-center gap-1.5 text-sm font-medium text-amber hover:underline"
           >
             <ArrowLeft className="h-4 w-4" />
             Back to results
@@ -254,8 +254,8 @@ export default function PortalResultsPage() {
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
             {/* Header */}
             <div className="border-b border-gray-200 p-5 text-center">
-              <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-indigo-50">
-                <GraduationCap className="h-8 w-8 text-indigo-600" />
+              <div className="mx-auto mb-2 flex h-14 w-14 items-center justify-center rounded-full bg-amber/10">
+                <GraduationCap className="h-8 w-8 text-amber" />
               </div>
               <h1 className="text-lg font-bold text-gray-900">
                 {schoolName}
@@ -265,7 +265,7 @@ export default function PortalResultsPage() {
                   &ldquo;{schoolMotto}&rdquo;
                 </p>
               )}
-              <p className="mt-2 text-sm font-semibold text-indigo-600">
+              <p className="mt-2 text-sm font-semibold text-amber">
                 Student Report Card
               </p>
               <p className="text-xs text-gray-500">
@@ -293,7 +293,7 @@ export default function PortalResultsPage() {
               </div>
               <div>
                 <p className="text-gray-500">Aggregate</p>
-                <p className="font-bold text-indigo-600">
+                <p className="font-bold text-amber">
                   {viewingReport.aggregate}
                 </p>
               </div>
@@ -439,8 +439,8 @@ export default function PortalResultsPage() {
         {linkedStudents.length > 1 && (
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="mb-3 flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50">
-                <GraduationCap className="h-5 w-5 text-indigo-600" />
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber/10">
+                <GraduationCap className="h-5 w-5 text-amber" />
               </div>
               <h2 className="text-sm font-semibold text-gray-900">Select Child</h2>
             </div>
@@ -448,7 +448,7 @@ export default function PortalResultsPage() {
               <select
                 value={selectedStudentId}
                 onChange={(e) => setSelectedStudentId(e.target.value)}
-                className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-amber focus:outline-none focus:ring-1 focus:ring-amber"
               >
                 {linkedStudents.map((ls) => (
                   <option key={ls.student_id} value={ls.student_id}>
@@ -468,7 +468,7 @@ export default function PortalResultsPage() {
           <select
             value={selectedTermId}
             onChange={(e) => setSelectedTermId(e.target.value)}
-            className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+            className="w-full appearance-none rounded-lg border border-gray-300 bg-white px-4 py-3 pr-10 text-sm font-medium text-gray-700 focus:border-amber focus:outline-none focus:ring-1 focus:ring-amber"
           >
             {terms.map((t) => (
               <option key={t.id} value={t.id}>
@@ -491,7 +491,7 @@ export default function PortalResultsPage() {
                   setViewingReport(rc);
                   fetchReportCardDetail(rc);
                 }}
-                className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-indigo-200 hover:bg-indigo-50/30"
+                className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white p-4 text-left shadow-sm transition-colors hover:border-amber/20 hover:bg-amber/10/30"
               >
                 <div className="flex items-center gap-3">
                   <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-purple-50">
@@ -507,7 +507,7 @@ export default function PortalResultsPage() {
                   </div>
                 </div>
                 <div className="text-right">
-                  <p className="text-lg font-bold text-indigo-600">
+                  <p className="text-lg font-bold text-amber">
                     {rc.aggregate}
                   </p>
                   <p className="text-xs text-gray-500">
