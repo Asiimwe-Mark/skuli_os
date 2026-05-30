@@ -341,7 +341,7 @@ export function Topbar() {
   const { toggleMobileSidebar } = useUIStore();
 
   return (
-    <header className="sticky top-0 z-30 bg-surface/80 backdrop-blur-xl border-b border-border">
+    <header className="sticky top-0 z-40 bg-surface/80 backdrop-blur-xl border-b border-border">
       <div className="flex items-center justify-between h-14 px-4 lg:px-6">
         <div className="flex items-center gap-4">
           <button

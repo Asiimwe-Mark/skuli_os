@@ -126,7 +126,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       <CommandPalette />
       <main
         className={cn(
-          "pt-4 pb-8 px-4 lg:px-6 transition-all duration-300",
+          "pt-4 pb-8 px-4 lg:px-6 transition-all duration-300 overflow-x-hidden",
           sidebarCollapsed ? "lg:ml-[72px]" : "lg:ml-[260px]"
         )}
       >

@@ -204,6 +204,7 @@ function SidebarItem({ item, depth = 0 }: { item: NavItem; depth?: number }) {
   );
   const { userRole } = useSchoolStore();
   const collapsed = useUIStore((s) => s.sidebarCollapsed);
+  const setSidebarMobileOpen = useUIStore((s) => s.setSidebarMobileOpen);
 
   // Role filtering
   if (item.roles && userRole && !item.roles.includes(userRole)) {
@@ -269,6 +270,7 @@ function SidebarItem({ item, depth = 0 }: { item: NavItem; depth?: number }) {
   return (
     <Link
       href={item.href || "#"}
+      onClick={() => setSidebarMobileOpen(false)}
       className={cn(
         "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all relative",
         "hover:bg-navy-50/80 hover:text-foreground",
@@ -402,7 +404,7 @@ export function Sidebar() {
       <motion.aside
         animate={{ width: sidebarCollapsed ? 72 : 260 }}
         transition={{ duration: 0.3, ease: "easeInOut" }}
-        className="h-screen bg-navy-100 border-r border-navy-50/50 flex-col fixed left-0 top-0 z-40 hidden lg:flex"
+        className="h-screen bg-navy-100 border-r border-navy-50/50 flex-col fixed left-0 top-0 z-30 hidden lg:flex"
       >
       {/* Header */}
       <div className="p-4 flex items-center gap-3 border-b border-navy-50/50 h-16">

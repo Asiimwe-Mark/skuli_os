@@ -180,7 +180,7 @@ export default function GroupLayout({
       </aside>
 
       {/* Main */}
-      <main className="lg:ml-64 pt-4 pb-8 px-4 lg:px-6">
+      <main className="lg:ml-64 pt-4 pb-8 px-4 lg:px-6 overflow-x-hidden">
         {children}
       </main>
     </div>

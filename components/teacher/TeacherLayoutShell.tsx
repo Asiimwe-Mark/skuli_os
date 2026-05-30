@@ -33,7 +33,7 @@ export function TeacherLayoutShell({ children, teacher, assignments }: TeacherLa
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}
       />
-      <div className="flex-1 flex flex-col lg:ml-64">
+      <div className="flex-1 flex flex-col lg:ml-64 overflow-x-hidden">
         <TeacherTopbar onMenuClick={() => setMobileOpen(true)} />
         <main className="flex-1">
           {children}

@@ -109,7 +109,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </aside>
 
       {/* Main */}
-      <main className="lg:ml-64 p-6">
+      <main className="lg:ml-64 p-6 overflow-x-hidden">
         {children}
       </main>
     </div>
