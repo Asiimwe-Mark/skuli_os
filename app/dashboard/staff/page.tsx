@@ -48,6 +48,11 @@ export default function StaffDirectoryPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingStaff, setEditingStaff] = useState<Staff | null>(null);
   const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'details' | 'assignments'>('details');
+  const [assignments, setAssignments] = useState<{ class_id: string; subject_id: string | null; is_class_teacher: boolean }[]>([]);
+  const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
+  const [subjects, setSubjects] = useState<{ id: string; name: string }[]>([]);
+  const [newAssignment, setNewAssignment] = useState({ class_id: '', subject_id: '', is_class_teacher: false });
 
   const handlePhotoUpload = async (file: File): Promise<string> => {
     const staffId = editingStaff?.id || `temp-${Date.now()}`;
@@ -130,9 +135,13 @@ export default function StaffDirectoryPage() {
     setDialogOpen(true);
   };
 
-  const openEdit = (staff: Staff) => {
+  const isTeacher = (staff: Staff | null) =>
+    staff?.role_title?.toLowerCase().includes('teacher') ?? false;
+
+  const openEdit = async (staff: Staff) => {
     setEditingStaff(staff);
     setPhotoUrl(staff.photo_url || null);
+    setActiveTab('details');
     reset({
       full_name: staff.full_name,
       role_title: staff.role_title,
@@ -145,6 +154,25 @@ export default function StaffDirectoryPage() {
       is_active: staff.is_active,
     });
     setDialogOpen(true);
+
+    // Load assignments and reference data for teachers
+    if (staff.role_title?.toLowerCase().includes('teacher')) {
+      try {
+        const [assignRes, classesRes, subjectsRes] = await Promise.all([
+          fetch(`/api/teacher/assignments?teacher_id=${staff.user_id || staff.id}`),
+          supabase.from('classes').select('id, name').eq('school_id', school!.id).eq('is_deleted', false).order('name'),
+          supabase.from('subjects').select('id, name').eq('school_id', school!.id).eq('is_deleted', false).order('name'),
+        ]);
+        const { data: assignData } = await assignRes.json();
+        setAssignments((assignData ?? []).map((a: any) => ({
+          class_id: a.class_id,
+          subject_id: a.subject_id,
+          is_class_teacher: a.is_class_teacher,
+        })));
+        setClasses(classesRes.data ?? []);
+        setSubjects(subjectsRes.data ?? []);
+      } catch { /* ignore */ }
+    }
   };
 
   return (
@@ -259,6 +287,110 @@ export default function StaffDirectoryPage() {
             <DialogTitle>{editingStaff ? "Edit Staff" : "Add Staff Member"}</DialogTitle>
           </DialogHeader>
 
+          {/* Tabs for teacher editing */}
+          {editingStaff && isTeacher(editingStaff) && (
+            <div className="flex gap-1 border-b pb-2">
+              <button
+                type="button"
+                className={`px-3 py-1.5 text-sm rounded-t ${activeTab === 'details' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+                onClick={() => setActiveTab('details')}
+              >
+                Details
+              </button>
+              <button
+                type="button"
+                className={`px-3 py-1.5 text-sm rounded-t ${activeTab === 'assignments' ? 'bg-indigo-50 text-indigo-700 font-medium' : 'text-gray-500 hover:text-gray-700'}`}
+                onClick={() => setActiveTab('assignments')}
+              >
+                Assignments
+              </button>
+            </div>
+          )}
+
+          {activeTab === 'assignments' && editingStaff ? (
+            <div className="space-y-4">
+              {/* Current assignments */}
+              {assignments.length === 0 ? (
+                <p className="text-sm text-gray-500 text-center py-4">No assignments yet</p>
+              ) : (
+                <div className="space-y-2">
+                  {assignments.map((a, i) => {
+                    const cls = classes.find((c) => c.id === a.class_id);
+                    const sub = subjects.find((s) => s.id === a.subject_id);
+                    return (
+                      <div key={i} className="flex items-center justify-between p-2 bg-gray-50 rounded text-sm">
+                        <span>{cls?.name ?? 'Unknown'} — {sub?.name ?? 'Homeroom'}</span>
+                        <div className="flex items-center gap-2">
+                          {a.is_class_teacher && <Badge className="text-[10px]">Class Teacher</Badge>}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={async () => {
+                              await fetch(`/api/teacher/assignments?teacher_id=${editingStaff.user_id || editingStaff.id}&class_id=${a.class_id}${a.subject_id ? `&subject_id=${a.subject_id}` : ''}`, { method: 'DELETE' });
+                              setAssignments((prev) => prev.filter((_, idx) => idx !== i));
+                            }}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Add assignment */}
+              <div className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
+                <select
+                  value={newAssignment.class_id}
+                  onChange={(e) => setNewAssignment((p) => ({ ...p, class_id: e.target.value }))}
+                  className="flex-1 rounded border px-2 py-1.5 text-sm"
+                >
+                  <option value="">Select Class</option>
+                  {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                <select
+                  value={newAssignment.subject_id}
+                  onChange={(e) => setNewAssignment((p) => ({ ...p, subject_id: e.target.value }))}
+                  className="flex-1 rounded border px-2 py-1.5 text-sm"
+                >
+                  <option value="">Homeroom Only</option>
+                  {subjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+                <label className="flex items-center gap-1 text-xs whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={newAssignment.is_class_teacher}
+                    onChange={(e) => setNewAssignment((p) => ({ ...p, is_class_teacher: e.target.checked }))}
+                  />
+                  CT
+                </label>
+                <Button
+                  size="sm"
+                  disabled={!newAssignment.class_id}
+                  onClick={async () => {
+                    const teacherId = editingStaff.user_id || editingStaff.id;
+                    await fetch('/api/teacher/assignments', {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({
+                        teacher_id: teacherId,
+                        assignments: [...assignments, newAssignment],
+                      }),
+                    });
+                    setAssignments((prev) => [...prev, newAssignment]);
+                    setNewAssignment({ class_id: '', subject_id: '', is_class_teacher: false });
+                  }}
+                >
+                  Add
+                </Button>
+              </div>
+
+              <DialogFooter>
+                <Button variant="ghost" type="button" onClick={() => setDialogOpen(false)}>Close</Button>
+              </DialogFooter>
+            </div>
+          ) : (
           <form onSubmit={handleSubmit((data) => saveMutation.mutate(data as StaffFormData))} className="space-y-4">
             <div className="flex justify-center">
               <PhotoUpload
@@ -338,6 +470,7 @@ export default function StaffDirectoryPage() {
               </Button>
             </DialogFooter>
           </form>
+          )}
         </DialogContent>
       </Dialog>
     </motion.div>

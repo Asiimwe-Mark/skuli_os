@@ -6,6 +6,7 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils/cn";
+import { PortalProvider } from "@/app/portal/PortalContext";
 import {
   Home,
   CreditCard,
@@ -18,6 +19,9 @@ import {
   Loader2,
   UserCheck,
   CalendarDays,
+  CalendarCheck,
+  Bell,
+  MoreHorizontal,
 } from "lucide-react";
 
 interface Child {
@@ -31,10 +35,17 @@ const navItems = [
   { href: "/portal", label: "Home", icon: Home },
   { href: "/portal/fees", label: "Fees", icon: CreditCard },
   { href: "/portal/results", label: "Results", icon: FileText },
+  { href: "/portal/attendance", label: "Attendance", icon: CalendarCheck },
   { href: "/portal/meetings", label: "Meetings", icon: UserCheck },
   { href: "/portal/calendar", label: "Calendar", icon: CalendarDays },
+  { href: "/portal/messages", label: "Messages", icon: MessageSquare },
+  { href: "/portal/notifications", label: "Notifications", icon: Bell },
   { href: "/portal/profile", label: "Profile", icon: User },
 ];
+
+// Mobile bottom bar: first 4 + More menu
+const mobileNavPrimary = navItems.slice(0, 4);
+const mobileNavMore = navItems.slice(4);
 
 export default function PortalLayout({
   children,
@@ -49,6 +60,7 @@ export default function PortalLayout({
   const [childrenList, setChildrenList] = useState<Child[]>([]);
   const [selectedChild, setSelectedChild] = useState<Child | null>(null);
   const [showChildSelector, setShowChildSelector] = useState(false);
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [parentName, setParentName] = useState("");
 
   useEffect(() => {
@@ -232,7 +244,7 @@ export default function PortalLayout({
             exit={{ opacity: 0, y: -8 }}
             transition={{ duration: 0.2 }}
           >
-            {children}
+            <PortalProvider>{children}</PortalProvider>
           </motion.div>
         </AnimatePresence>
       </main>
@@ -240,7 +252,7 @@ export default function PortalLayout({
       {/* Bottom Navigation (Mobile) */}
       <nav className="fixed bottom-0 left-0 right-0 z-40 border-t border-gray-200 bg-white sm:hidden">
         <div className="flex items-center justify-around px-2 py-1">
-          {navItems.map((item) => {
+          {mobileNavPrimary.map((item) => {
             const isActive = pathname === item.href;
             const Icon = item.icon;
             return (
@@ -259,6 +271,47 @@ export default function PortalLayout({
               </Link>
             );
           })}
+          {/* More menu */}
+          <div className="relative">
+            <button
+              onClick={() => setShowMoreMenu(!showMoreMenu)}
+              className={cn(
+                "flex flex-col items-center gap-0.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
+                mobileNavMore.some((i) => i.href === pathname)
+                  ? "text-indigo-600"
+                  : "text-gray-500 active:text-gray-700"
+              )}
+            >
+              <MoreHorizontal className="h-5 w-5" />
+              <span>More</span>
+            </button>
+            {showMoreMenu && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="absolute bottom-full right-0 mb-2 w-48 rounded-lg border border-gray-200 bg-white py-1 shadow-lg"
+              >
+                {mobileNavMore.map((item) => {
+                  const isActive = pathname === item.href;
+                  const Icon = item.icon;
+                  return (
+                    <Link
+                      key={item.href}
+                      href={item.href}
+                      onClick={() => setShowMoreMenu(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-2.5 text-sm transition-colors hover:bg-gray-50",
+                        isActive ? "text-indigo-600 bg-indigo-50" : "text-gray-700"
+                      )}
+                    >
+                      <Icon className="h-4 w-4" />
+                      <span>{item.label}</span>
+                    </Link>
+                  );
+                })}
+              </motion.div>
+            )}
+          </div>
         </div>
       </nav>
     </div>

@@ -13,6 +13,7 @@ import {
   LogOut,
   ChevronDown,
   Clock,
+  ClipboardList,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
@@ -71,6 +72,8 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
     { href: '/teacher', label: 'Dashboard', icon: LayoutDashboard },
     { href: '/teacher/marks', label: 'Marks Entry', icon: BookOpen },
     { href: '/teacher/attendance', label: 'Attendance', icon: CheckSquare, badge: pendingSyncCount },
+    { href: '/teacher/timetable', label: 'My Timetable', icon: Clock },
+    { href: '/teacher/assignments', label: 'My Assignments', icon: ClipboardList },
     { href: '/teacher/notices', label: 'Notices', icon: Megaphone },
     { href: '/teacher/profile', label: 'Profile', icon: User },
   ];

@@ -60,8 +60,9 @@ function LoginForm() {
       SUPER_ADMIN: "/admin",
       SCHOOL_ADMIN: "/dashboard",
       BURSAR: "/dashboard",
-      TEACHER: "/dashboard/attendance",
+      TEACHER: "/teacher",
       PARENT: "/portal",
+      GROUP_ADMIN: "/group",
     };
 
     const roleRedirect = roleRedirects[userData?.role || ""] || "/dashboard";

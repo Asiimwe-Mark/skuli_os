@@ -1,3 +1,7 @@
+// This route is for SCHOOL ADMIN / BURSAR initiated STK push payments.
+// Requires phone in the body (no fallback).
+// Does NOT look up fee_account_id — used by the admin payments page.
+// See also: /api/fees/stk-push for the parent-portal variant with phone fallback.
 import { NextRequest } from "next/server";
 import {
   getSupabaseAndUser,
