@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import { createClient } from '@/lib/supabase/server';
-import TeacherSidebar from '@/components/teacher/TeacherSidebar';
+import { TeacherLayoutShell } from '@/components/teacher/TeacherLayoutShell';
 import { ServiceWorkerRegistration } from '@/components/teacher/ServiceWorkerRegistration';
 
 export default async function TeacherLayout({
@@ -39,15 +39,14 @@ export default async function TeacherLayout({
     .eq('is_deleted', false);
 
   return (
-    <div className="flex min-h-screen bg-background">
+    <>
       <ServiceWorkerRegistration />
-      <TeacherSidebar
+      <TeacherLayoutShell
         teacher={userProfile}
         assignments={assignments || []}
-      />
-      <main className="flex-1 ml-64">
+      >
         {children}
-      </main>
-    </div>
+      </TeacherLayoutShell>
+    </>
   );
 }

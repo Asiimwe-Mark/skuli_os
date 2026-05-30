@@ -41,7 +41,7 @@ export default async function TeacherProfilePage() {
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy mb-2">My Profile</h1>
-        <p className="text-gray-600">View your profile and class assignments.</p>
+        <p className="text-muted-foreground">View your profile and class assignments.</p>
       </div>
 
       {/* Profile Card */}
@@ -59,9 +59,9 @@ export default async function TeacherProfilePage() {
             </Avatar>
             <div>
               <h2 className="text-xl font-semibold">{userProfile.full_name}</h2>
-              <p className="text-gray-500">{userProfile.phone || 'No phone number'}</p>
+              <p className="text-muted-foreground">{userProfile.phone || 'No phone number'}</p>
               <Badge className="mt-2 bg-navy text-white">Teacher</Badge>
-              <p className="text-xs text-gray-400 mt-2">
+              <p className="text-xs text-muted-foreground/70 mt-2">
                 Joined {new Date(userProfile.created_at).toLocaleDateString()}
               </p>
             </div>
@@ -94,16 +94,16 @@ export default async function TeacherProfilePage() {
                     )}
                   </div>
                   {a.subject && (
-                    <p className="text-sm text-gray-500">Subject: {a.subject.name}</p>
+                    <p className="text-sm text-muted-foreground">Subject: {a.subject.name}</p>
                   )}
                   {!a.subject && a.is_class_teacher && (
-                    <p className="text-sm text-gray-500">Class Teacher (all subjects)</p>
+                    <p className="text-sm text-muted-foreground">Class Teacher (all subjects)</p>
                   )}
                 </div>
               ))}
             </div>
           ) : (
-            <p className="text-gray-500">No class assignments yet.</p>
+            <p className="text-muted-foreground">No class assignments yet.</p>
           )}
         </CardContent>
       </Card>

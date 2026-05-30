@@ -6,7 +6,9 @@ import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { CommandPalette } from "@/components/dashboard/command-palette";
 import { useSchoolStore } from "@/store/school";
+import { useUIStore } from "@/store/ui";
 import { createBrowserClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils/cn";
 import { motion } from "framer-motion";
 
 function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -16,28 +18,28 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const supabase = createBrowserClient();
   const { setSchool, setUser, setCurrentTerm, setCurrentAcademicYear, setLoading } =
     useSchoolStore();
+  const { sidebarCollapsed, sidebarMobileOpen, setSidebarMobileOpen } = useUIStore();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function loadContext() {
       try {
-        const {
-          data: { user: authUser },
-        } = await supabase.auth.getUser();
+        // Middleware already validated auth and role — just load the user profile
+        const { data: { session } } = await supabase.auth.getSession();
 
         if (cancelled) return;
 
-        if (!authUser) {
+        if (!session?.user) {
           router.push("/login");
           return;
         }
 
-        // Load user profile with school
+        // Load user profile
         const { data: userProfile } = await supabase
           .from("users")
           .select("*")
-          .eq("id", authUser.id)
+          .eq("id", session.user.id)
           .single();
 
         if (cancelled) return;
@@ -48,19 +50,6 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         }
 
         setUser(userProfile);
-
-        // Role guard: redirect users who don't belong in /dashboard
-        const allowedDashboardRoles = ["SCHOOL_ADMIN", "BURSAR"];
-        if (!allowedDashboardRoles.includes(userProfile.role)) {
-          const roleRedirects: Record<string, string> = {
-            SUPER_ADMIN: "/admin",
-            TEACHER: "/teacher",
-            PARENT: "/portal",
-            GROUP_ADMIN: "/group",
-          };
-          router.push(roleRedirects[userProfile.role] || "/login");
-          return;
-        }
 
         // Determine which school to load (GROUP_ADMIN can override via ?school_id=)
         const effectiveSchoolId = overrideSchoolId || userProfile.school_id;
@@ -124,10 +113,23 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-navy">
+      {/* Mobile sidebar backdrop */}
+      {sidebarMobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          onClick={() => setSidebarMobileOpen(false)}
+        />
+      )}
+
       <Sidebar />
       <Topbar />
       <CommandPalette />
-      <main className="pt-4 pb-8 px-6 ml-[260px] transition-all duration-300">
+      <main
+        className={cn(
+          "pt-4 pb-8 px-4 lg:px-6 transition-all duration-300",
+          sidebarCollapsed ? "lg:ml-[72px]" : "lg:ml-[260px]"
+        )}
+      >
         {children}
       </main>
     </div>

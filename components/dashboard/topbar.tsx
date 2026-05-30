@@ -19,6 +19,7 @@ import {
   Check,
   CheckCheck,
   X,
+  Menu,
 } from "lucide-react";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { formatDate } from "@/lib/utils/dates";
@@ -65,16 +66,26 @@ function CommandPaletteTrigger() {
   const { toggleCommandPalette } = useUIStore();
 
   return (
-    <button
-      onClick={toggleCommandPalette}
-      className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-navy-50/50 border border-navy-50 hover:border-navy-50/80 text-muted-foreground hover:text-foreground text-sm transition-colors"
-    >
-      <Search className="w-3.5 h-3.5" />
-      <span className="hidden sm:inline">Search...</span>
-      <kbd className="hidden sm:inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-navy-50 text-[10px] font-mono text-muted-foreground/60">
-        <Command className="w-2.5 h-2.5" />K
-      </kbd>
-    </button>
+    <>
+      {/* Mobile: icon only */}
+      <button
+        onClick={toggleCommandPalette}
+        className="lg:hidden p-2 rounded-lg text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <Search className="w-4 h-4" />
+      </button>
+      {/* Desktop: full trigger */}
+      <button
+        onClick={toggleCommandPalette}
+        className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-navy-50/50 border border-navy-50 hover:border-navy-50/80 text-muted-foreground hover:text-foreground text-sm transition-colors"
+      >
+        <Search className="w-3.5 h-3.5" />
+        <span>Search...</span>
+        <kbd className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-navy-50 text-[10px] font-mono text-muted-foreground/60">
+          <Command className="w-2.5 h-2.5" />K
+        </kbd>
+      </button>
+    </>
   );
 }
 
@@ -327,11 +338,18 @@ function NotificationBell() {
 
 export function Topbar() {
   const { school } = useSchoolStore();
+  const { toggleMobileSidebar } = useUIStore();
 
   return (
     <header className="sticky top-0 z-30 bg-surface/80 backdrop-blur-xl border-b border-border">
       <div className="flex items-center justify-between h-14 px-4 lg:px-6">
         <div className="flex items-center gap-4">
+          <button
+            className="lg:hidden p-2 rounded-lg hover:bg-navy-50/50 text-muted-foreground"
+            onClick={toggleMobileSidebar}
+          >
+            <Menu className="w-5 h-5" />
+          </button>
           <Breadcrumbs />
         </div>
 

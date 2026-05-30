@@ -373,7 +373,7 @@ export default function TeacherAttendancePage() {
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy mb-2">Take Attendance</h1>
-        <p className="text-gray-600">Mark attendance for your homeroom class.</p>
+        <p className="text-muted-foreground">Mark attendance for your homeroom class.</p>
       </div>
 
       {/* Offline Banner */}
@@ -475,7 +475,7 @@ export default function TeacherAttendancePage() {
                     <div className="flex justify-between items-start mb-2">
                       <div>
                         <p className="font-semibold text-sm">{student.full_name}</p>
-                        <p className="text-xs text-gray-500">{student.admission_number}</p>
+                        <p className="text-xs text-muted-foreground">{student.admission_number}</p>
                       </div>
                       <Badge className={cn('text-white', config.bgColor.replace('/20', ''), config.color.replace('text-', 'bg-'))}>
                         {config.shortLabel}
@@ -494,7 +494,7 @@ export default function TeacherAttendancePage() {
                             }}
                             className={cn(
                               'flex-1 py-1 text-xs rounded transition-colors',
-                              isActive ? cfg.bgColor : 'bg-gray-100 hover:bg-gray-200'
+                              isActive ? cfg.bgColor : 'bg-navy-50 hover:bg-navy-50/80'
                             )}
                           >
                             {cfg.shortLabel}

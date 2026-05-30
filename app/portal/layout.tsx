@@ -37,9 +37,9 @@ const navItems = [
   { href: "/portal/results", label: "Results", icon: FileText },
   { href: "/portal/attendance", label: "Attendance", icon: CalendarCheck },
   { href: "/portal/meetings", label: "Meetings", icon: UserCheck },
-  { href: "/portal/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/portal/messages", label: "Messages", icon: MessageSquare },
   { href: "/portal/notifications", label: "Notifications", icon: Bell },
+  { href: "/portal/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/portal/profile", label: "Profile", icon: User },
 ];
 
@@ -65,35 +65,22 @@ export default function PortalLayout({
 
   useEffect(() => {
     async function loadParentData() {
-      // Auth is handled by middleware — just load profile and students
+      // Auth and role are handled by middleware — just load profile and students
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      if (!user) {
+      if (!session?.user) {
         setLoading(false);
         return;
       }
 
-      // Load profile with role check
+      // Load profile (middleware already validated PARENT role)
       const { data: profile } = await supabase
         .from("users")
         .select("full_name, phone, role")
-        .eq("id", user.id)
+        .eq("id", session.user.id)
         .maybeSingle();
-
-      // Role guard: redirect non-parents away from portal
-      if (profile?.role && profile.role !== "PARENT") {
-        const roleRedirects: Record<string, string> = {
-          SUPER_ADMIN: "/admin",
-          SCHOOL_ADMIN: "/dashboard",
-          BURSAR: "/dashboard/fees",
-          TEACHER: "/teacher",
-          GROUP_ADMIN: "/group",
-        };
-        router.push(roleRedirects[profile.role] || "/login");
-        return;
-      }
 
       if (profile?.full_name) {
         setParentName(profile.full_name);
@@ -108,11 +95,11 @@ export default function PortalLayout({
             .eq("is_deleted", false)
         : null;
 
-      const emailQuery = user.email
+      const emailQuery = session.user.email
         ? supabase
             .from("students")
             .select("id, full_name, admission_number, current_class_id, classes:current_class_id(name)")
-            .eq("parent_email", user.email)
+            .eq("parent_email", session.user.email)
             .eq("is_deleted", false)
         : null;
 
@@ -318,8 +305,8 @@ export default function PortalLayout({
                 className={cn(
                   "flex flex-col items-center gap-0.5 rounded-lg px-3 py-2 text-xs font-medium transition-colors",
                   isActive
-                    ? "text-amber"
-                    : "text-white/50 active:text-white/70"
+                    ? "text-amber bg-amber/10"
+                    : "text-white/50 active:bg-white/10 active:text-white/70"
                 )}
               >
                 <Icon className="h-5 w-5" />

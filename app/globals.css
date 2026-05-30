@@ -93,6 +93,12 @@
   .text-balance {
     text-wrap: balance;
   }
+  .border-border-subtle {
+    border-color: rgb(255 255 255 / 0.06);
+  }
+  .border-border-glow {
+    border-color: rgb(245 166 35 / 0.3);
+  }
   .glass {
     @apply bg-white/5 backdrop-blur-xl border border-white/10;
   }

@@ -193,6 +193,10 @@ export default function StudentsPage() {
   }, [school, search, classFilter, statusFilter, genderFilter, sortBy, sortDir, page, pageSize, supabase, canViewFees, toast]);
 
   useEffect(() => {
+    document.title = "Students | SKULI";
+  }, []);
+
+  useEffect(() => {
     async function loadClasses() {
       if (!school) return;
       const { data } = await supabase

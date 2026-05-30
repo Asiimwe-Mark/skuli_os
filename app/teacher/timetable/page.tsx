@@ -47,7 +47,7 @@ export default function TeacherTimetablePage() {
   if (loading) {
     return (
       <div className="flex h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-amber" />
       </div>
     );
   }
@@ -68,7 +68,7 @@ export default function TeacherTimetablePage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">My Timetable</h1>
-          <p className="text-gray-500">Your weekly teaching schedule</p>
+          <p className="text-muted-foreground">Your weekly teaching schedule</p>
         </div>
         <Button variant="outline" size="sm" onClick={() => window.print()}>
           <Printer className="h-4 w-4 mr-1" /> Print Timetable
@@ -79,10 +79,10 @@ export default function TeacherTimetablePage() {
         <CardContent className="p-0 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b bg-gray-50">
-                <th className="py-3 px-4 text-left font-medium text-gray-500 min-w-[120px]">Period</th>
+              <tr className="border-b bg-navy-100">
+                <th className="py-3 px-4 text-left font-medium text-muted-foreground min-w-[120px]">Period</th>
                 {DAYS.map((day) => (
-                  <th key={day} className="py-3 px-4 text-left font-medium text-gray-500 min-w-[150px]">{day}</th>
+                  <th key={day} className="py-3 px-4 text-left font-medium text-muted-foreground min-w-[150px]">{day}</th>
                 ))}
               </tr>
             </thead>
@@ -91,7 +91,7 @@ export default function TeacherTimetablePage() {
                 <tr key={p.id} className="border-b last:border-0">
                   <td className="py-3 px-4">
                     <div className="font-medium">{p.name}</div>
-                    <div className="text-xs text-gray-400">{p.start_time} - {p.end_time}</div>
+                    <div className="text-xs text-muted-foreground/70">{p.start_time} - {p.end_time}</div>
                   </td>
                   {DAYS.map((_, dayIndex) => {
                     const dayNum = dayIndex + 1;
@@ -99,13 +99,13 @@ export default function TeacherTimetablePage() {
                     return (
                       <td key={dayIndex} className="py-3 px-4">
                         {slot ? (
-                          <div className="p-2 rounded-lg bg-indigo-50 border border-indigo-100">
-                            <p className="font-medium text-indigo-800 text-xs">{slot.subject?.name ?? '—'}</p>
-                            <p className="text-[11px] text-indigo-600">{slot.class?.name ?? ''}</p>
-                            {slot.room && <p className="text-[10px] text-gray-400">{slot.room}</p>}
+                          <div className="p-2 rounded-lg bg-amber/10 border border-amber/20">
+                            <p className="font-medium text-foreground text-xs">{slot.subject?.name ?? '—'}</p>
+                            <p className="text-[11px] text-amber">{slot.class?.name ?? ''}</p>
+                            {slot.room && <p className="text-[10px] text-muted-foreground/70">{slot.room}</p>}
                           </div>
                         ) : (
-                          <div className="text-gray-300 text-xs">—</div>
+                          <div className="text-muted-foreground/50 text-xs">—</div>
                         )}
                       </td>
                     );

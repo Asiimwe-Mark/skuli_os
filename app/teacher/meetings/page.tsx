@@ -139,7 +139,7 @@ export default function TeacherMeetingsPage() {
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy mb-2">My Meetings</h1>
-        <p className="text-gray-600">
+        <p className="text-muted-foreground">
           Review meeting requests from parents and confirm your availability.
         </p>
       </div>
@@ -180,25 +180,25 @@ export default function TeacherMeetingsPage() {
           <Card>
             <CardContent className="p-4 text-center">
               <p className="text-2xl font-bold text-navy">{slots.length}</p>
-              <p className="text-sm text-gray-500">Total Slots</p>
+              <p className="text-sm text-muted-foreground">Total Slots</p>
             </CardContent>
           </Card>
           <Card className={pendingSlots.length > 0 ? 'border-amber-300' : ''}>
             <CardContent className="p-4 text-center">
               <p className="text-2xl font-bold text-amber">{pendingSlots.length}</p>
-              <p className="text-sm text-gray-500">Pending</p>
+              <p className="text-sm text-muted-foreground">Pending</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4 text-center">
               <p className="text-2xl font-bold text-emerald">{confirmedSlots.length}</p>
-              <p className="text-sm text-gray-500">Confirmed</p>
+              <p className="text-sm text-muted-foreground">Confirmed</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="p-4 text-center">
-              <p className="text-2xl font-bold text-gray-400">{availableSlots.length}</p>
-              <p className="text-sm text-gray-500">Available</p>
+              <p className="text-2xl font-bold text-muted-foreground/70">{availableSlots.length}</p>
+              <p className="text-sm text-muted-foreground">Available</p>
             </CardContent>
           </Card>
         </div>
@@ -209,7 +209,7 @@ export default function TeacherMeetingsPage() {
         <Card className="mb-4">
           <CardContent className="p-3">
             <div className="flex items-center gap-3">
-              <span className="text-sm font-medium text-gray-600">Notify parent via:</span>
+              <span className="text-sm font-medium text-muted-foreground">Notify parent via:</span>
               <div className="flex gap-1">
                 <Button
                   size="sm"
@@ -270,23 +270,23 @@ export default function TeacherMeetingsPage() {
                 className={cn(
                   'border transition-all',
                   slot.is_deleted
-                    ? 'border-gray-200 bg-gray-50 opacity-60'
+                    ? 'border-border bg-navy-100 opacity-60'
                     : isPending
                     ? 'border-amber-300 bg-amber-50/30'
                     : isConfirmed
                     ? 'border-emerald-300 bg-emerald-50/50'
-                    : 'border-gray-200'
+                    : 'border-border'
                 )}
               >
                 <CardContent className="p-4">
                   {/* Header row */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                      <Clock className="h-4 w-4 text-gray-500" />
+                      <Clock className="h-4 w-4 text-muted-foreground" />
                       <span className="font-semibold text-lg">
                         {slot.start_time} — {slot.end_time}
                       </span>
-                      <span className="text-sm text-gray-500">
+                      <span className="text-sm text-muted-foreground">
                         ({slot.duration_minutes} min)
                       </span>
                       <Badge
@@ -346,30 +346,30 @@ export default function TeacherMeetingsPage() {
 
                   {/* Booking details */}
                   {booking && !slot.is_deleted && (
-                    <div className="mt-4 p-3 rounded-lg bg-white border border-gray-200">
+                    <div className="mt-4 p-3 rounded-lg bg-surface border border-border">
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                         <div className="flex items-center gap-2">
-                          <Users className="h-4 w-4 text-gray-400" />
+                          <Users className="h-4 w-4 text-muted-foreground/70" />
                           <div>
-                            <p className="text-xs text-gray-500">Student</p>
+                            <p className="text-xs text-muted-foreground">Student</p>
                             <p className="text-sm font-medium">
                               {booking.student?.full_name || 'Unknown'}
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <UserCheck className="h-4 w-4 text-gray-400" />
+                          <UserCheck className="h-4 w-4 text-muted-foreground/70" />
                           <div>
-                            <p className="text-xs text-gray-500">Parent</p>
+                            <p className="text-xs text-muted-foreground">Parent</p>
                             <p className="text-sm font-medium">
                               {booking.parent_name || '—'}
                             </p>
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <Phone className="h-4 w-4 text-gray-400" />
+                          <Phone className="h-4 w-4 text-muted-foreground/70" />
                           <div>
-                            <p className="text-xs text-gray-500">Phone</p>
+                            <p className="text-xs text-muted-foreground">Phone</p>
                             <p className="text-sm font-medium">
                               {booking.parent_phone || '—'}
                             </p>
@@ -378,9 +378,9 @@ export default function TeacherMeetingsPage() {
                       </div>
                       {booking.notes && (
                         <div className="mt-3 flex items-start gap-2">
-                          <FileText className="h-4 w-4 text-gray-400 mt-0.5" />
+                          <FileText className="h-4 w-4 text-muted-foreground/70 mt-0.5" />
                           <div>
-                            <p className="text-xs text-gray-500">Notes</p>
+                            <p className="text-xs text-muted-foreground">Notes</p>
                             <p className="text-sm">{booking.notes}</p>
                           </div>
                         </div>

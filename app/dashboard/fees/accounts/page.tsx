@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useRef } from "react";
+import { useState, useMemo, useRef, useEffect } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -102,6 +102,10 @@ export default function FeeAccountsPage() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const supabase = createClient();
+
+  useEffect(() => {
+    document.title = "Fees | SKULI";
+  }, []);
 
   const [search, setSearch] = useState("");
   const [filterClass, setFilterClass] = useState("all");

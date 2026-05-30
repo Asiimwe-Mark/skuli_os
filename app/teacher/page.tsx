@@ -43,7 +43,7 @@ export default async function TeacherDashboardPage() {
             <CardTitle>No Classes Assigned</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-gray-600">
+            <p className="text-muted-foreground">
               You have not been assigned to any classes yet. Please contact your school administrator.
             </p>
           </CardContent>
@@ -125,7 +125,7 @@ export default async function TeacherDashboardPage() {
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy mb-2">Teacher Dashboard</h1>
-        <p className="text-gray-600">Welcome back! Here&apos;s an overview of your classes.</p>
+        <p className="text-muted-foreground">Welcome back! Here&apos;s an overview of your classes.</p>
       </div>
 
       {/* Quick Stats */}
@@ -133,7 +133,7 @@ export default async function TeacherDashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Classes</CardTitle>
-            <BookOpen className="w-4 h-4 text-gray-500" />
+            <BookOpen className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{uniqueClasses.length}</div>
@@ -142,7 +142,7 @@ export default async function TeacherDashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Students</CardTitle>
-            <Users className="w-4 h-4 text-gray-500" />
+            <Users className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
@@ -153,7 +153,7 @@ export default async function TeacherDashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Marks Entries</CardTitle>
-            <TrendingUp className="w-4 h-4 text-gray-500" />
+            <TrendingUp className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
@@ -164,7 +164,7 @@ export default async function TeacherDashboardPage() {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Attendance Today</CardTitle>
-            <CheckCircle className="w-4 h-4 text-gray-500" />
+            <CheckCircle className="w-4 h-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
@@ -193,21 +193,21 @@ export default async function TeacherDashboardPage() {
                   )}
                 </CardTitle>
                 {assignment.subject && (
-                  <p className="text-sm text-gray-500">{assignment.subject.name}</p>
+                  <p className="text-sm text-muted-foreground">{assignment.subject.name}</p>
                 )}
               </CardHeader>
               <CardContent>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-gray-500">Students:</span>
+                    <span className="text-muted-foreground">Students:</span>
                     <span className="font-medium">{studentCount}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-500">Marks entries:</span>
+                    <span className="text-muted-foreground">Marks entries:</span>
                     <span className="font-medium">{marksCount}</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-gray-500">Attendance today:</span>
+                    <span className="text-muted-foreground">Attendance today:</span>
                     <span className="font-medium">{attendanceCount}</span>
                   </div>
                 </div>
@@ -248,7 +248,7 @@ export default async function TeacherDashboardPage() {
                       </span>
                       <span className="text-amber font-semibold">{mark.score}%</span>
                     </div>
-                    <div className="text-gray-500 text-xs">
+                    <div className="text-muted-foreground text-xs">
                       {mark.subject?.name} • {mark.exam_type} •{' '}
                       {new Date(mark.created_at).toLocaleDateString()}
                     </div>
@@ -256,7 +256,7 @@ export default async function TeacherDashboardPage() {
                 ))}
               </ul>
             ) : (
-              <p className="text-gray-500 text-sm">No marks submitted yet.</p>
+              <p className="text-muted-foreground text-sm">No marks submitted yet.</p>
             )}
           </CardContent>
         </Card>
@@ -286,14 +286,14 @@ export default async function TeacherDashboardPage() {
                         {record.status}
                       </span>
                     </div>
-                    <div className="text-gray-500 text-xs">
+                    <div className="text-muted-foreground text-xs">
                       {record.class?.name} • {new Date(record.date).toLocaleDateString()}
                     </div>
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-gray-500 text-sm">No attendance records yet.</p>
+              <p className="text-muted-foreground text-sm">No attendance records yet.</p>
             )}
           </CardContent>
         </Card>

@@ -73,7 +73,7 @@ function StatCard({
           <div className="flex items-center justify-between">
             <div>
               <p className="text-sm text-foreground/60">{label}</p>
-              <p className="text-2xl font-bold mt-1">{value}</p>
+              <p className="text-2xl font-bold mt-1" aria-label={`${label}: ${value}`}>{value}</p>
             </div>
             <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${color}`}>
               <Icon className="w-6 h-6" />
@@ -316,6 +316,10 @@ export default function DashboardPage() {
   const [feeTrendData, setFeeTrendData] = useState<{ week: string; amount: number }[]>([]);
   const [paymentMethodData, setPaymentMethodData] = useState<{ name: string; value: number }[]>([]);
   const [attendanceByClass, setAttendanceByClass] = useState<{ className: string; teacher: string; present: number; total: number; pct: number }[]>([]);
+
+  useEffect(() => {
+    document.title = "Dashboard | SKULI";
+  }, []);
 
   useEffect(() => {
     async function loadDashboard() {

@@ -46,6 +46,7 @@ import {
   Library,
   Send,
 } from 'lucide-react';
+import { EmptyState } from '@/components/shared/empty-state';
 
 const FINE_PER_DAY = 500;
 
@@ -556,8 +557,18 @@ export default function LibraryPage() {
                   ))}
                   {paginatedBooks.length === 0 && (
                     <tr>
-                      <td colSpan={6} className="px-4 py-12 text-center text-foreground/40">
-                        No books found. Add your first book to get started.
+                      <td colSpan={6} className="px-4 py-12">
+                        <EmptyState
+                          icon={BookOpen}
+                          title="No books found"
+                          description="Add your first book to the library to get started."
+                          action={
+                            <Button onClick={() => setAddBookOpen(true)}>
+                              <Plus className="w-4 h-4 mr-2" />
+                              Add Book
+                            </Button>
+                          }
+                        />
                       </td>
                     </tr>
                   )}

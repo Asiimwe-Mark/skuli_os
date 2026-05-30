@@ -36,7 +36,7 @@ export default async function TeacherNoticesPage() {
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy mb-2">Notices</h1>
-        <p className="text-gray-600">View school-wide announcements and notices.</p>
+        <p className="text-muted-foreground">View school-wide announcements and notices.</p>
       </div>
 
       <Card>
@@ -57,8 +57,8 @@ export default async function TeacherNoticesPage() {
                       {announcement.target_audience}
                     </Badge>
                   </div>
-                  <p className="text-gray-700 mb-2">{announcement.message_body}</p>
-                  <div className="text-xs text-gray-500 flex gap-4">
+                  <p className="text-foreground mb-2">{announcement.message_body}</p>
+                  <div className="text-xs text-muted-foreground flex gap-4">
                     <span>
                       By: {announcement.created_by?.full_name || 'Unknown'}
                     </span>
@@ -70,7 +70,7 @@ export default async function TeacherNoticesPage() {
               ))}
             </ul>
           ) : (
-            <p className="text-gray-500">No announcements yet.</p>
+            <p className="text-muted-foreground">No announcements yet.</p>
           )}
         </CardContent>
       </Card>

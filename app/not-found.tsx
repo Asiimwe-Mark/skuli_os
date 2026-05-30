@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
-import { FileQuestion, LayoutDashboard, Home } from 'lucide-react';
+import { FileQuestion, Home, LogIn } from 'lucide-react';
 
 export default function NotFound() {
   return (
@@ -22,16 +22,16 @@ export default function NotFound() {
         </p>
 
         <div className="flex flex-col sm:flex-row gap-3 justify-center">
-          <Link href="/dashboard">
+          <Link href="/login">
             <Button size="lg" className="w-full sm:w-auto">
-              <LayoutDashboard className="w-4 h-4 mr-2" />
-              Go to Dashboard
+              <LogIn className="w-4 h-4 mr-2" />
+              Go to Login
             </Button>
           </Link>
           <Link href="/">
             <Button variant="outline" size="lg" className="w-full sm:w-auto">
               <Home className="w-4 h-4 mr-2" />
-              Go to Home
+              Go Home
             </Button>
           </Link>
         </div>

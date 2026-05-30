@@ -243,7 +243,7 @@ export default function TeacherMarksPage() {
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-navy mb-2">Marks Entry</h1>
-        <p className="text-gray-600">Enter and manage marks for your assigned classes.</p>
+        <p className="text-muted-foreground">Enter and manage marks for your assigned classes.</p>
       </div>
 
       {/* Class/Subject Selector */}
@@ -303,7 +303,7 @@ export default function TeacherMarksPage() {
       ) : (
         <>
           <div className="flex justify-between items-center mb-4">
-            <div className="text-sm text-gray-600">
+            <div className="text-sm text-muted-foreground">
               Entered: <span className="font-semibold">{enteredCount}</span> /{' '}
               {marks.length} students
             </div>
@@ -311,21 +311,21 @@ export default function TeacherMarksPage() {
 
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full">
-              <thead className="bg-gray-50">
+              <thead className="bg-navy-100">
                 <tr>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">
                     Student Name
                   </th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">
                     Admission No.
                   </th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">
                     Score (0-100)
                   </th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">
                     Grade
                   </th>
-                  <th className="px-4 py-3 text-left text-sm font-semibold text-gray-700">
+                  <th className="px-4 py-3 text-left text-sm font-semibold text-foreground">
                     Status
                   </th>
                 </tr>
@@ -340,9 +340,9 @@ export default function TeacherMarksPage() {
                   const isError = errorMarks.has(mark.student_id);
 
                   return (
-                    <tr key={mark.student_id} className="hover:bg-gray-50">
+                    <tr key={mark.student_id} className="hover:bg-navy-100">
                       <td className="px-4 py-3 text-sm font-medium">{mark.student_name}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{mark.admission_number}</td>
+                      <td className="px-4 py-3 text-sm text-muted-foreground">{mark.admission_number}</td>
                       <td className="px-4 py-3">
                         <Input
                           ref={(el: HTMLInputElement | null) => { scoreRefs.current[index] = el; }}

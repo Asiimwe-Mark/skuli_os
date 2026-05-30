@@ -5,7 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import Link from "next/link";
 import { createBrowserClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils/cn";
-import { LayoutDashboard, Building2, DollarSign, Settings, LogOut, GraduationCap } from "lucide-react";
+import { LayoutDashboard, Building2, DollarSign, Settings, LogOut, GraduationCap, Menu, X } from "lucide-react";
 
 const NAV_ITEMS = [
   { label: "Overview", href: "/admin", icon: LayoutDashboard },
@@ -19,6 +19,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const supabase = createBrowserClient();
   const [ready, setReady] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,32 +43,53 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   if (!ready) {
     return (
-      <div className="min-h-screen bg-[#1A1A2E] flex items-center justify-center">
-        <div className="w-12 h-12 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+      <div className="min-h-screen bg-navy flex items-center justify-center">
+        <div className="w-12 h-12 border-2 border-amber border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[#1A1A2E]">
+    <div className="min-h-screen bg-navy">
+      {/* Mobile hamburger */}
+      <button
+        className="lg:hidden fixed top-3 left-3 z-50 p-2 rounded-lg bg-navy-100 border border-border-subtle text-muted-foreground hover:text-foreground"
+        onClick={() => setMobileOpen(!mobileOpen)}
+      >
+        {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
+
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="fixed left-0 top-0 bottom-0 w-64 bg-[#12122A] border-r border-white/5 flex flex-col">
+      <aside className={cn(
+        "fixed left-0 top-0 bottom-0 w-64 bg-navy-100 border-r border-border-subtle flex flex-col z-40 transition-transform duration-300",
+        "lg:translate-x-0",
+        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      )}>
         <div className="p-4 flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-amber-400 flex items-center justify-center">
-            <GraduationCap className="w-5 h-5 text-navy-950" />
+          <div className="w-8 h-8 rounded-lg bg-amber flex items-center justify-center">
+            <GraduationCap className="w-5 h-5 text-foreground" />
           </div>
-          <span className="text-lg font-bold">SKULI <span className="text-xs text-amber-400">Admin</span></span>
+          <span className="text-lg font-bold">SKULI <span className="text-xs text-amber">Admin</span></span>
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.href}
               href={item.href}
+              onClick={() => setMobileOpen(false)}
               className={cn(
                 "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-colors",
                 pathname === item.href
-                  ? "bg-amber-400/10 text-amber-400"
-                  : "text-white/60 hover:text-white hover:bg-white/5"
+                  ? "bg-amber/10 text-amber"
+                  : "text-muted-foreground hover:text-foreground hover:bg-navy-50/50"
               )}
             >
               <item.icon className="w-4 h-4" />
@@ -78,7 +100,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         <div className="p-3">
           <button
             onClick={async () => { await supabase.auth.signOut(); router.push("/login"); }}
-            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-white/60 hover:text-white hover:bg-white/5 w-full"
+            className="flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-muted-foreground hover:text-foreground hover:bg-navy-50/50 w-full"
           >
             <LogOut className="w-4 h-4" />
             Sign Out
@@ -87,7 +109,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       </aside>
 
       {/* Main */}
-      <main className="ml-64 p-6">
+      <main className="lg:ml-64 p-6">
         {children}
       </main>
     </div>

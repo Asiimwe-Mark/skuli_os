@@ -14,6 +14,8 @@ import {
   Settings,
   LogOut,
   GraduationCap,
+  Menu,
+  X,
 } from "lucide-react";
 
 const NAV_ITEMS = [
@@ -33,18 +35,20 @@ export default function GroupLayout({
   const supabase = createBrowserClient();
   const { setUser, setGroup, setUserRole, setLoading } = useSchoolStore();
   const [ready, setReady] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     async function loadContext() {
       try {
+        // Middleware already validated auth and role
         const {
-          data: { user: authUser },
-        } = await supabase.auth.getUser();
+          data: { session },
+        } = await supabase.auth.getSession();
 
         if (cancelled) return;
 
-        if (!authUser) {
+        if (!session?.user) {
           router.push("/login");
           return;
         }
@@ -53,25 +57,13 @@ export default function GroupLayout({
         const { data: userProfile } = await supabase
           .from("users")
           .select("*")
-          .eq("id", authUser.id)
+          .eq("id", session.user.id)
           .single();
 
         if (cancelled) return;
 
         if (!userProfile || !userProfile.is_active) {
           router.push("/login");
-          return;
-        }
-
-        // Role guard: redirect non-group-admins away from group portal
-        if (userProfile.role !== "GROUP_ADMIN" && userProfile.role !== "SUPER_ADMIN") {
-          const roleRedirects: Record<string, string> = {
-            SCHOOL_ADMIN: "/dashboard",
-            BURSAR: "/dashboard/fees",
-            TEACHER: "/teacher",
-            PARENT: "/portal",
-          };
-          router.push(roleRedirects[userProfile.role] || "/login");
           return;
         }
 
@@ -84,7 +76,7 @@ export default function GroupLayout({
         const { data: groupAdmin } = await supabase
           .from("group_admins")
           .select("group:school_groups(id, name, code)")
-          .eq("user_id", authUser.id)
+          .eq("user_id", session.user.id)
           .maybeSingle();
 
         if (groupAdmin?.group && !cancelled) {
@@ -125,8 +117,28 @@ export default function GroupLayout({
 
   return (
     <div className="min-h-screen bg-navy">
+      {/* Mobile hamburger */}
+      <button
+        className="lg:hidden fixed top-3 left-3 z-50 p-2 rounded-lg bg-navy border border-white/10 text-white/70 hover:text-white"
+        onClick={() => setMobileOpen(!mobileOpen)}
+      >
+        {mobileOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+      </button>
+
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          onClick={() => setMobileOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className="fixed left-0 top-0 bottom-0 w-64 bg-navy border-r border-white/10 flex flex-col z-40">
+      <aside className={cn(
+        "fixed left-0 top-0 bottom-0 w-64 bg-navy border-r border-white/10 flex flex-col z-40 transition-transform duration-300",
+        "lg:translate-x-0",
+        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      )}>
         <div className="p-4 flex items-center gap-2">
           <GraduationCap className="w-6 h-6 text-amber" />
           <span className="text-lg font-bold text-white">
@@ -168,7 +180,7 @@ export default function GroupLayout({
       </aside>
 
       {/* Main */}
-      <main className="ml-64 pt-4 pb-8 px-6">
+      <main className="lg:ml-64 pt-4 pb-8 px-4 lg:px-6">
         {children}
       </main>
     </div>

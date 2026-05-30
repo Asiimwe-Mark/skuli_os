@@ -42,9 +42,11 @@ interface TeacherSidebarProps {
     school_id: string | null;
   };
   assignments: Assignment[];
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
-export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarProps) {
+export default function TeacherSidebar({ teacher, assignments, mobileOpen = false, onMobileClose }: TeacherSidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createBrowserClient();
@@ -89,7 +91,21 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
   const subjectClasses = assignments.filter(a => !a.is_class_teacher && a.subject);
 
   return (
-    <div className="fixed left-0 top-0 h-full w-64 bg-navy border-r border-white/10 flex flex-col z-40">
+    <>
+      {/* Mobile backdrop */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 z-40 bg-black/60 lg:hidden"
+          onClick={onMobileClose}
+        />
+      )}
+
+      {/* Sidebar - mobile overlay, desktop fixed */}
+      <div className={cn(
+        "fixed left-0 top-0 h-full w-64 bg-navy border-r border-white/10 flex flex-col z-40 transition-transform duration-300",
+        "lg:translate-x-0",
+        mobileOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
+      )}>
       {/* Logo */}
       <div className="h-16 flex items-center px-6 border-b border-white/10">
         <Link href="/teacher" className="flex items-center gap-2">
@@ -198,6 +214,7 @@ export default function TeacherSidebar({ teacher, assignments }: TeacherSidebarP
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-    </div>
+      </div>
+    </>
   );
 }

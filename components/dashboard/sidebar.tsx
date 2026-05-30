@@ -101,20 +101,20 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Academics",
     icon: BookOpen,
-    roles: ["SCHOOL_ADMIN", "TEACHER"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
-      { label: "Marks Entry", href: "/dashboard/academics/marks", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "TEACHER"] },
+      { label: "Marks Entry", href: "/dashboard/academics/marks", icon: ClipboardList, roles: ["SCHOOL_ADMIN"] },
       { label: "Review Marks", href: "/dashboard/academics/marks/review", icon: ClipboardList, roles: ["SCHOOL_ADMIN"] },
       { label: "Report Cards", href: "/dashboard/academics/report-cards", icon: FileText, roles: ["SCHOOL_ADMIN"] },
       { label: "Subjects", href: "/dashboard/academics/subjects", icon: BookOpen, roles: ["SCHOOL_ADMIN"] },
-      { label: "Timetable", href: "/dashboard/academics/timetable", icon: Clock, roles: ["SCHOOL_ADMIN", "TEACHER"] },
+      { label: "Timetable", href: "/dashboard/academics/timetable", icon: Clock, roles: ["SCHOOL_ADMIN"] },
       { label: "Calendar", href: "/dashboard/academics/calendar", icon: Calendar, roles: ["SCHOOL_ADMIN"] },
     ],
   },
   {
     label: "Attendance",
     icon: CalendarCheck,
-    roles: ["SCHOOL_ADMIN", "TEACHER"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
       { label: "Take Attendance", href: "/dashboard/attendance/take", icon: ClipboardList },
       { label: "Overview", href: "/dashboard/attendance", icon: CalendarCheck },
@@ -293,7 +293,7 @@ function SidebarItem({ item, depth = 0 }: { item: NavItem; depth?: number }) {
 
 export function Sidebar() {
   const { school, user, userRole } = useSchoolStore();
-  const { sidebarCollapsed, toggleSidebar } = useUIStore();
+  const { sidebarCollapsed, toggleSidebar, sidebarMobileOpen, setSidebarMobileOpen } = useUIStore();
   const supabase = createBrowserClient();
   const navItems = userRole === 'GROUP_ADMIN' ? GROUP_NAV_ITEMS : NAV_ITEMS;
 
@@ -319,11 +319,91 @@ export function Sidebar() {
   };
 
   return (
-    <motion.aside
-      animate={{ width: sidebarCollapsed ? 72 : 260 }}
-      transition={{ duration: 0.3, ease: "easeInOut" }}
-      className="h-screen bg-navy-100 border-r border-navy-50/50 flex flex-col fixed left-0 top-0 z-40"
-    >
+    <>
+      {/* Mobile drawer */}
+      <motion.aside
+        initial={{ x: -280 }}
+        animate={{ x: sidebarMobileOpen ? 0 : -280 }}
+        transition={{ duration: 0.3, ease: "easeInOut" }}
+        className="h-screen w-[260px] bg-navy-100 border-r border-navy-50/50 flex flex-col fixed left-0 top-0 z-50 lg:hidden"
+      >
+        {/* Header */}
+        <div className="p-4 flex items-center gap-3 border-b border-navy-50/50 h-16">
+          {school?.logo_url ? (
+            <img
+              src={school.logo_url}
+              alt={school.name}
+              className="w-8 h-8 rounded-lg object-cover shrink-0"
+            />
+          ) : (
+            <div className="w-8 h-8 rounded-lg bg-amber/20 flex items-center justify-center shrink-0">
+              <span className="text-amber font-bold text-sm">
+                {school?.name?.[0] || "S"}
+              </span>
+            </div>
+          )}
+          <div className="overflow-hidden">
+            <h2 className="font-semibold text-sm truncate">
+              {school?.name || "SKULI"}
+            </h2>
+            <p className="text-[10px] text-muted-foreground truncate">
+              {school?.subscription_plan
+                ? `${school.subscription_plan.charAt(0).toUpperCase() + school.subscription_plan.slice(1)} Plan`
+                : "Free Trial"}
+            </p>
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <ScrollArea className="flex-1 px-3 py-4">
+          <nav className="space-y-1">
+            {navItems.map((item) => (
+              <div key={item.label} onClick={() => setSidebarMobileOpen(false)}>
+                <SidebarItem item={item} />
+              </div>
+            ))}
+          </nav>
+        </ScrollArea>
+
+        {/* User section */}
+        <div className="p-3 border-t border-navy-50/50">
+          <div className="flex items-center gap-3">
+            <Avatar className="w-8 h-8 shrink-0">
+              <AvatarFallback className="bg-amber/20 text-amber text-xs font-bold">
+                {initials}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 overflow-hidden">
+              <p className="text-sm font-medium truncate">
+                {user?.full_name || "Admin"}
+              </p>
+              <span
+                className={cn(
+                  "text-[10px] px-1.5 py-0.5 rounded font-medium",
+                  roleBadgeColors[userRole || ""] || "bg-muted text-muted-foreground"
+                )}
+              >
+                {userRole?.replace("_", " ") || "ADMIN"}
+              </span>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleLogout}
+              className="shrink-0 text-muted-foreground hover:text-rose"
+            >
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </div>
+        </div>
+      </motion.aside>
+
+      {/* Desktop sidebar */}
+      <motion.aside
+        animate={{ width: sidebarCollapsed ? 72 : 260 }}
+        transition={{ duration: 0.3, ease: "easeInOut" }}
+        className="h-screen bg-navy-100 border-r border-navy-50/50 flex-col fixed left-0 top-0 z-40 hidden lg:flex"
+      >
       {/* Header */}
       <div className="p-4 flex items-center gap-3 border-b border-navy-50/50 h-16">
         {school?.logo_url ? (
@@ -420,5 +500,6 @@ export function Sidebar() {
         )}
       </button>
     </motion.aside>
+    </>
   );
 }

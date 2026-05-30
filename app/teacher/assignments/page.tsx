@@ -37,7 +37,7 @@ export default function TeacherAssignmentsPage() {
   if (loading) {
     return (
       <div className="flex h-[50vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        <Loader2 className="h-8 w-8 animate-spin text-amber" />
       </div>
     );
   }
@@ -46,13 +46,13 @@ export default function TeacherAssignmentsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">My Teaching Assignments</h1>
-        <p className="text-gray-500">Classes and subjects assigned to you</p>
+        <p className="text-muted-foreground">Classes and subjects assigned to you</p>
       </div>
 
       {assignments.length === 0 ? (
         <div className="text-center py-16">
-          <ClipboardList className="h-12 w-12 text-gray-300 mx-auto mb-3" />
-          <p className="text-gray-500">No assignments yet. Contact your administrator.</p>
+          <ClipboardList className="h-12 w-12 text-muted-foreground/50 mx-auto mb-3" />
+          <p className="text-muted-foreground">No assignments yet. Contact your administrator.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -62,22 +62,22 @@ export default function TeacherAssignmentsPage() {
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold">{a.class?.name ?? 'Unknown Class'}</h3>
                   {a.is_class_teacher && (
-                    <Badge className="bg-indigo-100 text-indigo-700">Class Teacher</Badge>
+                    <Badge className="bg-amber/10 text-amber">Class Teacher</Badge>
                   )}
                 </div>
-                <p className="text-sm text-gray-600">
+                <p className="text-sm text-muted-foreground">
                   {a.subject?.name ?? 'Homeroom'}
                 </p>
                 <div className="flex gap-2">
                   <Link
                     href={`/teacher/marks?class_id=${a.class_id}${a.subject_id ? `&subject_id=${a.subject_id}` : ''}`}
-                    className="flex items-center gap-1 text-xs text-indigo-600 hover:underline"
+                    className="flex items-center gap-1 text-xs text-amber hover:underline"
                   >
                     <BookOpen className="h-3 w-3" /> Enter Marks
                   </Link>
                   <Link
                     href={`/teacher/attendance?class_id=${a.class_id}`}
-                    className="flex items-center gap-1 text-xs text-indigo-600 hover:underline"
+                    className="flex items-center gap-1 text-xs text-amber hover:underline"
                   >
                     <CheckSquare className="h-3 w-3" /> Take Attendance
                   </Link>
