@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/dialog";
 import { pdf } from "@react-pdf/renderer";
 import { saveAs } from "file-saver";
-import QRCode from "qrcode.react";
+import { QRCodeSVG as QRCode } from "qrcode.react";
 import { ReceiptPDF } from "@/lib/pdf/receipt";
 import {
   Receipt,
