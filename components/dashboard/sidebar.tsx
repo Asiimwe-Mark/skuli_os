@@ -65,12 +65,12 @@ const NAV_ITEMS: NavItem[] = [
     label: "Overview",
     href: "/dashboard",
     icon: LayoutDashboard,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN"],
   },
   {
     label: "Students",
     icon: GraduationCap,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
       { label: "All Students", href: "/dashboard/students", icon: Users },
       { label: "Enroll Student", href: "/dashboard/students/enroll", icon: UserPlus },
@@ -83,7 +83,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Fees",
     icon: Wallet,
-    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN", "BURSAR"],
     children: [
       { label: "Fee Accounts", href: "/dashboard/fees/accounts", icon: FileText },
       { label: "Record Payment", href: "/dashboard/fees/payments", icon: Receipt },
@@ -101,20 +101,20 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Academics",
     icon: BookOpen,
-    roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN", "TEACHER"],
     children: [
-      { label: "Marks Entry", href: "/dashboard/academics/marks", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"] },
-      { label: "Review Marks", href: "/dashboard/academics/marks/review", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
-      { label: "Report Cards", href: "/dashboard/academics/report-cards", icon: FileText, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
-      { label: "Subjects", href: "/dashboard/academics/subjects", icon: BookOpen, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
-      { label: "Timetable", href: "/dashboard/academics/timetable", icon: Clock, roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"] },
-      { label: "Calendar", href: "/dashboard/academics/calendar", icon: Calendar, roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"] },
+      { label: "Marks Entry", href: "/dashboard/academics/marks", icon: ClipboardList, roles: ["SCHOOL_ADMIN", "TEACHER"] },
+      { label: "Review Marks", href: "/dashboard/academics/marks/review", icon: ClipboardList, roles: ["SCHOOL_ADMIN"] },
+      { label: "Report Cards", href: "/dashboard/academics/report-cards", icon: FileText, roles: ["SCHOOL_ADMIN"] },
+      { label: "Subjects", href: "/dashboard/academics/subjects", icon: BookOpen, roles: ["SCHOOL_ADMIN"] },
+      { label: "Timetable", href: "/dashboard/academics/timetable", icon: Clock, roles: ["SCHOOL_ADMIN", "TEACHER"] },
+      { label: "Calendar", href: "/dashboard/academics/calendar", icon: Calendar, roles: ["SCHOOL_ADMIN"] },
     ],
   },
   {
     label: "Attendance",
     icon: CalendarCheck,
-    roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN", "TEACHER"],
     children: [
       { label: "Take Attendance", href: "/dashboard/attendance/take", icon: ClipboardList },
       { label: "Overview", href: "/dashboard/attendance", icon: CalendarCheck },
@@ -123,7 +123,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Communication",
     icon: MessageSquare,
-    roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN", "BURSAR"],
     children: [
       { label: "Compose", href: "/dashboard/communication/compose", icon: Send },
       { label: "Inbox", href: "/dashboard/communication/inbox", icon: Inbox },
@@ -134,7 +134,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Staff & Payroll",
     icon: Users,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
       { label: "Staff Directory", href: "/dashboard/staff", icon: UserCog },
       { label: "Payroll", href: "/dashboard/staff/payroll", icon: Calculator },
@@ -143,7 +143,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Meetings",
     icon: UserCheck,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
       { label: "Schedule Meetings", href: "/dashboard/meetings", icon: CalendarCheck },
     ],
@@ -151,7 +151,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Analytics",
     icon: BarChart3,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
       { label: "Overview", href: "/dashboard/analytics", icon: BarChart3 },
       { label: "Custom Reports", href: "/dashboard/analytics/reports", icon: FileText },
@@ -160,7 +160,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Library",
     icon: Library,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
       { label: "Book Catalog", href: "/dashboard/library", icon: BookOpen },
       { label: "Issues & Returns", href: "/dashboard/library/issues", icon: ClipboardList },
@@ -169,7 +169,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Assets",
     icon: Box,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
       { label: "Assets & Inventory", href: "/dashboard/assets", icon: Box },
     ],
@@ -177,7 +177,7 @@ const NAV_ITEMS: NavItem[] = [
   {
     label: "Settings",
     icon: Settings,
-    roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+    roles: ["SCHOOL_ADMIN"],
     children: [
       { label: "School Profile", href: "/dashboard/settings/school", icon: School },
       { label: "Users & Roles", href: "/dashboard/settings/users", icon: Users },

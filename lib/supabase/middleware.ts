@@ -98,7 +98,7 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (pathname.startsWith('/dashboard') && !['SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN'].includes(role || '')) {
+  if (pathname.startsWith('/dashboard') && !['SCHOOL_ADMIN', 'BURSAR'].includes(role || '')) {
     const url = request.nextUrl.clone();
     url.pathname = home;
     return NextResponse.redirect(url);

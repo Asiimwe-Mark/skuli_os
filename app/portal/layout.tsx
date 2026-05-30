@@ -64,40 +64,30 @@ export default function PortalLayout({
   const [parentName, setParentName] = useState("");
 
   useEffect(() => {
-    async function checkAuth() {
+    async function loadParentData() {
+      // Auth is handled by middleware — just load profile and students
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
       if (!user) {
-        // Middleware handles auth — don't redirect from client to avoid race
         setLoading(false);
         return;
       }
 
+      // Load profile (non-blocking — portal still renders if this fails)
       const { data: profile } = await supabase
         .from("users")
-        .select("role, full_name, phone")
+        .select("full_name, phone")
         .eq("id", user.id)
-        .single();
+        .maybeSingle();
 
-      if (!profile || profile.role !== "PARENT") {
-        // Not a parent — send to their correct section, not login
-        const roleRedirects: Record<string, string> = {
-          SUPER_ADMIN: "/admin",
-          SCHOOL_ADMIN: "/dashboard",
-          BURSAR: "/dashboard",
-          TEACHER: "/teacher",
-          GROUP_ADMIN: "/group",
-        };
-        router.push(roleRedirects[profile?.role || ""] || "/dashboard");
-        return;
+      if (profile?.full_name) {
+        setParentName(profile.full_name);
       }
 
-      setParentName(profile.full_name);
-
       // Find students linked to this parent by phone OR email
-      const phoneQuery = profile.phone
+      const phoneQuery = profile?.phone
         ? supabase
             .from("students")
             .select("id, full_name, admission_number, current_class_id, classes:current_class_id(name)")
@@ -141,8 +131,8 @@ export default function PortalLayout({
       setLoading(false);
     }
 
-    checkAuth();
-  }, [router, supabase]);
+    loadParentData();
+  }, [supabase]);
 
   // Register service worker for PWA
   useEffect(() => {
