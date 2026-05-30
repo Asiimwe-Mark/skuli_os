@@ -85,12 +85,15 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  // Teachers can only access /teacher/* routes
-  if (role === 'TEACHER' && pathname.startsWith('/dashboard')) {
+  // Teacher portal — only teachers can access /teacher/* routes
+  if (pathname.startsWith('/teacher') && role !== 'TEACHER') {
     const url = request.nextUrl.clone();
-    url.pathname = '/teacher';
+    url.pathname = '/dashboard';
     return NextResponse.redirect(url);
   }
+
+  // Role-based route protection — only block roles from sections they truly
+  // cannot access. Sidebar handles fine-grained page filtering per role.
 
   // Bursar cannot access academic record editing
   if (role === 'BURSAR' && pathname.startsWith('/dashboard/academics/marks')) {
