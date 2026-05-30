@@ -35,60 +35,77 @@ export default function GroupLayout({
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadContext() {
-      const {
-        data: { user: authUser },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
 
-      if (!authUser) {
-        router.push("/login");
-        return;
+        if (cancelled) return;
+
+        if (!authUser) {
+          router.push("/login");
+          return;
+        }
+
+        // Load user profile
+        const { data: userProfile } = await supabase
+          .from("users")
+          .select("*")
+          .eq("id", authUser.id)
+          .single();
+
+        if (cancelled) return;
+
+        if (!userProfile || !userProfile.is_active) {
+          router.push("/login");
+          return;
+        }
+
+        // Role guard: redirect non-group-admins away from group portal
+        if (userProfile.role !== "GROUP_ADMIN" && userProfile.role !== "SUPER_ADMIN") {
+          const roleRedirects: Record<string, string> = {
+            SCHOOL_ADMIN: "/dashboard",
+            BURSAR: "/dashboard/fees",
+            TEACHER: "/teacher",
+            PARENT: "/portal",
+          };
+          router.push(roleRedirects[userProfile.role] || "/login");
+          return;
+        }
+
+        if (!cancelled) {
+          setUser(userProfile);
+          setUserRole(userProfile.role);
+        }
+
+        // Load group admin info
+        const { data: groupAdmin } = await supabase
+          .from("group_admins")
+          .select("group:school_groups(id, name, code)")
+          .eq("user_id", authUser.id)
+          .maybeSingle();
+
+        if (groupAdmin?.group && !cancelled) {
+          const g = groupAdmin.group as unknown as { id: string; name: string; code: string };
+          setGroup(g);
+        }
+
+        if (!cancelled) {
+          setLoading(false);
+          setReady(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setLoading(false);
+          setReady(true);
+        }
       }
-
-      // Load user profile
-      const { data: userProfile } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", authUser.id)
-        .single();
-
-      if (!userProfile || !userProfile.is_active) {
-        router.push("/login");
-        return;
-      }
-
-      // Role guard: redirect non-group-admins away from group portal
-      if (userProfile.role !== "GROUP_ADMIN" && userProfile.role !== "SUPER_ADMIN") {
-        const roleRedirects: Record<string, string> = {
-          SCHOOL_ADMIN: "/dashboard",
-          BURSAR: "/dashboard/fees",
-          TEACHER: "/teacher",
-          PARENT: "/portal",
-        };
-        router.push(roleRedirects[userProfile.role] || "/login");
-        return;
-      }
-
-      setUser(userProfile);
-      setUserRole(userProfile.role);
-
-      // Load group admin info
-      const { data: groupAdmin } = await supabase
-        .from("group_admins")
-        .select("group:school_groups(id, name, code)")
-        .eq("user_id", authUser.id)
-        .maybeSingle();
-
-      if (groupAdmin?.group) {
-        const g = groupAdmin.group as unknown as { id: string; name: string; code: string };
-        setGroup(g);
-      }
-
-      setLoading(false);
-      setReady(true);
     }
 
     loadContext();
+    return () => { cancelled = true; };
   }, [supabase, router, setUser, setGroup, setUserRole, setLoading]);
 
   if (!ready) {

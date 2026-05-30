@@ -19,77 +19,92 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     async function loadContext() {
-      const {
-        data: { user: authUser },
-      } = await supabase.auth.getUser();
+      try {
+        const {
+          data: { user: authUser },
+        } = await supabase.auth.getUser();
 
-      if (!authUser) {
-        router.push("/login");
-        return;
-      }
+        if (cancelled) return;
 
-      // Load user profile with school
-      const { data: userProfile } = await supabase
-        .from("users")
-        .select("*")
-        .eq("id", authUser.id)
-        .single();
+        if (!authUser) {
+          router.push("/login");
+          return;
+        }
 
-      if (!userProfile || !userProfile.is_active) {
-        router.push("/login");
-        return;
-      }
-
-      setUser(userProfile);
-
-      // Role guard: redirect users who don't belong in /dashboard
-      const allowedDashboardRoles = ["SCHOOL_ADMIN", "BURSAR"];
-      if (!allowedDashboardRoles.includes(userProfile.role)) {
-        const roleRedirects: Record<string, string> = {
-          SUPER_ADMIN: "/admin",
-          TEACHER: "/teacher",
-          PARENT: "/portal",
-          GROUP_ADMIN: "/group",
-        };
-        router.push(roleRedirects[userProfile.role] || "/login");
-        return;
-      }
-
-      // Determine which school to load (GROUP_ADMIN can override via ?school_id=)
-      const effectiveSchoolId = overrideSchoolId || userProfile.school_id;
-
-      if (effectiveSchoolId) {
-        // Load school
-        const { data: school } = await supabase
-          .from("schools")
+        // Load user profile with school
+        const { data: userProfile } = await supabase
+          .from("users")
           .select("*")
-          .eq("id", effectiveSchoolId)
+          .eq("id", authUser.id)
           .single();
 
-        if (school) setSchool(school);
+        if (cancelled) return;
 
-        // Load current term
-        const { data: term } = await supabase
-          .from("terms")
-          .select("*, academic_years(*)")
-          .eq("school_id", effectiveSchoolId)
-          .eq("is_current", true)
-          .single();
+        if (!userProfile || !userProfile.is_active) {
+          router.push("/login");
+          return;
+        }
 
-        if (term) {
-          setCurrentTerm(term);
-          if (term.academic_years) {
-            setCurrentAcademicYear(term.academic_years);
+        setUser(userProfile);
+
+        // Role guard: redirect users who don't belong in /dashboard
+        const allowedDashboardRoles = ["SCHOOL_ADMIN", "BURSAR"];
+        if (!allowedDashboardRoles.includes(userProfile.role)) {
+          const roleRedirects: Record<string, string> = {
+            SUPER_ADMIN: "/admin",
+            TEACHER: "/teacher",
+            PARENT: "/portal",
+            GROUP_ADMIN: "/group",
+          };
+          router.push(roleRedirects[userProfile.role] || "/login");
+          return;
+        }
+
+        // Determine which school to load (GROUP_ADMIN can override via ?school_id=)
+        const effectiveSchoolId = overrideSchoolId || userProfile.school_id;
+
+        if (effectiveSchoolId) {
+          // Load school
+          const { data: school } = await supabase
+            .from("schools")
+            .select("*")
+            .eq("id", effectiveSchoolId)
+            .single();
+
+          if (school && !cancelled) setSchool(school);
+
+          // Load current term
+          const { data: term } = await supabase
+            .from("terms")
+            .select("*, academic_years(*)")
+            .eq("school_id", effectiveSchoolId)
+            .eq("is_current", true)
+            .single();
+
+          if (term && !cancelled) {
+            setCurrentTerm(term);
+            if (term.academic_years) {
+              setCurrentAcademicYear(term.academic_years);
+            }
           }
         }
-      }
 
-      setLoading(false);
-      setReady(true);
+        if (!cancelled) {
+          setLoading(false);
+          setReady(true);
+        }
+      } catch {
+        if (!cancelled) {
+          setLoading(false);
+          setReady(true);
+        }
+      }
     }
 
     loadContext();
+    return () => { cancelled = true; };
   }, [supabase, router, overrideSchoolId, setSchool, setUser, setCurrentTerm, setCurrentAcademicYear, setLoading]);
 
   if (!ready) {

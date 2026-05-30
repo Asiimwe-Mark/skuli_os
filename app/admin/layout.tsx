@@ -21,14 +21,22 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     async function check() {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { router.push("/login"); return; }
-      const { data: profile } = await supabase.from("users").select("role").eq("id", user.id).single();
-      if (profile?.role !== "SUPER_ADMIN") { router.push("/dashboard"); return; }
-      setReady(true);
+      try {
+        const { data: { user } } = await supabase.auth.getUser();
+        if (cancelled) return;
+        if (!user) { router.push("/login"); return; }
+        const { data: profile } = await supabase.from("users").select("role").eq("id", user.id).single();
+        if (cancelled) return;
+        if (profile?.role !== "SUPER_ADMIN") { router.push("/dashboard"); return; }
+        setReady(true);
+      } catch {
+        if (!cancelled) router.push("/login");
+      }
     }
     check();
+    return () => { cancelled = true; };
   }, [supabase, router]);
 
   if (!ready) {
