@@ -32,7 +32,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
         if (profile?.role !== "SUPER_ADMIN") { router.push("/dashboard"); return; }
         setReady(true);
       } catch {
-        if (!cancelled) router.push("/login");
+        // On error, still render the page — don't redirect to /login (causes loop)
+        if (!cancelled) setReady(true);
       }
     }
     check();
