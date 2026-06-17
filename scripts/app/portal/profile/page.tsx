@@ -1,0 +1,408 @@
+'use client';
+
+import { useState, useEffect } from 'react';
+import { useForm } from 'react-hook-form';
+import { z } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useSupabaseBrowser } from '@/lib/supabase/client';
+import { isValidUgandaPhone, normalizePhone } from '@/lib/utils/phone';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
+import { useToast } from '@/components/ui/use-toast';
+import { User, Phone, Mail, Lock, Loader2, CheckCircle2, Bell } from 'lucide-react';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
+
+const phoneSchema = z.object({
+  phone: z.string().refine(isValidUgandaPhone, 'Enter a valid Uganda phone number (e.g. 0700000000)'),
+});
+
+const emailSchema = z.object({
+  email: z.string().email('Enter a valid email address'),
+});
+
+const passwordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z.string().min(8, 'Password must be at least 8 characters'),
+  confirmPassword: z.string().min(1, 'Please confirm your password'),
+}).refine((data) => data.newPassword === data.confirmPassword, {
+  message: 'Passwords do not match',
+  path: ['confirmPassword'],
+});
+
+type PhoneFormData = z.infer<typeof phoneSchema>;
+type EmailFormData = z.infer<typeof emailSchema>;
+type PasswordFormData = z.infer<typeof passwordSchema>;
+
+export default function PortalProfilePage() {
+  const supabase = useSupabaseBrowser();
+  const { toast } = useToast();
+  const [user, setUser] = useState<SupabaseUser | null>(null);
+  const [profileName, setProfileName] = useState('');
+  const [loading, setLoading] = useState(true);
+
+  const phoneForm = useForm<PhoneFormData>({ resolver: zodResolver(phoneSchema) });
+  const emailForm = useForm<EmailFormData>({ resolver: zodResolver(emailSchema) });
+  const passwordForm = useForm<PasswordFormData>({ resolver: zodResolver(passwordSchema) });
+
+  const [phoneSaving, setPhoneSaving] = useState(false);
+  const [emailSaving, setEmailSaving] = useState(false);
+  const [passwordSaving, setPasswordSaving] = useState(false);
+
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushLoading, setPushLoading] = useState(false);
+  const [pushSupported, setPushSupported] = useState(true);
+
+  useEffect(() => {
+    async function loadProfile() {
+      const { data: { user: authUser } } = await supabase.auth.getUser();
+      if (!authUser) return;
+
+      setUser(authUser);
+
+      // Fetch DB profile first so displayed data matches the database
+      const { data: profile } = await supabase
+        .from('users')
+        .select('full_name, phone')
+        .eq('id', authUser.id)
+        .single();
+
+      if (profile) {
+        setProfileName(profile.full_name || authUser.user_metadata?.full_name || '');
+        if (profile.phone) {
+          phoneForm.setValue('phone', profile.phone);
+        }
+      } else {
+        setProfileName(authUser.user_metadata?.full_name || '');
+      }
+
+      // Set email from auth after DB profile loads
+      emailForm.setValue('email', authUser.email || '');
+
+      setLoading(false);
+
+      // Check push notification status
+      if ('serviceWorker' in navigator && 'PushManager' in window) {
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        setPushEnabled(!!sub);
+      } else {
+        setPushSupported(false);
+      }
+    }
+    loadProfile();
+  }, [supabase, phoneForm, emailForm]);
+
+  async function handlePhoneSubmit(data: PhoneFormData) {
+    if (!user) return;
+    setPhoneSaving(true);
+    try {
+      const normalized = normalizePhone(data.phone);
+      const { error } = await supabase
+        .from('users')
+        .update({ phone: normalized })
+        .eq('id', user.id);
+
+      if (error) throw error;
+      toast({ title: 'Phone updated', description: `Phone number set to ${normalized}` });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update phone';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setPhoneSaving(false);
+    }
+  }
+
+  async function handleEmailSubmit(data: EmailFormData) {
+    if (!user) return;
+    setEmailSaving(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ email: data.email });
+      if (error) throw error;
+      toast({ title: 'Email update initiated', description: 'Check your new email for a confirmation link.' });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update email';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setEmailSaving(false);
+    }
+  }
+
+  async function handlePasswordSubmit(data: PasswordFormData) {
+    setPasswordSaving(true);
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: user?.email || '',
+        password: data.currentPassword,
+      });
+      if (signInError) {
+        toast({ title: 'Error', description: 'Current password is incorrect', variant: 'destructive' });
+        setPasswordSaving(false);
+        return;
+      }
+
+      const { error } = await supabase.auth.updateUser({ password: data.newPassword });
+      if (error) throw error;
+
+      toast({ title: 'Password updated', description: 'Your password has been changed successfully.' });
+      passwordForm.reset();
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to update password';
+      toast({ title: 'Error', description: message, variant: 'destructive' });
+    } finally {
+      setPasswordSaving(false);
+    }
+  }
+
+  async function handlePushToggle() {
+    if (!user) return;
+    setPushLoading(true);
+
+    try {
+      if (pushEnabled) {
+        // Unsubscribe
+        const reg = await navigator.serviceWorker.ready;
+        const sub = await reg.pushManager.getSubscription();
+        if (sub) {
+          await fetch('/api/push/unsubscribe', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ endpoint: sub.endpoint }),
+          });
+          await sub.unsubscribe();
+        }
+        setPushEnabled(false);
+        toast({ title: 'Notifications disabled', description: 'You will no longer receive push notifications.' });
+      } else {
+        // Request permission
+        const permission = await Notification.requestPermission();
+        if (permission !== 'granted') {
+          toast({ title: 'Permission denied', description: 'Please allow notifications in your browser settings.', variant: 'destructive' });
+          setPushLoading(false);
+          return;
+        }
+
+        // Subscribe
+        const reg = await navigator.serviceWorker.ready;
+        const vapidKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY!;
+        const sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: vapidKey,
+        });
+
+        const subJson = sub.toJSON();
+        await fetch('/api/push/subscribe', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            endpoint: subJson.endpoint,
+            keys: subJson.keys,
+          }),
+        });
+
+        setPushEnabled(true);
+        toast({ title: 'Notifications enabled', description: 'You will receive push notifications for important updates.' });
+      }
+    } catch (err) {
+      console.error('Push toggle error:', err);
+      toast({ title: 'Error', description: 'Failed to update notification settings.', variant: 'destructive' });
+    } finally {
+      setPushLoading(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+        <Skeleton className="h-8 w-48" />
+        <Skeleton className="h-48 rounded-xl" />
+        <Skeleton className="h-48 rounded-xl" />
+        <Skeleton className="h-64 rounded-xl" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-2xl mx-auto px-4 py-6 space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold text-heading">Profile</h1>
+        <p className="text-muted text-sm mt-1">Manage your account settings</p>
+      </div>
+
+      {/* Profile Info */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <User className="w-5 h-5 text-warning-600" />
+            Account Info
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-4 p-4 bg-bg-tertiary rounded-lg">
+            <div className="w-12 h-12 bg-warning-50 rounded-full flex items-center justify-center">
+              <User className="w-6 h-6 text-warning-600" />
+            </div>
+            <div>
+              <p className="font-medium text-heading">{profileName || 'Parent'}</p>
+              <p className="text-sm text-muted">{user?.email}</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Phone Number */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Phone className="w-5 h-5 text-warning-600" />
+            Phone Number
+          </CardTitle>
+          <CardDescription>Update your phone number in Uganda format</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={phoneForm.handleSubmit(handlePhoneSubmit)} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="phone">Phone Number</Label>
+              <Input
+                id="phone"
+                placeholder="0700000000"
+                {...phoneForm.register('phone')}
+              />
+              {phoneForm.formState.errors.phone && (
+                <p className="text-sm text-danger-600">{phoneForm.formState.errors.phone.message}</p>
+              )}
+            </div>
+            <Button type="submit" disabled={phoneSaving}>
+              {phoneSaving ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
+              ) : (
+                <><CheckCircle2 className="w-4 h-4 mr-2" />Update Phone</>
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Email */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Mail className="w-5 h-5 text-warning-600" />
+            Email Address
+          </CardTitle>
+          <CardDescription>Changing your email will require confirmation at the new address</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={emailForm.handleSubmit(handleEmailSubmit)} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                placeholder="you@example.com"
+                {...emailForm.register('email')}
+              />
+              {emailForm.formState.errors.email && (
+                <p className="text-sm text-danger-600">{emailForm.formState.errors.email.message}</p>
+              )}
+            </div>
+            <Button type="submit" disabled={emailSaving}>
+              {emailSaving ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Saving...</>
+              ) : (
+                <><CheckCircle2 className="w-4 h-4 mr-2" />Update Email</>
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Password */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-lg">
+            <Lock className="w-5 h-5 text-warning-600" />
+            Change Password
+          </CardTitle>
+          <CardDescription>You'll need your current password to set a new one</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={passwordForm.handleSubmit(handlePasswordSubmit)} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="currentPassword">Current Password</Label>
+              <Input
+                id="currentPassword"
+                type="password"
+                placeholder="?EUR??EUR??EUR??EUR??EUR??EUR??EUR??EUR?"
+                {...passwordForm.register('currentPassword')}
+              />
+              {passwordForm.formState.errors.currentPassword && (
+                <p className="text-sm text-danger-600">{passwordForm.formState.errors.currentPassword.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="newPassword">New Password</Label>
+              <Input
+                id="newPassword"
+                type="password"
+                placeholder="Minimum 8 characters"
+                {...passwordForm.register('newPassword')}
+              />
+              {passwordForm.formState.errors.newPassword && (
+                <p className="text-sm text-danger-600">{passwordForm.formState.errors.newPassword.message}</p>
+              )}
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="confirmPassword">Confirm New Password</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                placeholder="Repeat new password"
+                {...passwordForm.register('confirmPassword')}
+              />
+              {passwordForm.formState.errors.confirmPassword && (
+                <p className="text-sm text-danger-600">{passwordForm.formState.errors.confirmPassword.message}</p>
+              )}
+            </div>
+            <Button type="submit" disabled={passwordSaving}>
+              {passwordSaving ? (
+                <><Loader2 className="w-4 h-4 mr-2 animate-spin" />Updating...</>
+              ) : (
+                <><CheckCircle2 className="w-4 h-4 mr-2" />Change Password</>
+              )}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Push Notifications */}
+      {pushSupported && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <Bell className="w-5 h-5 text-warning-600" />
+              Notifications
+            </CardTitle>
+            <CardDescription>Get notified for payments, report cards, absences, meetings, and messages</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <button
+              onClick={handlePushToggle}
+              disabled={pushLoading}
+              className="flex items-center gap-3 w-full"
+            >
+              <div className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${pushEnabled ? 'bg-bg-tertiary' : 'bg-bg-tertiary'}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-card transition-transform ${pushEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+              </div>
+              <span className="text-sm font-medium text-heading">
+                {pushLoading ? 'Updating...' : pushEnabled ? 'Push notifications enabled' : 'Push notifications disabled'}
+              </span>
+            </button>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}

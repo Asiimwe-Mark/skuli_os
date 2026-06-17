@@ -1,0 +1,5 @@
+[functions.send-sms-queue]
+verify_jwt = false
+
+[functions.send-sms-queue.cron]
+schedule = "*/5 * * * *"
