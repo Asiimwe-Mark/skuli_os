@@ -93,3 +93,63 @@ JOIN subjects sub ON sub.id = m.subject_id
 WHERE m.is_deleted = false
   AND m.review_status IN ('approved', 'submitted')
 GROUP BY m.school_id, m.class_id, c.name, m.subject_id, sub.name, m.term_id;
+
+-- ---------------------------------------------------------------------------
+-- 4. marks_pivoted
+--    One row per (student, subject, term) with per-exam-type scores pivoted
+--    into named columns. Used by the parent portal results page.
+-- ---------------------------------------------------------------------------
+CREATE VIEW marks_pivoted
+WITH (security_invoker = true)
+AS
+SELECT
+    m.school_id,
+    m.student_id,
+    m.subject_id,
+    m.term_id,
+    m.academic_year_id,
+    m.class_id,
+    s.name AS subject_name,
+    s.code AS subject_code,
+    s.max_marks,
+    MAX(CASE WHEN m.exam_type = 'bot'        THEN m.score END) AS bot_score,
+    MAX(CASE WHEN m.exam_type = 'midterm'    THEN m.score END) AS mid_score,
+    MAX(CASE WHEN m.exam_type = 'eot'        THEN m.score END) AS eot_score,
+    MAX(CASE WHEN m.exam_type = 'assignment' THEN m.score END) AS assignment_score,
+    MAX(CASE WHEN m.exam_type = 'practical'  THEN m.score END) AS practical_score,
+      COALESCE(MAX(CASE WHEN m.exam_type = 'bot'        THEN m.score END), 0)
+    + COALESCE(MAX(CASE WHEN m.exam_type = 'midterm'    THEN m.score END), 0)
+    + COALESCE(MAX(CASE WHEN m.exam_type = 'eot'        THEN m.score END), 0)
+    + COALESCE(MAX(CASE WHEN m.exam_type = 'assignment' THEN m.score END), 0)
+    + COALESCE(MAX(CASE WHEN m.exam_type = 'practical'  THEN m.score END), 0) AS total_score,
+    MAX(m.grade)   AS grade,
+    MAX(m.remarks) AS remarks
+FROM marks m
+JOIN subjects s ON s.id = m.subject_id
+WHERE m.is_deleted = false
+GROUP BY
+    m.school_id, m.student_id, m.subject_id, m.term_id,
+    m.academic_year_id, m.class_id, s.name, s.code, s.max_marks;
+
+-- ---------------------------------------------------------------------------
+-- 5. current_terms
+--    One row per school for the current term + its academic year.
+-- ---------------------------------------------------------------------------
+CREATE VIEW current_terms
+WITH (security_invoker = true)
+AS
+SELECT
+    t.id,
+    t.school_id,
+    t.academic_year_id,
+    t.name,
+    t.start_date,
+    t.end_date,
+    t.is_current,
+    ay.name       AS academic_year_name,
+    ay.is_current AS academic_year_is_current
+FROM terms t
+JOIN academic_years ay ON ay.id = t.academic_year_id
+WHERE t.is_current = true
+  AND t.is_deleted = false
+  AND ay.is_deleted = false;

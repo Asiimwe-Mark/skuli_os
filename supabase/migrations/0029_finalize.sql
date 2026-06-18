@@ -74,6 +74,8 @@ ANALYZE timetable_periods;
 ANALYZE timetable_slots;
 ANALYZE calendar_events;
 ANALYZE discipline_records;
+ANALYZE alumni;
+ANALYZE school_settings;
 
 -- ---------------------------------------------------------------------------
 -- 2. Table comments (one-liner purpose per table)
@@ -160,6 +162,10 @@ GRANT EXECUTE ON FUNCTION auto_create_referral_code()                     TO ser
 GRANT EXECUTE ON FUNCTION encrypt_secret(text, text)                      TO service_role;
 GRANT EXECUTE ON FUNCTION decrypt_secret(text, text)                      TO service_role;
 GRANT EXECUTE ON FUNCTION recalculate_fee_account(uuid)                   TO service_role;
+GRANT EXECUTE ON FUNCTION trigger_recalculate_fee_account()               TO service_role;
+GRANT EXECUTE ON FUNCTION trigger_recalculate_fee_accounts_for_student()  TO service_role;
+GRANT EXECUTE ON FUNCTION trigger_recalculate_accounts_for_fee_structure() TO service_role;
+GRANT EXECUTE ON FUNCTION fn_marks_set_grade()                            TO service_role;
 GRANT EXECUTE ON FUNCTION create_fee_accounts_for_term(uuid, uuid)        TO service_role;
 GRANT EXECUTE ON FUNCTION generate_receipt_number(uuid)                   TO service_role;
 GRANT EXECUTE ON FUNCTION confirm_tuition_payment(text, text, text, numeric) TO service_role;

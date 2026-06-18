@@ -60,6 +60,7 @@ CREATE TABLE fee_accounts (
     total_expected  numeric NOT NULL DEFAULT 0,
     total_paid      numeric NOT NULL DEFAULT 0,
     total_fees      numeric NOT NULL DEFAULT 0,
+    total_discount  numeric NOT NULL DEFAULT 0,
     balance         numeric NOT NULL DEFAULT 0,
     status          fee_account_status NOT NULL DEFAULT 'unpaid',
     created_at      timestamptz NOT NULL DEFAULT now(),
@@ -67,6 +68,8 @@ CREATE TABLE fee_accounts (
     is_deleted      boolean NOT NULL DEFAULT false,
     UNIQUE (student_id, term_id)
 );
+COMMENT ON COLUMN fee_accounts.total_fees     IS 'Gross fees before discounts. Set by recalculate_fee_account().';
+COMMENT ON COLUMN fee_accounts.total_discount IS 'Sum of applied discounts. total_expected = total_fees - total_discount.';
 
 -- ---------------------------------------------------------------------------
 -- 4. fee_payments
@@ -84,6 +87,11 @@ CREATE TABLE fee_payments (
     amount                  numeric NOT NULL,
     payment_method          payment_method NOT NULL,
     mobile_money_transaction_id text,
+    mobile_money_provider   text CHECK (mobile_money_provider IN ('mtn', 'airtel')),
+    phone_used              text,
+    pesapal_order_tracking_id text,
+    pesapal_tx_id           text,
+    received_by_user_id     uuid REFERENCES users(id) ON DELETE SET NULL,
     payment_date            date NOT NULL DEFAULT current_date,
     notes                   text,
     receipt_number          text,
@@ -92,16 +100,23 @@ CREATE TABLE fee_payments (
     updated_at              timestamptz NOT NULL DEFAULT now(),
     is_deleted              boolean NOT NULL DEFAULT false
 );
+COMMENT ON COLUMN fee_payments.mobile_money_provider IS 'Mobile money network (mtn/airtel) from detectMobileMoneyProvider(). Lowercase only.';
+COMMENT ON COLUMN fee_payments.received_by_user_id   IS 'Staff who recorded/received the payment. Audit trail.';
 
 -- ---------------------------------------------------------------------------
 -- 5. fee_discounts
 -- ---------------------------------------------------------------------------
+-- discount_type is text + CHECK (not the discount_type enum) because the
+-- app writes 'fixed' in addition to the enum's 'percentage'/'fixed_amount'.
 CREATE TABLE fee_discounts (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id     uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name          text NOT NULL,
-    discount_type discount_type NOT NULL DEFAULT 'percentage',
+    description   text,
+    discount_type text NOT NULL DEFAULT 'percentage'
+                  CHECK (discount_type IN ('percentage', 'fixed_amount', 'fixed')),
     value         numeric NOT NULL DEFAULT 0,
+    is_active     boolean NOT NULL DEFAULT true,
     created_at    timestamptz NOT NULL DEFAULT now(),
     is_deleted    boolean NOT NULL DEFAULT false
 );

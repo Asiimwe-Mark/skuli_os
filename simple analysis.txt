@@ -1,0 +1,199 @@
+Architectural Analysis: skuli_os
+Stack: Next.js 16 + React 19 + Supabase (Postgres) multi-tenant SaaS for school management. ~380 source files, 110 API route handlers, 29 migrations, 5 user roles (SUPER_ADMIN, SCHOOL_ADMIN, BURSAR, TEACHER, PARENT, GROUP_ADMIN), shared-schema multi-tenancy keyed on school_id.
+
+The codebase is genuinely well-considered in places (RLS is actually on, a shared auth helper exists, webhooks re-verify server-side, idempotency keys on payouts). The problems are structural, not careless. Ranked by impact:
+
+1. Migration history is not append-only — this is the highest-risk issue
+Supabase migrations are supposed to be immutable once applied. Yours aren't:
+
+git status shows 12 migrations MODIFIED (0004 through 0029) and 3 DELETED (0028_column_drops.sql, 0031_audit_fixes.sql, 0032_column_reconciliation.sql).
+Migration comments reference files that don't exist — 0018_rls_hardening.sql:12 cites "00025", "00036", "00066"; 0029_finalize.sql:8 cites "00066". You only have 0001–0030. The history has been squashed/rewritten at least twice.
+0018_rls_hardening.sql:26 says "the system_insert_audit_logs policy in 00004 was WITH CHECK (true)" — but that's describing 0004, a table-creation migration. Mixing DDL and security hardening across rewritten files means no environment can trust that its applied state matches HEAD.
+Impact: Any deployed/preview database that already ran these migrations now diverges silently from main. migrations:check (package.json:16) may pass locally against a fresh DB and still be wrong against staging. This is the kind of drift that produces an unexplained production data leak months later.
+
+Fix: Treat the current 0001–0030 set as a frozen baseline (squash into 0001_init.sql if needed), then enforce strictly-append-only from here. Never edit/delete applied migrations.
+
+2. Hand-maintained types defeat the type system
+types/database.ts is a 4,542-line hand-written schema file. The db:types script (package.json:14) generates types/database.generated.ts — a file that does not exist. So every Supabase call is typed against a manually-typed guess of the schema, not the real one.
+__InternalSupabase.PostgrestVersion: "14.5" is hardcoded (database.ts:13).
+The drift shows up as 262 type-escape hatches: 151 × as unknown as, 79 × as any, 32 × as never — including in write paths like app/api/students/route.ts:160, app/api/v1/payments/initiate/route.ts:167 (.insert({...} as never)).
+Impact: tsc is giving false confidence — the types aren't the DB. An inserted column, a renamed enum, a NOT NULL change will compile fine and fail at runtime.
+
+Fix: Run db:types, commit database.generated.ts, point imports at it, delete types/database.ts, and remove the escape hatches by fixing the actual mismatches.
+
+3. No service layer — business logic lives inline in route handlers
+lib/services/ has 2 files (notifications.ts, payroll-disbursement.ts). Everything else — student creation, fee-account materialization, payment initiation, audit logging, cache invalidation — is written directly inside route.ts handlers. Two consequences:
+
+a) Duplication that's already acknowledged in comments. The "create student + class_enrollment + fee_account" sequence is copy-pasted between app/api/students/route.ts:141-210 and app/api/students/bulk-import/route.ts:123-166. The bulk-import file literally comments "mirrors the single-student POST in /api/students/route.ts". When the single-student flow changes, bulk-import silently desyncs.
+
+b) A parallel, half-built versioned API. app/api/v1/ coexists with the unversioned routes:
+
+/api/v1/payments/initiate vs /api/fees/stk-push and /api/payments/stk-push (the two STK-push routes are themselves near-duplicates — see fees/stk-push/route.ts:1 comment "See also: /api/payments/stk-push for the parent-portal variant").
+/api/v1/payroll/approve (288 lines) vs /api/staff/payroll/run.
+/api/v1/staff/[id]/payment-profile vs /api/staff/[id].
+There is no documented boundary between v1 and unversioned. They will diverge into two APIs that have to be maintained and secured separately.
+
+Fix: Extract a services/<domain>.ts layer (e.g. students.create(), fees.initiatePayment()) and have all routes — including v1 — call it. Decide on one API surface and deprecate the other.
+
+4. No background-job system — heavy work runs synchronously in the request
+Search for queue/cron/inngest/bullmq found nothing but the payroll module's pseudo-queue. These all execute inline in a request cycle:
+
+Bulk student import (app/api/students/bulk-import/route.ts:77-167): a for loop doing one INSERT per row plus enrollment + fee_account sub-inserts. For a 500-student import that's ~1,500 serial round-trips to Postgres with no transaction — a failure at row 250 leaves 250 committed students and 250 orphaned, and the HTTP request holds open the whole time.
+Payroll disbursement (lib/services/payroll-disbursement.ts:73-166): loops over every line item and calls the Pesapal B2C gateway sequentially, in a loop, inside the Pesapal webhook handler (app/api/webhooks/pesapal/route.ts:91). For a school with 80 staff, one webhook triggers 80 external API calls before returning 200. The idempotency_key saves you from double-pay, but the webhook will time out and Pesapal will retry.
+PDF generation (report cards, receipts, EMIS xlsx/pdf, calendar, timetable) — all synchronous.
+Impact: A single large school can stall a serverless function past its timeout; webhook retries compound the work.
+
+Fix: Introduce a real queue (Inngest/QStash/Supabase Edge Functions + pg_queue, or even a jobs table polled by a cron route). Move bulk import, payroll disbursement, and PDF generation off the request path.
+
+5. The auth model is correct but inconsistent and concentrated
+The good: a shared getSupabaseAndUser() + requireRole() + requireSchool() helper (lib/api-helpers.ts:22-88) is used by ~107 of 110 routes, and RLS carries the actual tenant boundary.
+
+The problems:
+
+3 routes bypass the shared helper and hand-roll auth. app/api/pdf/calendar/route.ts and app/api/pdf/timetable/route.ts do createClient() + rpc('get_user_school_id') and return their own 401 — they never call requireRole, so a BURSAR or PARENT could call them at the app layer if RLS doesn't independently block the underlying selects. auth/callback is legitimately auth-less.
+Middleware fails open by design (lib/supabase/middleware.ts:92): on a userError it lets the request through to the client-side guard. This makes the middleware a UX layer, not a security boundary — security is 100% delegated to RLS. That's defensible, but it means the correctness of every tenant boundary depends on SQL never being wrong.
+The JS tenant filter and RLS can drift. app/api/students/bulk-import/route.ts:32-37 fetches the current term without .eq('school_id', schoolId) — it leans entirely on RLS. Works today; one policy regression and it's cross-tenant.
+Fix: Route every handler (including PDF) through the shared helper. Apply explicit school_id filters in queries even when RLS covers them (defense in depth). Consider treating middleware as a hard gate, not a hint.
+
+6. SECURITY DEFINER surface is large and centralizes trust
+0003_helper_functions.sql + 0019–0022 define ~30 SECURITY DEFINER functions. RLS is effectively implemented by these functions (get_user_role(), get_user_school_id(), is_in_school()), so a single injection or logic bug in one bypasses every policy that uses it. The search-path hardening (SET search_path = pg_catalog, public) is correct and applied consistently, which is good — but the blast radius of any change here is the entire authz model. Treat this surface like a kernel.
+
+7. Smaller structural issues
+successResponse caches every 200 (lib/api-helpers.ts:112) with Cache-Control: private, max-age=30, swr=60. Fine for GETs, but the contract relies on every write path remembering not to call it — easy to violate accidentally, caching auth-scoped data.
+createAdminClient() is a factory, not a singleton (lib/supabase/admin.ts:10) — every call rebuilds a client with the service-role key. The webhook + payroll paths call it frequently. Minor, but the service-role client should be a module-level singleton.
+Three cache layers (browser HTTP cache → Redis withSchoolCache → Postgres) require coordinated invalidation via invalidateSchool(). It's only called after school-scoped writes; any write that forgets it leaves stale cross-tenant-adjacent data in Redis for 60s.
+Shared-schema multi-tenancy (one Postgres DB, school_id everywhere) is a reasonable early-SaaS choice, but it caps scaling at one database and means a bad migration hits all tenants simultaneously. Worth flagging as a known ceiling, not necessarily changing now.
+Summary table
+#	Problem	Severity	Effort
+1	Migrations edited/deleted, not append-only	Critical	Medium
+2	Hand-written DB types, 262 escape hatches	High	Medium
+3	No service layer; v1/unversioned duplication	High	Large
+4	No background jobs; bulk import & payroll sync	High	Large
+5	Auth helper bypassed by PDF routes; RLS-only boundary	Medium	Small
+6	30 SECURITY DEFINER functions = trust core	Medium	Ongoing
+7	Cache coupling, non-singleton admin client	Low	Small
+The throughline: this app has a strong database/security foundation (RLS everywhere, server-side webhook verification, idempotent payouts) but a weak application-layer discipline (hand types, inline logic, no jobs, rewritten migrations). The highest-leverage work is freezing the migration baseline (#1), regenerating real types (#2), and pulling business logic into a service layer with a job queue (#3 + #4). Those three would convert a codebase that's currently correct-by-vigilance into one that's correct-by-construction.
+
+
+Frontend, Database & Caching Analysis
+Three deeply intertwined subsystems. The strongest finding is that sophisticated infrastructure was built and then not adopted — the codebase invests in the right patterns centrally and then bypasses them in the pages.
+
+A. Frontend
+A1. The entire source tree is duplicated into scripts/ (CRITICAL)
+scripts/app, scripts/components, scripts/lib, scripts/hooks is a 543-file byte-identical mirror of the real app (241 files under scripts/app vs 243 under app; sample file hashes are identical). This likely started as an export/scaffold attempt and was never removed. Consequences:
+
+Every Select-String / IDE "find all" returns double results.
+Search-and-replace refactors silently hit the mirror too (or, worse, hit the real tree and leave the mirror stale, creating a third drift).
+.tsbuildinfo, type-checking, and tree-shaking all process ~2× the source.
+8 of the tests/api/*.test.ts files live under scripts/audit-logs / the mirror — a test can pass against the copy while the real file is broken.
+Fix: git rm -r scripts/app scripts/components scripts/lib scripts/hooks scripts/types and verify the build still passes. This is the single highest-leverage cleanup in the repo.
+
+A2. Three competing data-fetching strategies in the same pages
+Pages do not commit to one fetch path. In app/dashboard/fees/accounts/page.tsx alone (lines 132–183):
+
+The accounts list is fetched via fetch('/api/fees/accounts') (line 144).
+The classes list in the same component is fetched via useSupabaseBrowser().from('classes').select(...) (line 173) — a direct browser-to-Postgres-PostgREST call that skips the /api layer entirely, including its withSchoolCache, zod validation, and audit logging.
+The SMS reminder mutation inserts directly into sms_logs from the browser (line 195) with as any.
+Repo-wide: 10 pages use useSupabaseBrowser() with .from(...) selects, while 18 import fetchEnvelope/fetchArray. There's no rule for which is used when. The implications:
+
+Two auth surfaces to keep secure. A browser Supabase query relies only on RLS; an /api route adds JS-layer role checks and the shared requireRole/requireSchool. Both must be correct, forever.
+The server cache (withSchoolCache) is invisible to half the pages because they go straight to PostgREST.
+Audit logging is inconsistent — the browser can't write audit rows meaningfully, so direct-from-browser mutations either skip audits or write them with user_id from an untrusted context.
+Fix: Pick one. The right call for a multi-tenant app is "all writes and all sensitive reads go through /api"; the browser Supabase client should be limited to auth state + trivial reference reads (if any). Enforce with an ESLint rule banning from( in app/**/page.tsx.
+
+A3. Query keys are ad-hoc despite a central factory existing
+lib/query-keys.ts defines queryKeys and invalidate helpers with a thorough comment explaining they exist because ad-hoc keys caused cross-school data leaks. Zero pages use them. Every page uses inline arrays:
+
+
+text
+queryKey: ["fee-accounts", school?.id, currentTerm?.id]   // accounts page, line 133
+queryKey: ["analytics-class-fees", schoolId]               // analytics page
+queryKey: ["analytics-monthly-payments", schoolId, termId, termStart]
+And invalidate.feePaymentRecorded() etc. — 0 call sites. Pages hand-roll queryClient.invalidateQueries({ queryKey: [...] }) per-key.
+
+This re-creates exactly the bug class the factory was built to prevent: a SUPER_ADMIN switching schools gets a key like ["fee-accounts", undefined, undefined] cached, and the school?.id-less variants collide across tenants. The documented risk ("School A's expenses in School B's view") is live.
+
+Fix: Migrate pages to the factory, then add a lint rule banning bare queryKey: [ in page files.
+
+A4. Heavy client components; almost no server components
+Only 4 files use 'use client' at the top per the narrow scan, but that's misleading — essentially every app/**/page.tsx is 'use client' (the fees/accounts page is, the dashboard page is). The App Router is being used as a client-side SPA:
+
+18 loading.tsx and 14 error.tsx boundaries exist (good), but only 2 <Suspense> usages.
+dynamic(() => import("..."), { ssr: false }) for charts (dashboard/page.tsx:43) confirms pages opt out of SSR.
+Data loads as: blank page → React mount → RQ fetch → render. First Contentful Paint shows skeletons, not data. For a school admin on a slow Ugandan connection this is a meaningful perf cost.
+Fix: Move read-heavy pages to Server Components that fetch with the server Supabase client and pass data as props; keep only the interactive bits 'use client'. This also kills the browser-Supabase direct-query problem from A2.
+
+B. Caching
+B1. A carefully designed 3-layer cache — partly defeated by the data-path split
+The design (lib/query-persist.ts:1-23, lib/api-cache.ts:1-48) is genuinely thoughtful:
+
+Layer	TTL	Where
+Browser HTTP cache	max-age=30, swr=60	api-helpers.ts:112
+React Query + localStorage	staleTime=2min, persist 5min	query-persist.ts:154
+Redis (withSchoolCache)	60s, evict at 5×	api-cache.ts:52
+The TTLs are deliberately ordered HTTP(30) < Redis(60) < RQ(120) so the freshest layer always wins. This is correct when a request hits the /api layer.
+
+The contradiction: because pages like fees/accounts fetch the classes list via the browser Supabase client (A2), that read bypasses all three layers — it goes straight to PostgREST on every RQ cache miss, with no Redis caching and no x-skuli-cache observability. The cache only protects the ~40% of reads that go through /api. withSchoolCache is used in 16 route handlers out of 110; the other 94 routes and all direct-browser reads are uncached.
+
+B2. successResponse caches every GET including auth-scoped ones
+api-helpers.ts:106-116 hardcodes Cache-Control: private, max-age=30, stale-while-revalidate=60 on every successResponse. The comment says writes don't use it, which is true — but it also means any GET that forgets to call setCacheHeader after withSchoolCache still sends the browser-cache header, so the browser caches for 30s with no corresponding Redis entry and no invalidation path. The browser layer and Redis layer can disagree, and there's no single source of truth for the cache-control value.
+
+Fix: Only emit the cache header when hit came from withSchoolCache; otherwise send no-store. Centralize the value.
+
+B3. School-wide invalidation is a blunt instrument
+invalidateSchool(schoolId) (api-cache.ts:225) does a Redis SCAN + DEL of every skuli:cache:<schoolId>:* key. Recording one fee payment nukes the cached students list, classes, attendance, analytics, dashboard — all for one school. With 110 routes and growing key shapes, a single write can delete dozens of unrelated entries, causing a thundering herd of re-fetches. The JS-side invalidate.* helpers are granular (per-query) but they operate only on React Query, not Redis — the two invalidation systems don't talk to each other.
+
+Fix: Use Redis key prefixes per domain (e.g. skuli:cache:<school>:fees:*) and invalidate by domain, not by school.
+
+B4. The localStorage persister re-persists on every cache change
+components/providers.tsx:56 subscribes to the entire query cache and re-serializes the whole client state on every change:
+
+
+text
+const unsubscribe = client.getQueryCache().subscribe(() => {
+  void persister.persistClient({ ... });   // JSON.stringify of ALL queries
+});
+Every keystroke in a debounced search box that invalidates a query triggers a full JSON.stringify of all cached queries (capped at 3MB). On a low-end Android device this is real jank. @tanstack/react-query-persist-client exists precisely to debounce this.
+
+Fix: Use persistQueryClient from the official package, or debounce the subscribe callback.
+
+C. Database usage
+C1. Well-built RPC layer, but almost nothing uses it
+0021_functions_dashboard.sql defines 4 dashboard aggregations (dashboard_attendance_today, _by_class, payment_trend, payment_methods) as SECURITY INVOKER (good — RLS applies), plus get_student_fee_summary/breakdown/current_results/attendance_summary. These are exactly the right pattern: push aggregation to Postgres instead of fetching rows and reducing in JS.
+
+But the adoption is tiny: total .rpc() call sites in the real app = 8 (4 on the dashboard page, 3 on the portal page, 2 for decrypt_secret). Everything else — including the fees/accounts list, defaulters report, expenses P&L — fetches raw rows and reduces client-side or in the route handler. The investment in SQL functions is stranded.
+
+C2. N+1 and serial-loop writes are pervasive
+Bulk student import (app/api/students/bulk-import/route.ts:77-167): per-row students.insert + per-row fee_accounts.insert + per-row class_enrollments.insert in a serial for loop — up to 3 round-trips × N rows, no transaction, partial-failure leaves orphans.
+Fee reminder SMS (fees/accounts/page.tsx:193-208): for loop inserting one sms_logs row per unpaid student from the browser.
+Payroll disbursement (lib/services/payroll-disbursement.ts:73-166): sequential gateway calls per line item.
+Single student creation (app/api/students/route.ts:141-210): 4 sequential awaits (insert student → fetch term → insert enrollment → upsert fee_account) where a single SQL function or batch insert would do.
+PostgREST has no batching story, so these are inherent to the "Supabase JS all the way down" choice — but they should be RPCs (create_student_with_enrollment_and_account(...)) doing the work in one round-trip inside a transaction.
+
+C3. Indexes exist but aren't validated against the actual query shapes
+0013_indexes.sql exists (good), but I can't confirm coverage without EXPLAIN against real data. The risk areas: the .or(full_name.ilike.%X%,admission_number.ilike.%X%,parent_phone.ilike.%X%) search in students/route.ts:93 is a leading-wildcard ILIKE that a btree won't serve — it needs a trigram (pg_trgm) GIN index or it's a seq scan on every keystroke. Same for any .ilike.%..% filter. Worth checking.
+
+C4. Triggers doing heavy work on the write path
+0019_functions_business.sql defines SECURITY DEFINER triggers that recalculate fee accounts on every fee_payment/fee_structure insert (referenced in 0029_finalize.sql:164-167). This is correct for consistency but means every payment write runs synchronous SQL that re-sums the account. For a school taking 200 payments in a day that's fine; for a bulk payment import it's a serialization point. The fee-account recalculation is also done redundantly in JS in some routes (e.g. students/route.ts:196 upserts a zero-balance account manually), so the source of truth is split between the trigger and the app.
+
+D. Cross-cutting: the documented-vs-actual gap
+The single most striking theme across all three subsystems: the codebase's comments describe an architecture that the code only partially implements.
+
+query-keys.ts documents the factory that fixes cross-tenant key bugs → 0 adoptions.
+api-cache.ts documents a 3-layer cache → ~15% of routes participate.
+0021_functions_dashboard.sql documents server-side aggregation → 8 of ~hundreds of read paths use it.
+Migration comments reference 00051, 00063, 00064, 00066 — files that don't exist in a tree numbered 0001–0030. The migration history was squashed but the comments weren't updated, so the "documentation" actively misleads.
+This reads like a codebase that went through one or more aggressive audits/rewrites (the comments mention "Audit 2.9", "Audit 3.4", "Audit 5.4", "Audit 6.9", "Bug #2/#4/#5/#6", "H-2") where central utilities were built to fix real bugs, but the per-page migration to use those utilities was never completed.
+
+Prioritized recommendations
+Priority	Action	Effort
+1	Delete the `scripts/app	components
+2	Standardize on one data path (all reads/writes via /api); remove browser Supabase .from() from pages	Large
+3	Adopt queryKeys + invalidate everywhere; lint against inline keys	Medium
+4	Move read pages to Server Components; eliminate the "blank → fetch → render" pattern	Large
+5	Move bulk operations (student import, payroll, fee reminders) into RPCs + a real queue	Large
+6	Reconcile cache-control: only cache when Redis was hit; invalidate by domain not school	Medium
+7	Replace the hand-rolled persister subscribe with persistQueryClient; debounce	Small
+8	Verify pg_trgm indexes for every .ilike.%x% search path	Small
+
+

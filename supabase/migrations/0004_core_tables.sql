@@ -69,6 +69,7 @@ CREATE TABLE schools (
     pesapal_sandbox                   boolean NOT NULL DEFAULT true,
     sms_sender_id                     text NOT NULL DEFAULT 'SKULI',
     cash_on                           boolean NOT NULL DEFAULT true,
+    next_billing_date                 timestamptz,
     group_id                          uuid REFERENCES school_groups(id),
     created_at                        timestamptz NOT NULL DEFAULT now(),
     updated_at                        timestamptz NOT NULL DEFAULT now(),

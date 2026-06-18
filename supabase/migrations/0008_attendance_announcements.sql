@@ -36,11 +36,13 @@ CREATE TABLE attendance_records (
     date        date NOT NULL,
     status      attendance_status NOT NULL,
     notes       text,
+    remarks     text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     is_deleted  boolean NOT NULL DEFAULT false,
     UNIQUE (student_id, class_id, date)
 );
+COMMENT ON COLUMN attendance_records.remarks IS 'Teacher remarks. The app reads remarks; notes is the legacy column.';
 
 -- ---------------------------------------------------------------------------
 -- 2. announcements
@@ -54,7 +56,14 @@ CREATE TABLE announcements (
     body                text,
     target_audience     announcement_target NOT NULL,
     target_class_ids    uuid[],
-    sent_via            sms_channel NOT NULL,
+    -- text + CHECK (not sms_channel enum): the send route writes compound
+    -- channel strings like 'sms,in_app'.
+    sent_via            text NOT NULL
+                        CHECK (sent_via IN (
+                            'sms', 'email', 'in_app', 'push',
+                            'sms,in_app', 'sms,push', 'email,in_app',
+                            'sms,email,in_app', 'sms,in_app,push'
+                        )),
     scheduled_at        timestamptz,
     scheduled_status    text NOT NULL DEFAULT 'pending'
                         CHECK (scheduled_status IN ('pending', 'processing', 'sent', 'failed', 'cancelled')),
@@ -78,6 +87,9 @@ CREATE TABLE sms_logs (
     status                  sms_status NOT NULL DEFAULT 'pending',
     africa_talking_message_id text,
     cost                    numeric,
+    error                   text,
+    related_entity_type     text,
+    related_entity_id       uuid,
     sent_at                 timestamptz,
     created_at              timestamptz NOT NULL DEFAULT now(),
     updated_at              timestamptz NOT NULL DEFAULT now(),
@@ -97,6 +109,7 @@ CREATE TABLE notification_preferences (
     defaulter_reminder_hour     int NOT NULL DEFAULT 8,
     send_report_card_sms        boolean NOT NULL DEFAULT true,
     send_term_start_sms         boolean NOT NULL DEFAULT true,
+    sms_enabled                 boolean NOT NULL DEFAULT false,
     created_at                  timestamptz NOT NULL DEFAULT now(),
     updated_at                  timestamptz NOT NULL DEFAULT now(),
     is_deleted                  boolean NOT NULL DEFAULT false,
@@ -114,8 +127,13 @@ CREATE TABLE in_app_notifications (
     recipient_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title           text NOT NULL,
     body            text,
+    -- type accepts both UI severities and entity-type values the
+    -- notifications service writes (tuition_payment, payroll_disbursal).
     type            text NOT NULL DEFAULT 'info'
-                    CHECK (type IN ('info', 'warning', 'success', 'error')),
+                    CHECK (type IN (
+                        'info', 'warning', 'success', 'error',
+                        'tuition_payment', 'payroll_disbursal', 'subscription'
+                    )),
     is_read         boolean NOT NULL DEFAULT false,
     related_entity_type text,
     related_entity_id   uuid,
@@ -139,6 +157,8 @@ CREATE TABLE notification_logs (
     related_entity_type text,
     related_entity_id   text,
     last_error          text,
+    cost                numeric,
+    provider_message_id text,
     sent_at             timestamptz,
     created_at          timestamptz NOT NULL DEFAULT now()
 );
@@ -156,6 +176,7 @@ CREATE TABLE audit_logs (
     old_value   jsonb,
     new_value   jsonb,
     ip_address  text,
+    user_agent  text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     is_deleted  boolean NOT NULL DEFAULT false

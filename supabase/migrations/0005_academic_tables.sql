@@ -49,12 +49,14 @@ CREATE TABLE terms (
 
 -- ---------------------------------------------------------------------------
 -- 3. subjects
+--    color restored (optional timetable cell colour).
 -- ---------------------------------------------------------------------------
 CREATE TABLE subjects (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name        text NOT NULL,
     code        text,
+    color       text,
     max_marks   int NOT NULL DEFAULT 100,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
@@ -63,12 +65,14 @@ CREATE TABLE subjects (
 
 -- ---------------------------------------------------------------------------
 -- 4. classes
+--    stream restored (used by class lists / timetable). Optional.
 -- ---------------------------------------------------------------------------
 CREATE TABLE classes (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name            text NOT NULL,
     level           text,
+    stream          text,
     capacity        int,
     class_teacher_id uuid REFERENCES users(id) ON DELETE SET NULL,
     created_at      timestamptz NOT NULL DEFAULT now(),
@@ -105,6 +109,7 @@ CREATE TABLE students (
     photo_url       text,
     address         text,
     motto           text,
+    parent_nid      text,
     parent_name     text,
     parent_phone    text,
     parent_email    text,
@@ -123,6 +128,7 @@ CREATE TABLE students (
 -- ---------------------------------------------------------------------------
 CREATE TABLE class_enrollments (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     student_id      uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     class_id        uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
     term_id         uuid NOT NULL REFERENCES terms(id) ON DELETE CASCADE,

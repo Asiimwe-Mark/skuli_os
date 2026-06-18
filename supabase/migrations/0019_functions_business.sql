@@ -19,35 +19,35 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
-    v_account fee_accounts%ROWTYPE;
-    v_total_expected numeric;
-    v_total_paid numeric;
+    v_account        fee_accounts%ROWTYPE;
+    v_gross_fees     numeric;
     v_total_discount numeric;
-    v_balance numeric;
-    v_status fee_account_status;
+    v_net_expected   numeric;
+    v_total_paid     numeric;
+    v_balance        numeric;
+    v_status         fee_account_status;
 BEGIN
     SELECT * INTO v_account FROM fee_accounts WHERE id = p_account_id;
-
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Fee account % not found', p_account_id;
     END IF;
 
-    -- Sum fee_structures for this term/class
+    -- 1. Gross fees: sum all applicable fee_structures
     SELECT COALESCE(SUM(fs.amount), 0)
-    INTO v_total_expected
+    INTO v_gross_fees
     FROM fee_structures fs
     LEFT JOIN students st ON st.id = v_account.student_id
-    WHERE fs.term_id = v_account.term_id
-      AND fs.school_id = v_account.school_id
+    WHERE fs.term_id    = v_account.term_id
+      AND fs.school_id  = v_account.school_id
       AND fs.is_deleted = false
       AND (fs.class_id IS NULL OR fs.class_id = st.current_class_id);
 
-    -- Subtract applicable discounts
+    -- 2. Applicable discounts (percentage capped at gross; fixed capped at gross)
     SELECT COALESCE(SUM(
         CASE
-            WHEN fd.discount_type = 'percentage' THEN
-                LEAST(v_total_expected * fd.value / 100, v_total_expected * fd.value / 100)
-            ELSE fd.value
+            WHEN fd.discount_type = 'percentage'
+                THEN LEAST(v_gross_fees * fd.value / 100.0, v_gross_fees)
+            ELSE LEAST(fd.value, v_gross_fees)
         END
     ), 0)
     INTO v_total_discount
@@ -58,34 +58,118 @@ BEGIN
       AND sd.is_deleted = false
       AND fd.is_deleted = false;
 
-    v_total_expected := GREATEST(v_total_expected - v_total_discount, 0);
+    v_net_expected := GREATEST(v_gross_fees - v_total_discount, 0);
 
-    -- Sum confirmed payments
+    -- 3. Confirmed payments
     SELECT COALESCE(SUM(fp.amount), 0)
     INTO v_total_paid
     FROM fee_payments fp
     WHERE fp.fee_account_id = p_account_id
-      AND fp.status = 'confirmed'
-      AND fp.is_deleted = false;
+      AND fp.status         = 'confirmed'
+      AND fp.is_deleted     = false;
 
-    v_balance := v_total_expected - v_total_paid;
+    v_balance := v_net_expected - v_total_paid;
 
-    IF v_balance = 0 AND v_total_expected > 0 THEN
+    -- 4. Status
+    IF v_net_expected = 0 THEN
         v_status := 'paid';
-    ELSIF v_balance > 0 AND v_total_paid > 0 THEN
+    ELSIF v_balance <= 0 AND v_total_paid > 0 THEN
+        v_status := CASE WHEN v_balance < 0 THEN 'overpaid' ELSE 'paid' END;
+    ELSIF v_total_paid > 0 THEN
         v_status := 'partial';
-    ELSIF v_balance < 0 THEN
-        v_status := 'overpaid';
     ELSE
         v_status := 'unpaid';
     END IF;
 
+    -- 5. Write back (including total_fees + total_discount)
     UPDATE fee_accounts
-    SET total_expected = v_total_expected,
-        total_paid = v_total_paid,
-        balance = v_balance,
-        status = v_status
+    SET total_fees     = v_gross_fees,
+        total_discount = v_total_discount,
+        total_expected = v_net_expected,
+        total_paid     = v_total_paid,
+        balance        = v_balance,
+        status         = v_status,
+        updated_at     = now()
     WHERE id = p_account_id;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 1b. Fee-account auto-recalc trigger functions + marks.grade function.
+--     (Trigger wirings live in 0023.)
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trigger_recalculate_fee_account()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+BEGIN
+    IF (TG_OP = 'INSERT')
+    OR (TG_OP = 'UPDATE' AND (
+         NEW.status     IS DISTINCT FROM OLD.status OR
+         NEW.amount     IS DISTINCT FROM OLD.amount OR
+         NEW.is_deleted IS DISTINCT FROM OLD.is_deleted))
+    THEN
+        PERFORM recalculate_fee_account(NEW.fee_account_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION trigger_recalculate_fee_accounts_for_student()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE v_account_id uuid;
+BEGIN
+    FOR v_account_id IN
+        SELECT id FROM fee_accounts
+        WHERE student_id = COALESCE(NEW.student_id, OLD.student_id)
+          AND (term_id = COALESCE(NEW.term_id, OLD.term_id)
+               OR (NEW.term_id IS NULL AND OLD.term_id IS NULL))
+          AND is_deleted = false
+    LOOP
+        PERFORM recalculate_fee_account(v_account_id);
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION trigger_recalculate_accounts_for_fee_structure()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE v_account_id uuid;
+BEGIN
+    FOR v_account_id IN
+        SELECT id FROM fee_accounts
+        WHERE school_id = COALESCE(NEW.school_id, OLD.school_id)
+          AND term_id   = COALESCE(NEW.term_id,   OLD.term_id)
+          AND is_deleted = false
+    LOOP
+        PERFORM recalculate_fee_account(v_account_id);
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+
+-- Auto-populate marks.grade from grading_scales on insert/score change.
+CREATE OR REPLACE FUNCTION fn_marks_set_grade()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE v_pct numeric; v_grade text;
+BEGIN
+    IF NEW.score IS NOT NULL AND NEW.max_score IS NOT NULL AND NEW.max_score > 0 THEN
+        v_pct := (NEW.score / NEW.max_score) * 100;
+        SELECT grade INTO v_grade
+        FROM grading_scales
+        WHERE school_id = NEW.school_id
+          AND is_deleted = false
+          AND v_pct >= min_score
+          AND v_pct <= max_score
+        ORDER BY sort_order
+        LIMIT 1;
+        NEW.grade := v_grade;
+    ELSE
+        NEW.grade := NULL;
+    END IF;
+    RETURN NEW;
 END;
 $$;
 

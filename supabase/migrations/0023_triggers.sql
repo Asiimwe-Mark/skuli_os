@@ -149,3 +149,25 @@ CREATE TRIGGER trigger_seed_grading_scale
 CREATE TRIGGER trg_school_referral_code
     AFTER INSERT ON schools
     FOR EACH ROW EXECUTE FUNCTION auto_create_referral_code();
+
+-- ---------------------------------------------------------------------------
+-- 6. trg_marks_set_grade — auto-populate marks.grade from grading_scales
+-- ---------------------------------------------------------------------------
+CREATE TRIGGER trg_marks_set_grade
+    BEFORE INSERT OR UPDATE OF score, max_score ON marks
+    FOR EACH ROW EXECUTE FUNCTION fn_marks_set_grade();
+
+-- ---------------------------------------------------------------------------
+-- 7. Fee-account auto-recalculation triggers
+-- ---------------------------------------------------------------------------
+CREATE TRIGGER trg_fee_payment_recalc
+    AFTER INSERT OR UPDATE ON fee_payments
+    FOR EACH ROW EXECUTE FUNCTION trigger_recalculate_fee_account();
+
+CREATE TRIGGER trg_student_discount_recalc
+    AFTER INSERT OR UPDATE OR DELETE ON student_discounts
+    FOR EACH ROW EXECUTE FUNCTION trigger_recalculate_fee_accounts_for_student();
+
+CREATE TRIGGER trg_fee_structure_recalc
+    AFTER INSERT OR UPDATE OR DELETE ON fee_structures
+    FOR EACH ROW EXECUTE FUNCTION trigger_recalculate_accounts_for_fee_structure();

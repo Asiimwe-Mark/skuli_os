@@ -56,6 +56,8 @@ CREATE TABLE meeting_slots (
     start_time      time NOT NULL,
     end_time        time NOT NULL,
     duration_minutes int NOT NULL DEFAULT 15,
+    -- GENERATED: ISO weekday derived from slot_date (1=Mon..7=Sun). Never insert.
+    day_of_week     int GENERATED ALWAYS AS (EXTRACT(ISODOW FROM slot_date)::int) STORED,
     is_booked       boolean NOT NULL DEFAULT false,
     is_deleted      boolean NOT NULL DEFAULT false
 );
@@ -70,6 +72,7 @@ CREATE TABLE meeting_bookings (
     student_id      uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     parent_name     text NOT NULL,
     parent_phone    text NOT NULL,
+    notes           text,
     status          text NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
     reminder_sent   boolean NOT NULL DEFAULT false,

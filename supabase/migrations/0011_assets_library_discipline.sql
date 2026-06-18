@@ -59,6 +59,9 @@ CREATE TABLE asset_maintenance (
     school_id         uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     maintenance_date  date NOT NULL,
     description       text NOT NULL,
+    cost              numeric,
+    next_service_date date,
+    performed_by      text,
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now()
 );
@@ -94,10 +97,13 @@ CREATE TABLE library_issues (
     book_id      uuid NOT NULL REFERENCES library_books(id) ON DELETE CASCADE,
     student_id   uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     issued_at    timestamptz NOT NULL DEFAULT now(),
+    issued_by    uuid REFERENCES users(id) ON DELETE SET NULL,
     due_date     date NOT NULL,
     returned_at  timestamptz,
     fine_amount  numeric,
-    fine_paid    boolean NOT NULL DEFAULT false
+    fine_paid    boolean NOT NULL DEFAULT false,
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    is_deleted   boolean NOT NULL DEFAULT false
 );
 
 -- ---------------------------------------------------------------------------
@@ -147,6 +153,10 @@ CREATE TABLE timetable_periods (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name        text NOT NULL,
+    start_time  time,
+    end_time    time,
+    is_break    boolean NOT NULL DEFAULT false,
+    sort_order  int NOT NULL DEFAULT 0,
     is_deleted  boolean NOT NULL DEFAULT false,
     created_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -155,15 +165,19 @@ CREATE TABLE timetable_periods (
 -- 8. timetable_slots
 -- ---------------------------------------------------------------------------
 CREATE TABLE timetable_slots (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
-    class_id    uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-    period_id   uuid NOT NULL REFERENCES timetable_periods(id) ON DELETE CASCADE,
-    subject_id  uuid REFERENCES subjects(id),
-    teacher_id  uuid REFERENCES users(id),
-    is_deleted  boolean NOT NULL DEFAULT false,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (school_id, class_id, period_id)
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id        uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+    class_id         uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    period_id        uuid NOT NULL REFERENCES timetable_periods(id) ON DELETE CASCADE,
+    academic_year_id uuid REFERENCES academic_years(id) ON DELETE CASCADE,
+    subject_id       uuid REFERENCES subjects(id),
+    teacher_id       uuid REFERENCES users(id),
+    day_of_week      int NOT NULL DEFAULT 1 CHECK (day_of_week BETWEEN 1 AND 5),
+    room             text,
+    is_deleted       boolean NOT NULL DEFAULT false,
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_timetable_slots_class_period_day_year
+        UNIQUE (class_id, period_id, day_of_week, academic_year_id)
 );
 
 -- ---------------------------------------------------------------------------
@@ -181,6 +195,9 @@ CREATE TABLE concierge_leads (
     status          concierge_status NOT NULL DEFAULT 'new',
     assigned_to     uuid REFERENCES users(id),
     internal_notes  text,
+    notes           text,
+    preferred_date  date,
+    followed_up_at  timestamptz,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
 );

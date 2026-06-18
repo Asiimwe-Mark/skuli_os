@@ -246,3 +246,52 @@ CREATE INDEX idx_push_queue_pending            ON push_queue(status, created_at)
 CREATE INDEX idx_sms_templates_school          ON sms_templates(school_id) WHERE is_deleted = false;
 CREATE INDEX idx_marketplace_category          ON marketplace_templates(category) WHERE is_deleted = false;
 CREATE INDEX idx_marketplace_featured          ON marketplace_templates(is_featured) WHERE is_deleted = false;
+
+-- ---------------------------------------------------------------------------
+-- Reconciliation indexes (folded in from former 0031/0032 patches)
+-- ---------------------------------------------------------------------------
+-- class_enrollments tenant scope
+CREATE INDEX idx_class_enrollments_school_id   ON class_enrollments(school_id);
+CREATE INDEX idx_class_enrollments_school_term ON class_enrollments(school_id, term_id) WHERE is_deleted = false;
+
+-- fee_payments restored columns
+CREATE INDEX idx_fee_payments_received_by      ON fee_payments(received_by_user_id) WHERE received_by_user_id IS NOT NULL;
+CREATE INDEX idx_fee_payments_pesapal_tracking ON fee_payments(pesapal_order_tracking_id) WHERE pesapal_order_tracking_id IS NOT NULL;
+CREATE INDEX idx_fee_payments_mobile_provider  ON fee_payments(school_id, mobile_money_provider, status) WHERE is_deleted = false AND mobile_money_provider IS NOT NULL;
+CREATE INDEX idx_fee_payments_term_school_status ON fee_payments(school_id, term_id, status) WHERE is_deleted = false AND term_id IS NOT NULL;
+
+-- fee_accounts / fee_discounts
+CREATE INDEX idx_fee_accounts_school_term_status ON fee_accounts(school_id, term_id, status) WHERE is_deleted = false;
+CREATE INDEX idx_fee_discounts_school_active    ON fee_discounts(school_id, is_active) WHERE is_deleted = false;
+
+-- expenses restored columns
+CREATE INDEX idx_expenses_recorded_by          ON expenses(recorded_by) WHERE recorded_by IS NOT NULL;
+CREATE INDEX idx_expenses_term_school          ON expenses(school_id, term_id) WHERE is_deleted = false AND term_id IS NOT NULL;
+
+-- marks.grade
+CREATE INDEX idx_marks_grade                   ON marks(school_id, term_id, grade) WHERE is_deleted = false;
+
+-- schools active / billing
+CREATE INDEX idx_schools_active                ON schools(id) WHERE is_deleted = false;
+CREATE INDEX idx_schools_next_billing_date     ON schools(next_billing_date) WHERE is_deleted = false AND subscription_status = 'active';
+
+-- calendar portal
+CREATE INDEX idx_calendar_events_public_portal ON calendar_events(school_id, event_date, is_public) WHERE is_deleted = false AND is_public = true;
+
+-- timetable day/year
+CREATE INDEX idx_timetable_slots_class_day     ON timetable_slots(class_id, day_of_week) WHERE is_deleted = false;
+CREATE INDEX idx_timetable_slots_teacher_day   ON timetable_slots(teacher_id, day_of_week) WHERE is_deleted = false AND teacher_id IS NOT NULL;
+CREATE INDEX idx_timetable_slots_academic_year ON timetable_slots(school_id, academic_year_id) WHERE is_deleted = false;
+CREATE INDEX idx_timetable_periods_school_order ON timetable_periods(school_id, sort_order) WHERE is_deleted = false;
+
+-- meeting / library / subject_comments / sms / staff payroll
+CREATE INDEX idx_meeting_slots_teacher_day     ON meeting_slots(teacher_id, day_of_week) WHERE is_deleted = false AND is_booked = false;
+CREATE INDEX idx_library_issues_overdue_calc   ON library_issues(school_id, due_date) WHERE returned_at IS NULL AND is_deleted = false;
+CREATE INDEX idx_subject_comments_student_term_active ON subject_comments(student_id, term_id) WHERE is_deleted = false;
+CREATE INDEX idx_sms_logs_related_entity       ON sms_logs(related_entity_type, related_entity_id) WHERE related_entity_id IS NOT NULL;
+CREATE INDEX idx_staff_payment_profiles_staff_id ON staff_payment_profiles(staff_id);
+CREATE INDEX idx_payroll_records_school_period_status ON payroll_records(school_id, year, month, payment_status) WHERE is_deleted = false;
+CREATE INDEX idx_push_subscriptions_user       ON push_subscriptions(user_id) WHERE is_deleted = false;
+CREATE INDEX idx_meeting_bookings_school_status ON meeting_bookings(school_id, status);
+CREATE INDEX idx_audit_logs_school_created     ON audit_logs(school_id, created_at DESC);
+CREATE INDEX idx_discipline_parent_notified    ON discipline_records(school_id, parent_notified, incident_date DESC) WHERE is_deleted = false AND parent_notified = false;

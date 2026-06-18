@@ -95,6 +95,7 @@ CREATE TABLE staff_payment_profiles (
     bank_code        text,
     bank_name        text,
     account_number   text,
+    account_name     text,
     created_at       timestamptz NOT NULL DEFAULT now(),
     updated_at       timestamptz NOT NULL DEFAULT now(),
     UNIQUE (staff_id)
@@ -110,6 +111,8 @@ CREATE TABLE payroll_batches (
     funding_mechanism         payroll_funding_mechanism NOT NULL,
     total_payout_sum          numeric(14,2) NOT NULL DEFAULT 0,
     funding_payment_status    payroll_funding_status NOT NULL DEFAULT 'AWAITING_EXTERNAL_FUNDING',
+    pesapal_order_tracking_id text,
+    funded_at                 timestamptz,
     created_at                timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now()
 );
@@ -130,6 +133,9 @@ CREATE TABLE batch_line_items (
     snapshot_account_number text,
     disbursal_status       disbursal_status NOT NULL DEFAULT 'HOLD_UNTIL_FUNDED',
     disbursal_attempts     integer NOT NULL DEFAULT 0,
+    last_error             text,
+    disbursed_at           timestamptz,
+    created_at             timestamptz NOT NULL DEFAULT now(),
     updated_at             timestamptz NOT NULL DEFAULT now(),
     UNIQUE (idempotency_key)
 );
@@ -145,6 +151,11 @@ CREATE TABLE tuition_payments (
     amount                    numeric(14,2) NOT NULL CHECK (amount > 0),
     status                    pesapal_payment_status NOT NULL DEFAULT 'PENDING',
     pesapal_order_tracking_id text,
+    pesapal_redirect_url      text,
+    payment_description       text,
+    fee_type_id               uuid REFERENCES fee_types(id) ON DELETE SET NULL,
+    fee_type_label            text,
+    initiated_by_user_id      uuid REFERENCES users(id) ON DELETE SET NULL,
     receipt_number            text,
     created_at                timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now()
@@ -167,6 +178,9 @@ CREATE TABLE expense_categories (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name        text NOT NULL,
+    color       text,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
     is_deleted  boolean NOT NULL DEFAULT false
 );
 
@@ -182,6 +196,9 @@ CREATE TABLE expenses (
     amount          numeric NOT NULL,
     expense_date    date NOT NULL,
     payment_method  expense_payment_method,
+    notes           text,
+    receipt_number  text,
+    recorded_by     uuid REFERENCES users(id) ON DELETE SET NULL,
     created_at      timestamptz NOT NULL DEFAULT now(),
     is_deleted      boolean NOT NULL DEFAULT false
 );
@@ -200,6 +217,7 @@ CREATE TABLE subscription_invoices (
     period_start    timestamptz,
     period_end      timestamptz,
     status          text,
+    revenue_by_plan jsonb,
     paid_at         timestamptz,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),

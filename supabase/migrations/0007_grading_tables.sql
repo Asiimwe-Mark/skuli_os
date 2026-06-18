@@ -31,7 +31,10 @@ CREATE TABLE marks (
     exam_type       exam_type NOT NULL,
     score           numeric,
     max_score       numeric NOT NULL DEFAULT 100,
+    grade           text,
     remarks         text,
+    entered_by      uuid REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_by     uuid REFERENCES users(id) ON DELETE SET NULL,
     review_status   text NOT NULL DEFAULT 'not_started'
                     CHECK (review_status IN ('not_started', 'draft', 'submitted', 'approved', 'rejected')),
     review_comment  text,
@@ -41,6 +44,8 @@ CREATE TABLE marks (
     is_deleted      boolean NOT NULL DEFAULT false,
     UNIQUE (student_id, subject_id, term_id, exam_type)
 );
+COMMENT ON COLUMN marks.grade      IS 'Grade label from grading_scales. Auto-set by trg_marks_set_grade (0023).';
+COMMENT ON COLUMN marks.entered_by IS 'User who entered the mark (written by marks POST route).';
 
 -- ---------------------------------------------------------------------------
 -- 2. report_cards
@@ -59,11 +64,14 @@ CREATE TABLE report_cards (
     class_teacher_comment text,
     headmaster_comment  text,
     conduct_grade       conduct_grade,
+    pdf_url             text,
     is_published        boolean NOT NULL DEFAULT false,
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
-    is_deleted          boolean NOT NULL DEFAULT false
+    is_deleted          boolean NOT NULL DEFAULT false,
+    UNIQUE (student_id, term_id, academic_year_id)
 );
+COMMENT ON COLUMN report_cards.pdf_url IS 'Storage URL of the generated PDF, read by the report-cards list page.';
 
 -- ---------------------------------------------------------------------------
 -- 3. subject_comments
@@ -76,7 +84,10 @@ CREATE TABLE subject_comments (
     subject_id  uuid NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
     bot_comment text,
     mid_comment text,
-    eot_comment text
+    eot_comment text,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    is_deleted  boolean NOT NULL DEFAULT false
 );
 
 -- ---------------------------------------------------------------------------

@@ -98,8 +98,33 @@ CREATE TABLE emis_report_logs (
     generated_by     uuid NOT NULL REFERENCES users(id),
     academic_year_id uuid REFERENCES academic_years(id),
     term_id          uuid REFERENCES terms(id),
+    report_type      text,
+    record_count     int,
     created_at       timestamptz NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- 8. school_settings (per-school feature flags / cache TTL / branding)
+-- ---------------------------------------------------------------------------
+CREATE TABLE school_settings (
+    school_id               uuid PRIMARY KEY REFERENCES schools(id) ON DELETE CASCADE,
+    cache_ttl_seconds       int NOT NULL DEFAULT 60,
+    feature_portal_payments boolean NOT NULL DEFAULT true,
+    feature_library         boolean NOT NULL DEFAULT true,
+    feature_assets          boolean NOT NULL DEFAULT true,
+    feature_payroll         boolean NOT NULL DEFAULT true,
+    feature_emis            boolean NOT NULL DEFAULT true,
+    feature_marketplace     boolean NOT NULL DEFAULT true,
+    primary_color           text,
+    created_at              timestamptz NOT NULL DEFAULT now(),
+    updated_at              timestamptz NOT NULL DEFAULT now()
+);
+
+-- INTENTIONALLY-UNUSED
+-- the TABLE school_settings above is provisioned for upcoming feature-flag
+-- and per-school cache-TTL work. No app code references it yet; the gate
+-- test allows it via this marker.
+COMMENT ON TABLE school_settings IS 'Per-school feature flags, cache TTL, branding. Provisioned ahead of use.';
 
 -- ---------------------------------------------------------------------------
 -- Deferred FK: schools.country_code → country_configs(code)
