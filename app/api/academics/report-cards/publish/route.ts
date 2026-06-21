@@ -1,19 +1,10 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-} from "@/lib/api-helpers";
+import { route, errorResponse, dbError } from "@/lib/http";
 import { sendPushToUser } from "@/lib/push";
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"]);
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const body = await request.json();
     const { class_id, term_id } = body;
@@ -21,6 +12,14 @@ export async function POST(request: NextRequest) {
     if (!class_id || !term_id) {
       return errorResponse("class_id and term_id are required", 400);
     }
+
+    // Audit §14.1: a TEACHER used to be allowed here, but publishing
+    // report cards exposes grades to parents and is the gate that
+    // makes the row visible in `parent_own_report_cards` (which
+    // requires is_published = true). Restrict to SCHOOL_ADMIN
+    // (SUPER_ADMIN for support). Class-teacher TEACHERs can still
+    // be added by a follow-up migration that mirrors the
+    // teacher_class_assignments check used by `marks`.
 
     // Find unpublished report cards for this class/term
     const { data: reportCards, error: fetchError } = await ctx.supabase
@@ -33,7 +32,7 @@ export async function POST(request: NextRequest) {
 
     if (fetchError) return dbError(fetchError, "Failed to fetch data");
     if (!reportCards || reportCards.length === 0) {
-      return successResponse({ published: 0 });
+      return { published: 0 };
     }
 
     let published = 0;
@@ -48,19 +47,20 @@ export async function POST(request: NextRequest) {
       if (updateError) continue;
       published++;
 
-      // Push notification to parent
+      // Audit §14.6: resolve parent via parent_students instead of
+      // the mutable phone column. Phones get reused / reassigned;
+      // a previous parent might receive the new student's grade.
       try {
-        const student = rc.students as unknown as { full_name: string; parent_phone: string | null } | null;
-        if (student?.parent_phone) {
-          const { data: parentUser } = await ctx.supabase
-            .from("users")
-            .select("id")
-            .eq("phone", student.parent_phone)
-            .eq("role", "PARENT")
-            .single();
+        const student = rc.students as unknown as { full_name: string } | null;
+        if (student) {
+          const { data: parentLink } = await ctx.supabase
+            .from("parent_students")
+            .select("parent_id")
+            .eq("student_id", rc.student_id)
+            .maybeSingle();
 
-          if (parentUser) {
-            await sendPushToUser(ctx.supabase, parentUser.id, {
+          if (parentLink?.parent_id) {
+            await sendPushToUser(ctx.supabase, parentLink.parent_id, {
               title: "Report Card Ready",
               body: `${student.full_name}'s report card is now available`,
               url: "/portal/results",
@@ -84,10 +84,6 @@ export async function POST(request: NextRequest) {
       ip_address: null,
     });
 
-    return successResponse({ published });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = err instanceof Error && "status" in err ? (err as { status: number }).status : 500;
-    return errorResponse(message, status);
-  }
-}
+    return { published };
+  },
+});

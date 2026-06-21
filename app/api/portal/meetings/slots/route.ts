@@ -1,18 +1,9 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-} from "@/lib/api-helpers";
+import { route, dbError, errorResponse } from "@/lib/http";
 
-export async function GET(req: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["PARENT"]);
-
-    const { searchParams } = new URL(req.url);
+export const GET = route({
+  roles: ["PARENT"],
+  handler: async (ctx, request) => {
+    const { searchParams } = new URL(request.url);
     const teacherId = searchParams.get("teacher_id");
     const date = searchParams.get("date");
 
@@ -30,10 +21,6 @@ export async function GET(req: NextRequest) {
       .order("start_time");
 
     if (error) return dbError(error, "Database error");
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = err instanceof Error && "status" in err ? (err as { status: number }).status : 500;
-    return errorResponse(message, status);
-  }
-}
+    return data ?? [];
+  },
+});

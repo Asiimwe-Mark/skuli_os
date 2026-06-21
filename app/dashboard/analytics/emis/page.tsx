@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useSchoolStore } from "@/store/school";

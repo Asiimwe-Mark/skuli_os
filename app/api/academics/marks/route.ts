@@ -1,24 +1,13 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { submitMarksSchema } from "@/lib/validations/marks";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse, dbError, respond } from "@/lib/http";
 
-type MarkRow = Database["public"]["Tables"]["marks"]["Row"];
 type TermRow = Database["public"]["Tables"]["terms"]["Row"];
-type ClassRow = Database["public"]["Tables"]["classes"]["Row"];
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const classId = searchParams.get("class_id");
@@ -50,38 +39,34 @@ export async function GET(request: NextRequest) {
 
     if (error) return dbError(error, "Failed to load marks");
 
-    return successResponse({
+    return {
       marks: data ?? [],
       total: count ?? 0,
       page,
       limit,
-      totalPages: Math.ceil((count ?? 0) / limit) });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+      totalPages: Math.ceil((count ?? 0) / limit),
+    };
+  },
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"]);
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
+  schema: submitMarksSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
-    const body = await request.json();
-    const parsed = submitMarksSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    // Resolve academic_year_id from term if not provided
-    let academicYearId = body.academic_year_id;
+    // Resolve academic_year_id from term if not provided.
+    // `submitMarksSchema` does not include academic_year_id directly —
+    // the route accepts it as an extra passthrough field so callers
+    // can save a DB round-trip when they already know the year.
+    type SubmitMarksWithYear = Omit<typeof body, never> & { academic_year_id?: string };
+    const extendedBody = body as SubmitMarksWithYear;
+    let academicYearId: string | undefined = extendedBody.academic_year_id;
     if (!academicYearId) {
       const { data: term } = await ctx.supabase
         .from("terms")
         .select("academic_year_id")
-        .eq("id", parsed.data.term_id)
+        .eq("id", body.term_id)
         .eq("school_id", schoolId)
         .single() as unknown as { data: Pick<TermRow, "academic_year_id"> | null };
       academicYearId = term?.academic_year_id;
@@ -95,7 +80,7 @@ export async function POST(request: NextRequest) {
     const { data: cls } = await ctx.supabase
       .from("classes")
       .select("id")
-      .eq("id", parsed.data.class_id)
+      .eq("id", body.class_id)
       .eq("school_id", schoolId)
       .single();
 
@@ -103,14 +88,14 @@ export async function POST(request: NextRequest) {
       return errorResponse("Invalid class for this school", 400);
     }
 
-    const records = parsed.data.marks.map((m) => ({
+    const records = body.marks.map((m) => ({
       school_id: schoolId,
       student_id: m.student_id,
-      subject_id: parsed.data.subject_id,
-      class_id: parsed.data.class_id,
-      term_id: parsed.data.term_id,
+      subject_id: body.subject_id,
+      class_id: body.class_id,
+      term_id: body.term_id,
       academic_year_id: academicYearId,
-      exam_type: parsed.data.exam_type,
+      exam_type: body.exam_type,
       score: m.score,
       max_score: m.max_score || 100,
       entered_by: ctx.user.id,
@@ -121,7 +106,7 @@ export async function POST(request: NextRequest) {
       // here so the reviewer sees the new "Awaiting Review" group
       // immediately on the next list refresh. Draft saves leave the
       // status as "draft" (or whatever the row was before).
-      review_status: parsed.data.submit_final ? "submitted" : "draft",
+      review_status: body.submit_final ? "submitted" : "draft",
     }));
 
     const { data, error } = await ctx.supabase
@@ -140,16 +125,14 @@ export async function POST(request: NextRequest) {
       entity_id: null,
       old_value: null,
       new_value: {
-        subject_id: parsed.data.subject_id,
-        class_id: parsed.data.class_id,
+        subject_id: body.subject_id,
+        class_id: body.class_id,
         count: records.length,
-        exam_type: parsed.data.exam_type },
-      ip_address: null });
+        exam_type: body.exam_type,
+      },
+      ip_address: null,
+    });
 
-    return successResponse(data, 201);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return respond.status(201, data);
+  },
+});

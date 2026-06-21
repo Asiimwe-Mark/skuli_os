@@ -1,92 +1,100 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { createClient } from '@/lib/supabase/server';
-import { generateTimetablePDF } from '@/lib/pdf/timetable';
+import { route, errorResponse } from "@/lib/http";
+import { generateTimetablePDF } from "@/lib/pdf/timetable";
 
-export async function GET(request: NextRequest) {
-  const searchParams = request.nextUrl.searchParams;
-  const classId = searchParams.get('classId');
-  const yearId = searchParams.get('yearId');
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
+    const supabase = ctx.supabase;
+    const searchParams = request.nextUrl.searchParams;
+    const classId = searchParams.get("classId");
+    const yearId = searchParams.get("yearId");
 
-  if (!classId || !yearId) {
-    return NextResponse.json({ error: 'Missing classId or yearId' }, { status: 400 });
-  }
-
-  try {
-    const supabase = await createClient();
-
-    // Get user's school
-    const { data: schoolIdData, error: schoolError } = await supabase.rpc('get_user_school_id');
-    if (schoolError || !schoolIdData) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    if (!classId || !yearId) {
+      return errorResponse("classId and yearId are required", 400);
     }
-    const schoolId = schoolIdData as string;
 
-    // Fetch school details
+    // Fetch school details (explicit school_id filter — defense in depth)
     const { data: school, error: schoolFetchError } = await supabase
-      .from('schools')
-      .select('name')
-      .eq('id', schoolId)
+      .from("schools")
+      .select("name")
+      .eq("id", schoolId)
       .single();
 
     if (schoolFetchError || !school) {
-      return NextResponse.json({ error: 'School not found' }, { status: 404 });
+      return errorResponse("School not found", 404);
     }
 
     // Fetch class details (scoped to school)
     const { data: classData, error: classFetchError } = await supabase
-      .from('classes')
-      .select('name')
-      .eq('id', classId)
-      .eq('school_id', schoolId)
+      .from("classes")
+      .select("name")
+      .eq("id", classId)
+      .eq("school_id", schoolId)
       .single();
 
     if (classFetchError || !classData) {
-      return NextResponse.json({ error: 'Class not found' }, { status: 404 });
+      return errorResponse("Class not found", 404);
     }
 
     // Fetch academic year details (scoped to school)
     const { data: yearData, error: yearFetchError } = await supabase
-      .from('academic_years')
-      .select('name')
-      .eq('id', yearId)
-      .eq('school_id', schoolId)
+      .from("academic_years")
+      .select("name")
+      .eq("id", yearId)
+      .eq("school_id", schoolId)
       .single();
 
     if (yearFetchError || !yearData) {
-      return NextResponse.json({ error: 'Academic year not found' }, { status: 404 });
+      return errorResponse("Academic year not found", 404);
     }
 
     // Fetch periods
     const { data: periods, error: periodsError } = await supabase
-      .from('timetable_periods')
-      .select('*')
-      .eq('school_id', schoolId)
-      .eq('is_deleted', false)
-      .order('sort_order');
+      .from("timetable_periods")
+      .select("*")
+      .eq("school_id", schoolId)
+      .eq("is_deleted", false)
+      .order("sort_order");
 
     if (periodsError) throw periodsError;
 
     // Fetch slots with details
     const { data: slotsData, error: slotsError } = await supabase
-      .from('timetable_slots')
+      .from("timetable_slots")
       .select(`
         *,
         subject:subjects(id, name, color),
         teacher:users(id, full_name)
       `)
-      .eq('school_id', schoolId)
-      .eq('class_id', classId)
-      .eq('academic_year_id', yearId)
-      .eq('is_deleted', false);
+      .eq("school_id", schoolId)
+      .eq("class_id", classId)
+      .eq("academic_year_id", yearId)
+      .eq("is_deleted", false);
 
     if (slotsError) throw slotsError;
 
-    const slots = (slotsData || []).map((s: any) => ({
+    const slots = (slotsData || []).map((s: {
+      id: string;
+      period_id: string;
+      day_of_week: number;
+      subject: unknown;
+      teacher: unknown;
+      room: string | null;
+    }) => ({
       id: s.id,
       period_id: s.period_id,
       day_of_week: s.day_of_week,
-      subject: s.subject,
-      teacher: s.teacher,
+      subject: (s.subject ?? null) as
+        | { name: string | null; color?: string | null }
+        | null,
+      teacher:
+        s.teacher && typeof s.teacher === "object"
+          ? {
+              full_name: ((s.teacher as { full_name?: unknown }).full_name ??
+                null) as string | null,
+            }
+          : null,
       room: s.room,
     }));
 
@@ -99,14 +107,13 @@ export async function GET(request: NextRequest) {
       slots
     );
 
-    return new NextResponse(pdfBlob, {
+    // Migration guide §7.3: PDF routes return a binary blob. The
+    // route() wrapper passes a Response through unchanged.
+    return new Response(pdfBlob, {
       headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="timetable-${classData.name}.pdf"`,
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="timetable-${classData.name}.pdf"`,
       },
     });
-  } catch (error) {
-    console.error('Error generating timetable PDF:', error);
-    return NextResponse.json({ error: 'Failed to generate PDF' }, { status: 500 });
-  }
-}
+  },
+});

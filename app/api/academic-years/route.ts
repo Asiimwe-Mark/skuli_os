@@ -7,27 +7,20 @@
  *   - Promote page (year selector)
  *   - Settings → Academic years
  */
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
-import { withSchoolCache, setCacheHeader } from "@/lib/api-cache";
+import { route, respond, withSchoolReadCache } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-
+export const GET = route({
+  // All signed-in roles can read academic years; teachers and parents
+  // need them on the portal and marks pages.
+  roles: [],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const currentOnly = searchParams.get("current_only") === "true";
 
     const inputShape = `academic-years:${currentOnly}`;
 
-    const { value, hit } = await withSchoolCache(
+    const { value, applyTo } = await withSchoolReadCache(
       { schoolId, inputShape, revalidateSeconds: 300 },
       async () => {
         let query = ctx.supabase
@@ -47,12 +40,6 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    const response = successResponse(value);
-    return setCacheHeader(response, hit);
-  } catch (err: unknown) {
-    const status = getErrorStatus(err);
-    const message =
-      err instanceof Error ? err.message : "Failed to load academic years";
-    return errorResponse(message, status);
-  }
-}
+    return applyTo(respond.cacheable(value));
+  },
+});

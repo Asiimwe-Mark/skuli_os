@@ -1,5 +1,0 @@
-[functions.weekly-defaulter-reminder]
-verify_jwt = false
-
-[functions.weekly-defaulter-reminder.cron]
-schedule = "0 5 * * 1"

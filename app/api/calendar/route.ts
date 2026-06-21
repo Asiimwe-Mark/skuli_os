@@ -1,14 +1,6 @@
-import { NextRequest } from "next/server";
-import type { Database } from "@/types/database";
 import { z } from "zod";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import type { Database } from "@/types/database";
+import { route, respond, withSchoolReadCache, AuthError, dbError } from "@/lib/http";
 
 const eventSchema = z.object({
   title: z.string().min(1),
@@ -18,84 +10,96 @@ const eventSchema = z.object({
   event_type: z.string().min(1),
   affects_attendance: z.boolean().optional(),
   class_id: z.string().uuid().optional().nullable(),
-  is_public: z.boolean().optional() });
+  is_public: z.boolean().optional(),
+});
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "TEACHER", "BURSAR", "SUPER_ADMIN"]);
+type EventType =
+  | "holiday"
+  | "exam"
+  | "event"
+  | "closure"
+  | "meeting";
 
-    const { searchParams } = new URL(request.url);
-    const month = searchParams.get("month"); // YYYY-MM
-    const classId = searchParams.get("class_id");
-
-    let query = ctx.supabase
-      .from("calendar_events")
-      .select("*, class:classes(id, name)")
-      .eq("school_id", schoolId)
-      .eq("is_deleted", false);
-
-    if (month) {
-      const startDate = `${month}-01`;
-      const [y, m] = month.split("-").map(Number);
-      const endMonth = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
-      const endDate = `${endMonth}-01`;
-      query = query.gte("event_date", startDate).lt("event_date", endDate);
-    }
-
-    if (classId) {
-      query = query.or(`class_id.is.null,class_id.eq.${classId}`);
-    }
-
-    const { data, error } = await query.order("event_date", { ascending: true });
-
-    if (error) return dbError(error, "Database error");
-
-    return successResponse(data ?? []);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
+function asEventType(s: string): EventType {
+  return s as EventType;
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "TEACHER", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
+    const { searchParams } = new URL(request.url);
+    const month = searchParams.get("month");
+    const classId = searchParams.get("class_id");
 
-    const body = await request.json();
-    const parsed = eventSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
+    const inputShape = `calendar:${month ?? "_"}:${classId ?? "_"}`;
 
-    // A class-scoped event must reference a class in this school.
-    if (parsed.data.class_id) {
+    const { value, applyTo } = await withSchoolReadCache(
+      { schoolId, inputShape, revalidateSeconds: 60 },
+      async () => {
+        let query = ctx.supabase
+          .from("calendar_events")
+          .select("*, class:classes(id, name)")
+          .eq("school_id", schoolId)
+          .eq("is_deleted", false);
+
+        if (month) {
+          const startDate = `${month}-01`;
+          const [y, m] = month.split("-").map(Number);
+          const endMonth =
+            m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`;
+          const endDate = `${endMonth}-01`;
+          query = query.gte("event_date", startDate).lt("event_date", endDate);
+        }
+
+        if (classId) {
+          query = query.or(`class_id.is.null,class_id.eq.${classId}`);
+        }
+
+        const { data, error } = await query.order("event_date", {
+          ascending: true,
+        });
+        if (error) throw error;
+        return data ?? [];
+      },
+    );
+
+    return applyTo(respond.cacheable(value));
+  },
+});
+
+export const POST = route({
+  roles: ["SCHOOL_ADMIN"],
+  schema: eventSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
+
+    if (body.class_id) {
       const { data: cls } = await ctx.supabase
         .from("classes")
         .select("id")
-        .eq("id", parsed.data.class_id)
+        .eq("id", body.class_id)
         .eq("school_id", schoolId)
         .maybeSingle();
-      if (!cls) return errorResponse("Invalid class for this school", 400);
+      if (!cls) {
+        throw new AuthError("Invalid class for this school", 400);
+      }
     }
 
     const { data, error } = await ctx.supabase
       .from("calendar_events")
       .insert({
         school_id: schoolId,
-        title: parsed.data.title,
-        description: parsed.data.description ?? null,
-        event_date: parsed.data.event_date,
-        end_date: parsed.data.end_date ?? null,
-        event_type: parsed.data.event_type as 'holiday' | 'exam' | 'event' | 'closure' | 'meeting',
-        affects_attendance: parsed.data.affects_attendance ?? false,
-        class_id: parsed.data.class_id ?? null,
-        is_public: parsed.data.is_public ?? true,
-        created_by: ctx.user.id })
+        title: body.title,
+        description: body.description ?? null,
+        event_date: body.event_date,
+        end_date: body.end_date ?? null,
+        event_type: asEventType(body.event_type),
+        affects_attendance: body.affects_attendance ?? false,
+        class_id: body.class_id ?? null,
+        is_public: body.is_public ?? true,
+        created_by: ctx.user.id,
+      })
       .select()
       .single();
 
@@ -107,33 +111,20 @@ export async function POST(request: NextRequest) {
       action: "calendar_event_created",
       entity_type: "calendar_event",
       entity_id: data?.id ?? null,
-      new_value: { title: parsed.data.title } } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      new_value: { title: body.title },
+    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse(data, 201);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN"]);
-
-    const body = await request.json();
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN"],
+  schema: eventSchema.partial().extend({ id: z.string().uuid() }),
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
     const { id, ...updates } = body;
 
-    if (!id) return errorResponse("Event ID is required", 400);
-
-    const parsed = eventSchema.partial().safeParse(updates);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    // Verify ownership
     const { data: existing } = await ctx.supabase
       .from("calendar_events")
       .select("id")
@@ -141,46 +132,47 @@ export async function PATCH(request: NextRequest) {
       .eq("school_id", schoolId)
       .single();
 
-    if (!existing) return errorResponse("Event not found", 404);
+    if (!existing) {
+      throw new AuthError("Event not found", 404);
+    }
 
-    // If reassigning to a class, that class must belong to this school.
-    if (parsed.data.class_id) {
+    if (updates.class_id) {
       const { data: cls } = await ctx.supabase
         .from("classes")
         .select("id")
-        .eq("id", parsed.data.class_id)
+        .eq("id", updates.class_id)
         .eq("school_id", schoolId)
         .maybeSingle();
-      if (!cls) return errorResponse("Invalid class for this school", 400);
+      if (!cls) {
+        throw new AuthError("Invalid class for this school", 400);
+      }
     }
 
     const { data, error } = await ctx.supabase
       .from("calendar_events")
-      .update(parsed.data as unknown as Database["public"]["Tables"]["calendar_events"]["Update"])
+      .update(
+        updates as unknown as Database["public"]["Tables"]["calendar_events"]["Update"],
+      )
       .eq("id", id)
       .select()
       .single();
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN"]);
-
+export const DELETE = route({
+  roles: ["SCHOOL_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
-    if (!id) return errorResponse("Event ID is required", 400);
+    if (!id) {
+      throw new AuthError("Event ID is required", 400);
+    }
 
     const { error } = await ctx.supabase
       .from("calendar_events")
@@ -195,12 +187,9 @@ export async function DELETE(request: NextRequest) {
       user_id: ctx.user.id,
       action: "calendar_event_deleted",
       entity_type: "calendar_event",
-      entity_id: id } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      entity_id: id,
+    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse({ deleted: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { deleted: true };
+  },
+});

@@ -212,7 +212,7 @@ describe("H-2: /api/payments/stk-push parent IDOR", () => {
     mockState.fromQueues["students"] = [
       {
         data: {
-          id: "student-1",
+          id: "11111111-1111-4111-8111-111111111111",
           full_name: "Kid",
           parent_phone: "+256700000001",
           school_id: "school-1",
@@ -226,7 +226,7 @@ describe("H-2: /api/payments/stk-push parent IDOR", () => {
     const req = new Request("http://localhost/api/payments/stk-push", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ student_id: "student-1", amount: 1000 }),
+      body: JSON.stringify({ student_id: "11111111-1111-4111-8111-111111111111", amount: 1000 }),
     });
     const res = await POST(req as never);
     expect(res.status).toBe(403);
@@ -244,7 +244,7 @@ describe("H-2: /api/payments/stk-push parent IDOR", () => {
     mockState.fromQueues["students"] = [
       {
         data: {
-          id: "student-1",
+          id: "11111111-1111-4111-8111-111111111111",
           full_name: "Kid",
           parent_phone: "+256700000001",
           school_id: "school-1",
@@ -253,7 +253,7 @@ describe("H-2: /api/payments/stk-push parent IDOR", () => {
       },
     ];
     mockState.fromQueues["parent_students"] = [
-      { data: { student_id: "student-1" }, error: null },
+      { data: { student_id: "11111111-1111-4111-8111-111111111111" }, error: null },
     ];
     mockState.fromQueues["terms"] = [
       { data: { id: "term-1", name: "Term 1" }, error: null },
@@ -265,7 +265,7 @@ describe("H-2: /api/payments/stk-push parent IDOR", () => {
     const req = new Request("http://localhost/api/payments/stk-push", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ student_id: "student-1", amount: 1000 }),
+      body: JSON.stringify({ student_id: "11111111-1111-4111-8111-111111111111", amount: 1000 }),
     });
     const res = await POST(req as never);
     if (res.status !== 200) {

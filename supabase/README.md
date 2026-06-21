@@ -28,6 +28,34 @@ supabase/
 └── README.md                   # You are here
 ```
 
+## Append-only policy (CRITICAL — analysis finding #1)
+
+Supabase migrations are **immutable once applied**. The architectural
+analysis found the history had been edited and squashed repeatedly
+(12 migrations modified, 3 deleted, comments referencing files that
+never existed such as `00025`/`00036`/`00066`). Editing or deleting an
+already-applied migration silently diverges every deployed and preview
+database from `main` — the exact drift that produces an unexplained
+production data leak months later.
+
+Rules from here on:
+
+1. **Treat `0001`–`0029` as a FROZEN baseline.** Do not edit or delete
+   any existing migration file, even to fix a comment.
+2. **Strictly append.** New schema changes go in a brand-new file with
+   the next number (`0030_*.sql`, then `0031_*.sql`, ...). Never reuse
+   or renumber.
+3. **Never mix DDL and security hardening retroactively.** A new policy
+   change is a new migration, not an edit to the table-creation file.
+4. If the baseline genuinely must be reset, squash into a single
+   `0001_init.sql` as a deliberate, reviewed operation and re-baseline
+   every environment — do not do it incrementally.
+
+The stale comments in `0018_rls_hardening.sql` and `0029_finalize.sql`
+that reference non-existent migration numbers should be corrected only
+as part of a deliberate, reviewed re-baseline, never as ad-hoc edits to
+applied files.
+
 ## Numbering scheme
 
 Files are 4-digit zero-padded so the order is obvious (`0001` runs before `0100`).

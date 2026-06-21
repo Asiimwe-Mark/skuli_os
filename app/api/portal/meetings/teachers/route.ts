@@ -1,17 +1,9 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-} from "@/lib/api-helpers";
+import { route, errorResponse } from "@/lib/http";
 
-export async function GET(req: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["PARENT"]);
-
-    const { searchParams } = new URL(req.url);
+export const GET = route({
+  roles: ["PARENT"],
+  handler: async (ctx, request) => {
+    const { searchParams } = new URL(request.url);
     const studentId = searchParams.get("student_id");
 
     if (!studentId) {
@@ -41,14 +33,14 @@ export async function GET(req: NextRequest) {
       .single();
 
     if (!student?.current_class_id) {
-      return successResponse([]);
+      return [];
     }
 
     const classData = student.classes as Record<string, unknown> | null;
     const classTeacherId = classData?.class_teacher_id as string | null;
 
     if (!classTeacherId) {
-      return successResponse([]);
+      return [];
     }
 
     const { data: staff } = await ctx.supabase
@@ -58,11 +50,7 @@ export async function GET(req: NextRequest) {
       .eq("is_active", true)
       .single();
 
-    if (!staff) return successResponse([]);
-    return successResponse([staff]);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = err instanceof Error && "status" in err ? (err as { status: number }).status : 500;
-    return errorResponse(message, status);
-  }
-}
+    if (!staff) return [];
+    return [staff];
+  },
+});

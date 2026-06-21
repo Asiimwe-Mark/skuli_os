@@ -1,22 +1,13 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-} from "@/lib/api-helpers";
+import { route, dbError } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPushToUser } from "@/lib/push";
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
-
+export const POST = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  handler: async () => {
     const adminClient = createAdminClient();
 
-    // Fetch pending queue items (limit 100 per batch)
     const { data: items, error: fetchError } = await adminClient
       .from("push_queue")
       .select("id, user_id, title, body, url")
@@ -25,8 +16,7 @@ export async function POST(request: NextRequest) {
       .limit(100);
 
     if (fetchError) return dbError(fetchError, "Failed to fetch data");
-    if (!items || items.length === 0)
-      return successResponse({ processed: 0, sent: 0 });
+    if (!items || items.length === 0) return { processed: 0, sent: 0 };
 
     let totalSent = 0;
 
@@ -53,14 +43,6 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return successResponse({ processed: items.length, sent: totalSent });
-  } catch (err: unknown) {
-    const message =
-      err instanceof Error ? err.message : "Internal server error";
-    const status =
-      err instanceof Error && "status" in err
-        ? (err as { status: number }).status
-        : 500;
-    return errorResponse(message, status);
-  }
-}
+    return { processed: items.length, sent: totalSent };
+  },
+});

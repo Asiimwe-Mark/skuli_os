@@ -1,41 +1,33 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { z } from "zod";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 
-export async function GET() {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["GROUP_ADMIN", "SUPER_ADMIN"]);
-
-    // Get the group this admin manages
+export const GET = route({
+  roles: ["GROUP_ADMIN", "SUPER_ADMIN"],
+  noSchoolRequired: true,
+  handler: async (ctx) => {
     const { data: groupAdmin } = await ctx.supabase
       .from("group_admins")
       .select("group_id")
       .eq("user_id", ctx.user.id)
       .single();
 
-    if (!groupAdmin) return errorResponse("No group found for this user", 404);
+    if (!groupAdmin) throw new Error("No group found for this user");
 
-    // Get schools in this group
     const { data: schools, error } = await ctx.supabase
       .from("schools")
-      .select("id, name, district, email, phone, subscription_plan, subscription_status, created_at")
+      .select(
+        "id, name, district, email, phone, subscription_plan, subscription_status, created_at",
+      )
       .eq("group_id", groupAdmin.group_id)
       .eq("is_deleted", false)
       .order("name");
 
-    if (error) return dbError(error, "Database error");
+    if (error) throw new Error("Database error");
 
-    // Enrich with student counts and fee totals
-    const enriched = [];
+    const enriched: Array<
+      Record<string, unknown> & { student_count: number; fee_collected: number }
+    > = [];
     for (const school of schools ?? []) {
       const { count: studentCount } = await ctx.supabase
         .from("students")
@@ -50,29 +42,27 @@ export async function GET() {
         .eq("school_id", school.id)
         .eq("status", "confirmed");
 
-      const totalFees = (payments ?? []).reduce((sum: number, p: any) => sum + (p.amount ?? 0), 0);
+      const totalFees = (payments ?? []).reduce(
+        (sum: number, p: { amount?: number }) => sum + (p.amount ?? 0),
+        0,
+      );
 
       enriched.push({
-        ...school,
+        ...(school as Record<string, unknown>),
         student_count: studentCount ?? 0,
         fee_collected: totalFees,
       });
     }
 
-    // Group totals
     const totals = {
       schools: enriched.length,
       students: enriched.reduce((s, e) => s + e.student_count, 0),
       fees: enriched.reduce((s, e) => s + e.fee_collected, 0),
     };
 
-    return successResponse({ schools: enriched, totals });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { schools: enriched, totals };
+  },
+});
 
 const createSchoolSchema = z.object({
   name: z.string().min(1),
@@ -83,50 +73,38 @@ const createSchoolSchema = z.object({
   subscription_plan: z.enum(["starter", "growth", "pro"]).optional(),
 });
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["GROUP_ADMIN", "SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = createSchoolSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    // Get the group
+export const POST = route({
+  roles: ["GROUP_ADMIN", "SUPER_ADMIN"],
+  noSchoolRequired: true,
+  schema: createSchoolSchema,
+  handler: async (ctx, body) => {
     const { data: groupAdmin } = await ctx.supabase
       .from("group_admins")
       .select("group_id")
       .eq("user_id", ctx.user.id)
       .single();
 
-    if (!groupAdmin) return errorResponse("No group found", 404);
+    if (!groupAdmin) throw new Error("No group found");
 
     const { data: school, error } = await ctx.supabase
       .from("schools")
       .insert({
-        name: parsed.data.name,
-        district: parsed.data.district ?? null,
-        email: parsed.data.email ?? null,
-        phone: parsed.data.phone ?? null,
-        address: parsed.data.address ?? null,
-        subscription_plan: parsed.data.subscription_plan ?? "starter",
+        name: body.name,
+        district: body.district ?? null,
+        email: body.email ?? null,
+        phone: body.phone ?? null,
+        address: body.address ?? null,
+        subscription_plan: body.subscription_plan ?? "starter",
         group_id: groupAdmin.group_id,
-        school_type: 'both',
+        school_type: "both",
         school_code: `SCH${Date.now()}`,
-        subscription_status: 'trial',
+        subscription_status: "trial",
         max_students: 100,
       } as unknown as Database["public"]["Tables"]["schools"]["Insert"])
       .select()
       .single();
 
-    if (error) return dbError(error, "Database error", 400);
-
-    return successResponse(school, 201);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    if (error) throw new Error("Database error");
+    return school;
+  },
+});

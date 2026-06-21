@@ -11,21 +11,13 @@
  *   - Marks entry (class filter)
  *   - Reports (class filter)
  */
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
-import { withSchoolCache, setCacheHeader } from "@/lib/api-cache";
+import { route, respond, withSchoolReadCache } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-
+export const GET = route({
+  // All signed-in roles can read classes; parents need them on the portal.
+  roles: [],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const stream = searchParams.get("stream");
     const level = searchParams.get("level");
@@ -33,7 +25,7 @@ export async function GET(request: NextRequest) {
 
     const inputShape = `classes:${stream ?? "_"}:${level ?? "_"}:${includeDeleted}`;
 
-    const { value, hit } = await withSchoolCache(
+    const { value, applyTo } = await withSchoolReadCache(
       { schoolId, inputShape, revalidateSeconds: 120 },
       async () => {
         let query = ctx.supabase
@@ -58,12 +50,6 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    const response = successResponse(value);
-    return setCacheHeader(response, hit);
-  } catch (err: unknown) {
-    const status = getErrorStatus(err);
-    const message =
-      err instanceof Error ? err.message : "Failed to load classes";
-    return errorResponse(message, status);
-  }
-}
+    return applyTo(respond.cacheable(value));
+  },
+});

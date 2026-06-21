@@ -1,28 +1,17 @@
-import { NextRequest } from "next/server";
 import React from "react";
 import { renderToBuffer } from "@react-pdf/renderer";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 import { aggregateEmisData } from "@/lib/emis/aggregate";
 import { EmisReportPDF } from "@/lib/pdf/emis-report";
 import { emisReportSchema } from "@/lib/validations/emis";
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "SUPER_ADMIN"]);
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+  schema: emisReportSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
-    const body = await request.json().catch(() => ({}));
-    const parsed = emisReportSchema.safeParse(body);
-    if (!parsed.success) return errorResponse(parsed.error.issues[0].message, 400);
-
-    const { academic_year_id, term_id } = parsed.data;
+    const { academic_year_id, term_id } = body;
     const data = await aggregateEmisData(ctx.supabase, schoolId, term_id);
 
     const { data: school } = await ctx.supabase
@@ -40,11 +29,10 @@ export async function POST(request: NextRequest) {
           data,
           logoUrl: school?.logo_url ?? null,
           reportDate: new Date().toLocaleDateString("en-UG"),
-        })
-      )
+        }),
+      ),
     );
 
-    // Audit log
     await ctx.supabase.from("audit_logs").insert({
       school_id: schoolId,
       user_id: ctx.user.id,
@@ -54,7 +42,6 @@ export async function POST(request: NextRequest) {
       new_value: { term_id: term_id ?? null, record_count: data.totals.total },
     });
 
-    // Report log
     await ctx.supabase.from("emis_report_logs").insert({
       school_id: schoolId,
       generated_by: ctx.user.id,
@@ -71,7 +58,5 @@ export async function POST(request: NextRequest) {
         "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+  },
+});

@@ -474,20 +474,13 @@ export default function StudentProfilePage() {
 
       if (payError) throw payError;
 
-      // Update fee account
-      const newPaid = feeAccount.total_paid + amount;
-      const newBalance = feeAccount.total_expected - newPaid;
-      const newStatus =
-        newBalance <= 0 ? (newBalance < 0 ? "overpaid" : "paid") : "partial";
-
-      await supabase
-        .from("fee_accounts")
-        .update({
-          total_paid: newPaid,
-          balance: newBalance,
-          status: newStatus,
-        })
-        .eq("id", feeAccount.id);
+      // §4.2: do NOT recompute balance / status client-side. The
+      // AFTER INSERT trigger on fee_payments (trg_fee_payment_recalc)
+      // calls recalculate_fee_account(), which is the single source
+      // of truth for total_expected (gross − discount), total_paid,
+      // balance, and status. Doing it twice here would risk a
+      // mismatch if the JS path skipped a discount or used a stale
+      // fee_account row. We just refresh the local state below.
 
       toast({
         title: "Payment Recorded",

@@ -21,6 +21,7 @@
  *      mechanism.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NextRequest } from "next/server";
 
 type Profile = {
   id: string;
@@ -37,6 +38,12 @@ const mockState: {
   deleteCalls: Array<{ table: string; filter: string }>;
   rateLimitSuccess: boolean;
   submittedOrder: unknown;
+  // §10.1: the route delegates the "claim N records atomically"
+  // step to a SECURITY DEFINER RPC. The test drives the response
+  // through claimResult. Empty / null means "no rows claimed", which
+  // is what most of the negative tests want.
+  claimResult: { data: Array<{ id: string }>; error: { message: string } | null } | null;
+  rpcCalls: Array<{ fn: string; args: Record<string, unknown> }>;
 } = {
   current: null,
   fromQueues: {},
@@ -48,6 +55,8 @@ const mockState: {
     orderTrackingId: "ot-1",
     redirectUrl: "https://pay.pesapal.com/checkout/abc",
   },
+  claimResult: { data: [], error: null },
+  rpcCalls: [],
 };
 
 vi.mock("@/lib/api-helpers", async () => {
@@ -106,8 +115,18 @@ vi.mock("@/lib/api-helpers", async () => {
         };
         return chain;
       };
+      const supabase = { from, rpc };
+      function rpc(fn: string, args: Record<string, unknown>) {
+        // §10.1: the route calls `payroll_claim_records_for_batch`
+        // and reads `data` / `error` from the response. The test
+        // sets `mockState.claimResult` to drive the outcome.
+        mockState.rpcCalls.push({ fn, args });
+        return Promise.resolve(
+          mockState.claimResult ?? { data: [], error: null },
+        );
+      }
       return {
-        supabase: { from },
+        supabase,
         user: { id: profile.id, email: "admin@school.com" } as never,
         profile,
       };
@@ -145,6 +164,8 @@ beforeEach(() => {
   mockState.updateCalls = [];
   mockState.deleteCalls = [];
   mockState.rateLimitSuccess = true;
+  mockState.claimResult = { data: [], error: null };
+  mockState.rpcCalls = [];
   mockState.submittedOrder = {
     orderTrackingId: "ot-1",
     redirectUrl: "https://pay.pesapal.com/checkout/abc",
@@ -165,30 +186,34 @@ describe("POST /api/v1/payroll/approve", () => {
   it("rejects unauthenticated callers with 401", async () => {
     mockState.current = null;
     const { POST } = await import("@/app/api/v1/payroll/approve/route");
-    const req = new Request("http://localhost/api/v1/payroll/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const req = new NextRequest(
+      new Request("http://localhost/api/v1/payroll/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
         payroll_record_ids: ["11111111-1111-4111-8111-111111111111"],
         funding_mechanism: "MOMO_PUSH",
       }),
-    });
+    }),
+    );
     const res = await POST(req as never);
     expect(res.status).toBe(401);
-  });
+  }, 15000);
 
   it("returns 429 when the school is over the rate limit", async () => {
     mockState.current = makeProfile();
     mockState.rateLimitSuccess = false;
     const { POST } = await import("@/app/api/v1/payroll/approve/route");
-    const req = new Request("http://localhost/api/v1/payroll/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const req = new NextRequest(
+      new Request("http://localhost/api/v1/payroll/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
         payroll_record_ids: ["11111111-1111-4111-8111-111111111111"],
         funding_mechanism: "MOMO_PUSH",
       }),
-    });
+    }),
+    );
     const res = await POST(req as never);
     expect(res.status).toBe(429);
     expect(mockState.insertCalls).toHaveLength(0); // no batch created
@@ -197,14 +222,16 @@ describe("POST /api/v1/payroll/approve", () => {
   it("returns 400 on invalid funding_mechanism", async () => {
     mockState.current = makeProfile();
     const { POST } = await import("@/app/api/v1/payroll/approve/route");
-    const req = new Request("http://localhost/api/v1/payroll/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const req = new NextRequest(
+      new Request("http://localhost/api/v1/payroll/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
         payroll_record_ids: ["11111111-1111-4111-8111-111111111111"],
         funding_mechanism: "BITCOIN",
       }),
-    });
+    }),
+    );
     const res = await POST(req as never);
     expect(res.status).toBe(400);
   });
@@ -212,36 +239,54 @@ describe("POST /api/v1/payroll/approve", () => {
   it("returns 400 on empty payroll_record_ids", async () => {
     mockState.current = makeProfile();
     const { POST } = await import("@/app/api/v1/payroll/approve/route");
-    const req = new Request("http://localhost/api/v1/payroll/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const req = new NextRequest(
+      new Request("http://localhost/api/v1/payroll/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
         payroll_record_ids: [],
         funding_mechanism: "MOMO_PUSH",
       }),
-    });
+    }),
+    );
     const res = await POST(req as never);
     expect(res.status).toBe(400);
   });
 
   it("returns 404 when no eligible records are found", async () => {
     mockState.current = makeProfile();
-    mockState.fromQueues["payroll_records"] = [{ data: [], error: null }];
+    // §10.1: the claim RPC returns zero rows when the requested
+    // payroll_record_ids are not in a pending state. The route
+    // surfaces this as a 409 so the operator knows to re-fetch;
+    // a 404 would be misleading.
+    mockState.claimResult = { data: [], error: null };
     const { POST } = await import("@/app/api/v1/payroll/approve/route");
-    const req = new Request("http://localhost/api/v1/payroll/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const req = new NextRequest(
+      new Request("http://localhost/api/v1/payroll/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
         payroll_record_ids: ["11111111-1111-4111-8111-111111111111"],
         funding_mechanism: "MOMO_PUSH",
       }),
-    });
+    }),
+    );
     const res = await POST(req as never);
-    expect(res.status).toBe(404);
+    // §10.1: claim returns zero rows -> 409. The test previously
+    // expected 404 because the route used to do a `from("payroll_records").in().maybeSingle()`
+    // check before claiming. The claim RPC is the source of truth now.
+    expect(res.status).toBe(409);
   });
 
   it("returns 400 when Pesapal is not configured for the school", async () => {
     mockState.current = makeProfile();
+    // §10.1: the claim RPC must succeed for the rest of the route
+    // to run; otherwise the missing pesapal config is never even
+    // checked.
+    mockState.claimResult = {
+      data: [{ id: "11111111-1111-4111-8111-111111111111" }],
+      error: null,
+    };
     mockState.fromQueues["payroll_records"] = [
       { data: [{ id: "r-1", staff_id: "s-1", net_salary: 500000, basic_salary: 500000, allowances: 0, deductions: 0 }], error: null },
     ];
@@ -249,20 +294,27 @@ describe("POST /api/v1/payroll/approve", () => {
       { data: { id: "sc-1", name: "School", school_code: "SCH", email: "s@s.com", pesapal_ipn_id: null }, error: null },
     ];
     const { POST } = await import("@/app/api/v1/payroll/approve/route");
-    const req = new Request("http://localhost/api/v1/payroll/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const req = new NextRequest(
+      new Request("http://localhost/api/v1/payroll/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
         payroll_record_ids: ["11111111-1111-4111-8111-111111111111"],
         funding_mechanism: "MOMO_PUSH",
       }),
-    });
+    }),
+    );
     const res = await POST(req as never);
     expect(res.status).toBe(400);
   });
 
   it("creates a batch and a line item, returns the funding URL", async () => {
     mockState.current = makeProfile();
+    // §10.1: claim must succeed for the disbursement to start.
+    mockState.claimResult = {
+      data: [{ id: "11111111-1111-4111-8111-111111111111" }],
+      error: null,
+    };
     mockState.fromQueues["payroll_records"] = [
       {
         data: [
@@ -308,14 +360,16 @@ describe("POST /api/v1/payroll/approve", () => {
       },
     ];
     const { POST } = await import("@/app/api/v1/payroll/approve/route");
-    const req = new Request("http://localhost/api/v1/payroll/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const req = new NextRequest(
+      new Request("http://localhost/api/v1/payroll/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
         payroll_record_ids: ["11111111-1111-4111-8111-111111111111"],
         funding_mechanism: "MOMO_PUSH",
       }),
-    });
+    }),
+    );
     const res = await POST(req as never);
     const body = await res.json();
     expect(res.status).toBe(200);
@@ -350,6 +404,11 @@ describe("POST /api/v1/payroll/approve", () => {
 
   it("refuses a MOBILE_MONEY payout for a worker with an invalid phone", async () => {
     mockState.current = makeProfile();
+    // §10.1: claim must succeed for the rest of the route to run.
+    mockState.claimResult = {
+      data: [{ id: "11111111-1111-4111-8111-111111111111" }],
+      error: null,
+    };
     mockState.fromQueues["payroll_records"] = [
       {
         data: [
@@ -389,14 +448,16 @@ describe("POST /api/v1/payroll/approve", () => {
       },
     ];
     const { POST } = await import("@/app/api/v1/payroll/approve/route");
-    const req = new Request("http://localhost/api/v1/payroll/approve", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
+    const req = new NextRequest(
+      new Request("http://localhost/api/v1/payroll/approve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
         payroll_record_ids: ["11111111-1111-4111-8111-111111111111"],
         funding_mechanism: "MOMO_PUSH",
       }),
-    });
+    }),
+    );
     const res = await POST(req as never);
     expect(res.status).toBe(400);
     const body = await res.json();

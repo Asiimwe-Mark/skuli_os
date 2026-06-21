@@ -1,11 +1,5 @@
-import { NextRequest } from "next/server";
 import { z } from "zod";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse,
-} from "@/lib/api-helpers";
+import { route, errorResponse } from "@/lib/http";
 import { FeeStatementPDF } from "@/lib/pdf/fee-statement";
 import { Document, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
@@ -15,19 +9,12 @@ const statementSchema = z.object({
   term_id: z.string().uuid().optional(),
 });
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = statementSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    const { student_id, term_id } = parsed.data;
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"],
+  schema: statementSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
+    const { student_id, term_id } = body;
 
     // Verify student belongs to school
     const { data: student } = await ctx.supabase
@@ -110,7 +97,7 @@ export async function POST(request: NextRequest) {
       current_class: { name: string } | null;
     };
 
-    const pdfStream = renderToBuffer(
+    const buffer = await renderToBuffer(
       React.createElement(Document, null, React.createElement(FeeStatementPDF, {
         school: {
           name: school?.name || "School",
@@ -128,19 +115,13 @@ export async function POST(request: NextRequest) {
       }))
     );
 
-    const buffer = await pdfStream;
-
+    // Migration guide §7.3: PDF routes return a binary Response that
+    // the wrapper passes through unchanged.
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="fee-statement-${studentData.admission_number}.pdf"`,
       },
     });
-  } catch (err) {
-    if (err instanceof Error && "status" in err) {
-      const apiErr = err as { status: number; message: string };
-      return errorResponse(apiErr.message, apiErr.status);
-    }
-    return errorResponse("Internal server error", 500);
-  }
-}
+  },
+});

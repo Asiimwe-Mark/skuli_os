@@ -1,15 +1,5 @@
-import { NextRequest } from "next/server";
 import { z } from "zod";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus,
-  AuthError,
-} from "@/lib/api-helpers";
+import { route, dbError } from "@/lib/http";
 
 /**
  * GET /api/fees/accounts/search
@@ -34,11 +24,10 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const url = new URL(request.url);
     const parsed = querySchema.safeParse({
@@ -47,10 +36,10 @@ export async function GET(request: NextRequest) {
       limit: url.searchParams.get("limit") ?? undefined,
     });
     if (!parsed.success) {
-      return errorResponse(
-        parsed.error.issues[0]?.message ?? "Invalid query",
-        400,
-      );
+      // The wrapper handles the schema-failure path for body
+      // schemas; query-param schemas are validated inline because
+      // Next.js handlers parse query params from `request.url`.
+      return dbError(parsed.error, "Invalid query", 400);
     }
     const { q, term_id, limit } = parsed.data;
 
@@ -84,7 +73,7 @@ export async function GET(request: NextRequest) {
       if (studErr) return dbError(studErr, "Search failed");
       matchedIds = (matchingStudents ?? []).map((s) => s.id);
       if (matchedIds.length === 0) {
-        return successResponse({ students: [] });
+        return { students: [] };
       }
     }
 
@@ -127,11 +116,6 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return successResponse({ students });
-  } catch (e) {
-    if (e instanceof AuthError) return errorResponse(e.message, e.status);
-    const status = getErrorStatus(e);
-    const message = e instanceof Error ? e.message : "Internal server error";
-    return errorResponse(message, status);
-  }
-}
+    return { students };
+  },
+});

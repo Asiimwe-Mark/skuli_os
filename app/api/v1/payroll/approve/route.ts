@@ -1,23 +1,15 @@
-import { NextRequest } from 'next/server';
-import { z } from 'zod';
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  AuthError,
-} from '@/lib/api-helpers';
-import { generateBatchRef } from '@/lib/utils/pesapal-ref';
-import { generateDisbursementIdempotencyKey } from '@/lib/utils/idempotency';
-import { sanitizePhoneForPayment } from '@/lib/utils/phone';
-import { submitOrderRequest } from '@/lib/gateways/pesapal';
-import { checkRateLimitAsync } from '@/lib/utils/rate-limit';
-import { writeAuditLog } from '@/lib/audit-log';
-import type { Database } from '@/types/database';
+import { z } from "zod";
+import { route, AuthError } from "@/lib/http";
+import { generateBatchRef } from "@/lib/utils/pesapal-ref";
+import { generateDisbursementIdempotencyKey } from "@/lib/utils/idempotency";
+import { sanitizePhoneForPayment } from "@/lib/utils/phone";
+import { submitOrderRequest } from "@/lib/gateways/pesapal";
+import { checkRateLimitAsync } from "@/lib/utils/rate-limit";
+import { writeAuditLog } from "@/lib/audit-log";
+import type { Database } from "@/types/database";
 
-type PayrollBatchInsert = Database['public']['Tables']['payroll_batches']['Insert'];
-type BatchLineItemInsert = Database['public']['Tables']['batch_line_items']['Insert'];
+type PayrollBatchInsert = Database["public"]["Tables"]["payroll_batches"]["Insert"];
+type BatchLineItemInsert = Database["public"]["Tables"]["batch_line_items"]["Insert"];
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -34,7 +26,7 @@ const MAX_BATCH_SIZE = 500;
 
 const schema = z.object({
   payroll_record_ids: z.array(z.string().uuid()).min(1).max(MAX_BATCH_SIZE),
-  funding_mechanism: z.enum(['BANK_COLLECT', 'MOMO_PUSH']),
+  funding_mechanism: z.enum(["BANK_COLLECT", "MOMO_PUSH"]),
   label: z.string().max(200).optional(),
 });
 
@@ -48,7 +40,7 @@ interface PayrollRecordRow {
 }
 
 interface StaffPaymentProfileRow {
-  preferred_method: 'MOBILE_MONEY' | 'BANK';
+  preferred_method: "MOBILE_MONEY" | "BANK";
   mobile_number: string | null;
   bank_code: string | null;
   account_number: string | null;
@@ -67,11 +59,11 @@ interface SchoolRow {
 
 // ── Handler ──────────────────────────────────────────────────────────────────
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ['SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN']);
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
     // Rate limit: 3 funding batches per school per 10 minutes.
     const rl = await checkRateLimitAsync(
@@ -80,45 +72,62 @@ export async function POST(request: NextRequest) {
       10 * 60 * 1000,
     );
     if (!rl.success) {
-      return errorResponse(
-        'Too many funding batches in a short window. Please wait a few minutes.',
+      throw new AuthError(
+        "Too many funding batches in a short window. Please wait a few minutes.",
         429,
       );
     }
 
-    const body = await request.json();
-    const parsed = schema.safeParse(body);
-    if (!parsed.success) return errorResponse(parsed.error.issues[0].message, 400);
-
-    const { payroll_record_ids, funding_mechanism, label } = parsed.data;
+    const { payroll_record_ids, funding_mechanism, label } = body;
     const supabase = ctx.supabase;
 
-    // ── Load payroll records ─────────────────────────────────────────────────
+    // ── Atomically flip the requested records to 'batched' (§10.1) ──────
+    const { data: flipped, error: flipErr } = await supabase.rpc(
+      "payroll_claim_records_for_batch" as never,
+      {
+        p_school_id: schoolId,
+        p_record_ids: payroll_record_ids,
+      } as never,
+    );
 
+    if (flipErr) {
+      throw new Error("Failed to claim payroll records");
+    }
+
+    const claimedIds = (flipped as unknown as Array<{ id: string }> | null) ?? [];
+    if (claimedIds.length !== payroll_record_ids.length) {
+      throw new AuthError(
+        "One or more payroll records are not in a pending state. Re-fetch the list and try again.",
+        409,
+      );
+    }
+
+    const claimedSet = new Set(claimedIds.map((r) => r.id));
+
+    // ── Load payroll records (the rows we just claimed) ────────────────
     const { data: records, error: recordsErr } = await supabase
-      .from('payroll_records')
-      .select('id, staff_id, net_salary, basic_salary, allowances, deductions')
-      .in('id', payroll_record_ids)
-      .eq('school_id', schoolId)
-      .eq('payment_status', 'pending');
+      .from("payroll_records")
+      .select("id, staff_id, net_salary, basic_salary, allowances, deductions")
+      .in("id", Array.from(claimedSet))
+      .eq("school_id", schoolId);
 
     if (recordsErr || !records?.length) {
-      return errorResponse('No eligible payroll records found', 404);
+      throw new Error("No eligible payroll records found");
     }
 
     // ── Load school ──────────────────────────────────────────────────────────
 
     const { data: schoolData } = await supabase
-      .from('schools')
-      .select('id, name, email, pesapal_ipn_id')
-      .eq('id', schoolId)
+      .from("schools")
+      .select("id, name, email, pesapal_ipn_id")
+      .eq("id", schoolId)
       .single();
 
     const school = schoolData as SchoolRow | null;
 
     if (!school?.pesapal_ipn_id) {
-      return errorResponse(
-        'Pesapal payments not configured. Set up your Pesapal credentials first.',
+      throw new AuthError(
+        "Pesapal payments not configured. Set up your Pesapal credentials first.",
         400,
       );
     }
@@ -134,47 +143,55 @@ export async function POST(request: NextRequest) {
       const netSalary = Number(rec.net_salary) || Number(rec.basic_salary) || 0;
 
       const { data: profileData } = await supabase
-        .from('staff_payment_profiles')
-        .select('preferred_method, mobile_number, bank_code, account_number')
-        .eq('staff_id', rec.staff_id)
+        .from("staff_payment_profiles")
+        .select("preferred_method, mobile_number, bank_code, account_number")
+        .eq("staff_id", rec.staff_id)
         .maybeSingle();
 
       const profile = profileData as StaffPaymentProfileRow | null;
 
       const { data: staffData } = await supabase
-        .from('staff')
-        .select('full_name, bank_account, bank_name')
-        .eq('id', rec.staff_id)
+        .from("staff")
+        .select("full_name, bank_account, bank_name")
+        .eq("id", rec.staff_id)
         .single();
 
       const staffRow = staffData as StaffRow | null;
 
-      const method: 'MOBILE_MONEY' | 'BANK' = profile?.preferred_method ?? 'MOBILE_MONEY';
+      const method: "MOBILE_MONEY" | "BANK" =
+        profile?.preferred_method ?? "MOBILE_MONEY";
       const mobileNumber = profile?.mobile_number ?? null;
       const bankCode = profile?.bank_code ?? null;
-      const accountNumber = profile?.account_number ?? staffRow?.bank_account ?? null;
+      const accountNumber =
+        profile?.account_number ?? staffRow?.bank_account ?? null;
 
-      // Validate mobile number before creating the batch
-      if (method === 'MOBILE_MONEY' && mobileNumber) {
+      if (method === "MOBILE_MONEY" && mobileNumber) {
         try {
           sanitizePhoneForPayment(mobileNumber);
         } catch {
-          return errorResponse(
+          throw new AuthError(
             `Invalid mobile number for staff member ${staffRow?.full_name ?? rec.staff_id}`,
             400,
           );
         }
       }
 
-      const processingFee = method === 'BANK' ? BANK_OVERHEAD : MOMO_OVERHEAD;
+      const processingFee = method === "BANK" ? BANK_OVERHEAD : MOMO_OVERHEAD;
       totalNetSalaries += netSalary;
       totalOverheadFees += processingFee;
 
       const destination =
-        method === 'MOBILE_MONEY' ? (mobileNumber ?? 'unknown') : (accountNumber ?? 'unknown');
+        method === "MOBILE_MONEY"
+          ? mobileNumber ?? "unknown"
+          : accountNumber ?? "unknown";
 
+      // §10.1: idempotency key is keyed only on
+      // (payroll_record_id, destination, amount). Two batches for the
+      // same staff therefore collide, and the DB unique index on
+      // batch_line_items.idempotency_key is the last line of defense
+      // against double-disbursement.
       const idempotencyKey = generateDisbursementIdempotencyKey(
-        `${batchId}-${rec.staff_id}`,
+        rec.id,
         destination,
         netSalary,
       );
@@ -183,7 +200,7 @@ export async function POST(request: NextRequest) {
         batch_id: batchId,
         payroll_record_id: rec.id,
         staff_id: rec.staff_id,
-        worker_name: staffRow?.full_name ?? 'Unknown',
+        worker_name: staffRow?.full_name ?? "Unknown",
         payout_amount: netSalary,
         processing_fee: processingFee,
         idempotency_key: idempotencyKey,
@@ -191,28 +208,28 @@ export async function POST(request: NextRequest) {
         snapshot_mobile_number: mobileNumber,
         snapshot_bank_code: bankCode,
         snapshot_account_number: accountNumber,
-        disbursal_status: 'HOLD_UNTIL_FUNDED',
+        disbursal_status: "HOLD_UNTIL_FUNDED",
       });
     }
 
-    const inboundFee = funding_mechanism === 'BANK_COLLECT' ? INBOUND_BANK_FEE : 0;
+    const inboundFee = funding_mechanism === "BANK_COLLECT" ? INBOUND_BANK_FEE : 0;
     const totalPayoutSum = totalNetSalaries + totalOverheadFees + inboundFee;
 
     // ── Create Pesapal order ─────────────────────────────────────────────────
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? 'https://skuli.app';
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://skuli.app";
     const callbackUrl = `${appUrl}/api/webhooks/pesapal`;
 
     const pesapalResponse = await submitOrderRequest({
       id: batchId,
-      currency: 'UGX',
+      currency: "UGX",
       amount: totalPayoutSum,
-      description: `${label ?? 'Payroll'} - ${school.name} - ${new Date().toLocaleDateString('en-UG')}`,
+      description: `${label ?? "Payroll"} - ${school.name} - ${new Date().toLocaleDateString("en-UG")}`,
       callbackUrl,
       notificationId: school.pesapal_ipn_id,
       billingAddress: {
         emailAddress: school.email ?? ctx.user.email,
-        firstName: 'School',
+        firstName: "School",
         lastName: school.name,
       },
     });
@@ -222,34 +239,35 @@ export async function POST(request: NextRequest) {
     const batchInsert: PayrollBatchInsert = {
       id: batchId,
       school_id: schoolId,
-      label: label ?? `Payroll - ${new Date().toLocaleDateString('en-UG')}`,
+      label: label ?? `Payroll - ${new Date().toLocaleDateString("en-UG")}`,
       funding_mechanism,
       total_net_salaries: totalNetSalaries,
       total_overhead_fees: totalOverheadFees + inboundFee,
       total_payout_sum: totalPayoutSum,
-      funding_payment_status: 'AWAITING_EXTERNAL_FUNDING',
+      funding_payment_status: "AWAITING_EXTERNAL_FUNDING",
       pesapal_funding_ref: batchId,
       pesapal_funding_url: pesapalResponse.redirectUrl,
       pesapal_order_tracking_id: pesapalResponse.orderTrackingId,
       approved_by_user_id: ctx.user.id,
     };
 
-    const { error: batchErr } = await supabase.from('payroll_batches').insert(batchInsert);
+    const { error: batchErr } = await supabase
+      .from("payroll_batches")
+      .insert(batchInsert);
 
     if (batchErr) {
-      return errorResponse(`Failed to create payroll batch: ${batchErr.message}`, 500);
+      throw new Error(`Failed to create payroll batch: ${batchErr.message}`);
     }
 
     // ── Persist line items ───────────────────────────────────────────────────
 
     const { error: lineErr } = await supabase
-      .from('batch_line_items')
+      .from("batch_line_items")
       .insert(lineItemInserts);
 
     if (lineErr) {
-      // Roll back the batch header on line item failure
-      await supabase.from('payroll_batches').delete().eq('id', batchId);
-      return errorResponse(`Failed to create payroll line items: ${lineErr.message}`, 500);
+      await supabase.from("payroll_batches").delete().eq("id", batchId);
+      throw new Error(`Failed to create payroll line items: ${lineErr.message}`);
     }
 
     // ── Audit log ────────────────────────────────────────────────────────────
@@ -257,8 +275,8 @@ export async function POST(request: NextRequest) {
     await writeAuditLog(supabase, {
       school_id: schoolId,
       user_id: ctx.user.id,
-      action: 'payroll_batch_approved',
-      entity_type: 'payroll_batch',
+      action: "payroll_batch_approved",
+      entity_type: "payroll_batch",
       entity_id: batchId,
       new_value: {
         batch_id: batchId,
@@ -269,7 +287,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    return successResponse({
+    return {
       batch_id: batchId,
       funding_url: pesapalResponse.redirectUrl,
       total_payout_sum: totalPayoutSum,
@@ -278,11 +296,7 @@ export async function POST(request: NextRequest) {
       inbound_fee: inboundFee,
       worker_count: records.length,
       message:
-        'Payroll batch created. Complete the payment at the funding_url to release salaries.',
-    });
-  } catch (err) {
-    if (err instanceof AuthError) return errorResponse(err.message, err.status);
-    console.error('POST /api/v1/payroll/approve error:', err);
-    return errorResponse('Internal server error', 500);
-  }
-}
+        "Payroll batch created. Complete the payment at the funding_url to release salaries.",
+    };
+  },
+});

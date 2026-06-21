@@ -1,26 +1,15 @@
-import { NextRequest } from "next/server";
 import * as XLSX from "xlsx";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 import { aggregateEmisData } from "@/lib/emis/aggregate";
 import { emisReportSchema } from "@/lib/validations/emis";
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "SUPER_ADMIN"]);
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+  schema: emisReportSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
-    const body = await request.json().catch(() => ({}));
-    const parsed = emisReportSchema.safeParse(body);
-    if (!parsed.success) return errorResponse(parsed.error.issues[0].message, 400);
-
-    const { academic_year_id, term_id } = parsed.data;
+    const { academic_year_id, term_id } = body;
     const data = await aggregateEmisData(ctx.supabase, schoolId, term_id);
 
     const wb = XLSX.utils.book_new();
@@ -36,12 +25,22 @@ export async function POST(request: NextRequest) {
     XLSX.utils.book_append_sheet(wb, infoSheet, "School Info");
 
     const classSheet = XLSX.utils.json_to_sheet(
-      data.enrolmentByClass.map((r) => ({ Class: r.className, Boys: r.boys, Girls: r.girls, Total: r.total }))
+      data.enrolmentByClass.map((r) => ({
+        Class: r.className,
+        Boys: r.boys,
+        Girls: r.girls,
+        Total: r.total,
+      })),
     );
     XLSX.utils.book_append_sheet(wb, classSheet, "Enrolment by Class");
 
     const ageSheet = XLSX.utils.json_to_sheet(
-      data.enrolmentByAge.map((r) => ({ "Age group": r.bracket, Boys: r.boys, Girls: r.girls, Total: r.total }))
+      data.enrolmentByAge.map((r) => ({
+        "Age group": r.bracket,
+        Boys: r.boys,
+        Girls: r.girls,
+        Total: r.total,
+      })),
     );
     XLSX.utils.book_append_sheet(wb, ageSheet, "Enrolment by Age");
 
@@ -88,7 +87,5 @@ export async function POST(request: NextRequest) {
         "Content-Disposition": `attachment; filename="${filename}"`,
       },
     });
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+  },
+});

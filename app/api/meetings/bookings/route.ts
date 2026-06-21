@@ -1,17 +1,14 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  dbError,
-  AuthError,
-} from "@/lib/api-helpers";
+import { route, dbError } from "@/lib/http";
 
-export async function GET(req: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-
-    const { searchParams } = new URL(req.url);
+export const GET = route({
+  // The original handler had no role gate; it implicitly allowed any
+  // signed-in user with a school. We keep that contract: any signed-in
+  // role for a school that has bookings can read them. SUPER_ADMIN
+  // bypasses the school guard from inside the wrapper.
+  roles: [],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
+    const { searchParams } = new URL(request.url);
     const teacherId = searchParams.get("teacher_id");
     const date = searchParams.get("date");
 
@@ -35,12 +32,6 @@ export async function GET(req: NextRequest) {
 
     const { data, error } = await query;
     if (error) return dbError(error, "Failed to load bookings");
-    return Response.json({ success: true, data: data ?? [] });
-  } catch (e) {
-    if (e instanceof AuthError) {
-      return Response.json({ success: false, error: e.message }, { status: e.status });
-    }
-    console.error("GET /api/meetings/bookings error:", e);
-    return Response.json({ success: false, error: "Internal server error" }, { status: 500 });
-  }
-}
+    return data ?? [];
+  },
+});

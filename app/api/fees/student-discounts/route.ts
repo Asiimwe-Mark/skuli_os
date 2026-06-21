@@ -1,20 +1,11 @@
-import { NextRequest } from "next/server";
-import { applyDiscountSchema } from "@/lib/validations/fees";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
 import type { Database } from "@/types/database";
+import { applyDiscountSchema } from "@/lib/validations/fees";
+import { route, errorResponse, dbError } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const studentId = searchParams.get("student_id");
@@ -38,38 +29,32 @@ export async function GET(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
-    // Transform joined data
+    // Pre-existing inline `: any` casts on data joins; migration guide
+    // §7.6 puts these out of scope for the wrapper refactor.
+    /* eslint-disable @typescript-eslint/no-explicit-any */
     const result = (data || []).map((sd: any) => ({
       ...sd,
       student_name: sd.student?.full_name,
-      student_class: sd.student?.classes?.name }));
+      student_class: sd.student?.classes?.name,
+    }));
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
-    return successResponse(result);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return result;
+  },
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR"]);
-
-    const body = await request.json();
-    const parsed = applyDiscountSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR"],
+  schema: applyDiscountSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
     // Both FKs must belong to this school. Discounts feed recalculate_fee_account,
     // so an unscoped student_id/discount_id would be a cross-tenant financial gap.
     const { data: discStudent } = await ctx.supabase
       .from("students")
       .select("id")
-      .eq("id", parsed.data.student_id)
+      .eq("id", body.student_id)
       .eq("school_id", schoolId)
       .eq("is_deleted", false)
       .maybeSingle();
@@ -78,7 +63,7 @@ export async function POST(request: NextRequest) {
     const { data: discount } = await ctx.supabase
       .from("fee_discounts")
       .select("id")
-      .eq("id", parsed.data.discount_id)
+      .eq("id", body.discount_id)
       .eq("school_id", schoolId)
       .maybeSingle();
     if (!discount) return errorResponse("Discount not found in this school", 404);
@@ -90,11 +75,11 @@ export async function POST(request: NextRequest) {
     let existingQuery = ctx.supabase
       .from("student_discounts")
       .select("id")
-      .eq("student_id", parsed.data.student_id)
-      .eq("discount_id", parsed.data.discount_id)
+      .eq("student_id", body.student_id)
+      .eq("discount_id", body.discount_id)
       .eq("is_deleted", false);
-    existingQuery = parsed.data.term_id
-      ? existingQuery.eq("term_id", parsed.data.term_id)
+    existingQuery = body.term_id
+      ? existingQuery.eq("term_id", body.term_id)
       : existingQuery.is("term_id", null);
     const { data: existing } = await existingQuery.maybeSingle();
 
@@ -106,43 +91,46 @@ export async function POST(request: NextRequest) {
       .from("student_discounts")
       .insert({
         school_id: schoolId,
-        student_id: parsed.data.student_id,
-        discount_id: parsed.data.discount_id,
-        term_id: parsed.data.term_id ?? null,
+        student_id: body.student_id,
+        discount_id: body.discount_id,
+        term_id: body.term_id ?? null,
         approved_by: ctx.user.id,
-        note: parsed.data.note ?? null } as unknown as Database["public"]["Tables"]["student_discounts"]["Insert"])
+        note: body.note ?? null,
+      } as unknown as Database["public"]["Tables"]["student_discounts"]["Insert"])
       .select()
       .single();
 
     if (error) return dbError(error, "Database error");
 
     // Recalculate fee accounts for affected terms
-    if (parsed.data.term_id) {
+    if (body.term_id) {
       // Specific term - recalculate that account
       const { data: account } = await ctx.supabase
         .from("fee_accounts")
         .select("id")
-        .eq("student_id", parsed.data.student_id)
-        .eq("term_id", parsed.data.term_id)
+        .eq("student_id", body.student_id)
+        .eq("term_id", body.term_id)
         .eq("is_deleted", false)
         .maybeSingle();
 
       if (account) {
         await ctx.supabase.rpc("recalculate_fee_account", {
-          p_account_id: account.id });
+          p_account_id: account.id,
+        });
       }
     } else {
       // All terms - recalculate all accounts for this student
       const { data: accounts } = await ctx.supabase
         .from("fee_accounts")
         .select("id")
-        .eq("student_id", parsed.data.student_id)
+        .eq("student_id", body.student_id)
         .eq("is_deleted", false);
 
       if (accounts) {
         for (const account of accounts) {
           await ctx.supabase.rpc("recalculate_fee_account", {
-            p_account_id: account.id });
+            p_account_id: account.id,
+          });
         }
       }
     }
@@ -154,22 +142,17 @@ export async function POST(request: NextRequest) {
       action: "discount_applied",
       entity_type: "student_discount",
       entity_id: data.id,
-      new_value: parsed.data } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      new_value: body,
+    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR"]);
-
+export const DELETE = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
@@ -205,7 +188,8 @@ export async function DELETE(request: NextRequest) {
 
       if (account) {
         await ctx.supabase.rpc("recalculate_fee_account", {
-          p_account_id: account.id });
+          p_account_id: account.id,
+        });
       }
     } else {
       const { data: accounts } = await ctx.supabase
@@ -217,15 +201,12 @@ export async function DELETE(request: NextRequest) {
       if (accounts) {
         for (const account of accounts) {
           await ctx.supabase.rpc("recalculate_fee_account", {
-            p_account_id: account.id });
+            p_account_id: account.id,
+          });
         }
       }
     }
 
-    return successResponse({ deleted: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { deleted: true };
+  },
+});

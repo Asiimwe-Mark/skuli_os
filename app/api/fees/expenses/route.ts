@@ -1,20 +1,11 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { createExpenseSchema } from "@/lib/validations/fees";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse, dbError } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const termId = searchParams.get("term_id");
@@ -42,41 +33,31 @@ export async function GET(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse(data || []);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data || [];
+  },
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = createExpenseSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: createExpenseSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
     // Body-supplied FKs must belong to the caller's school.
-    if (parsed.data.category_id) {
+    if (body.category_id) {
       const { data: cat } = await ctx.supabase
         .from("expense_categories")
         .select("id")
-        .eq("id", parsed.data.category_id)
+        .eq("id", body.category_id)
         .eq("school_id", schoolId)
         .maybeSingle();
       if (!cat) return errorResponse("Invalid expense category for this school", 400);
     }
-    if (parsed.data.term_id) {
+    if (body.term_id) {
       const { data: term } = await ctx.supabase
         .from("terms")
         .select("id")
-        .eq("id", parsed.data.term_id)
+        .eq("id", body.term_id)
         .eq("school_id", schoolId)
         .maybeSingle();
       if (!term) return errorResponse("Invalid term for this school", 400);
@@ -86,15 +67,16 @@ export async function POST(request: NextRequest) {
       .from("expenses")
       .insert({
         school_id: schoolId,
-        category_id: parsed.data.category_id ?? null,
-        term_id: parsed.data.term_id ?? null,
-        description: parsed.data.description,
-        amount: parsed.data.amount,
-        expense_date: parsed.data.expense_date,
-        payment_method: parsed.data.payment_method,
-        receipt_number: parsed.data.receipt_number ?? null,
+        category_id: body.category_id ?? null,
+        term_id: body.term_id ?? null,
+        description: body.description,
+        amount: body.amount,
+        expense_date: body.expense_date,
+        payment_method: body.payment_method,
+        receipt_number: body.receipt_number ?? null,
         recorded_by: ctx.user.id,
-        notes: parsed.data.notes ?? null } as unknown as Database["public"]["Tables"]["expenses"]["Insert"])
+        notes: body.notes ?? null,
+      } as unknown as Database["public"]["Tables"]["expenses"]["Insert"])
       .select(`
         *,
         expense_categories (name),
@@ -104,33 +86,26 @@ export async function POST(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: createExpenseSchema.partial(),
+  handler: async (ctx, body, request) => {
+    const schoolId = ctx.profile.school_id!;
 
-    const body = await request.json();
-    const { id, ...updates } = body;
-
+    // The body arrives without an id (Zod has no `id` field). Pull it
+    // from the URL or query string — the legacy call sites pass ?id=…
+    // alongside the JSON body.
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
     if (!id) return errorResponse("Expense ID is required", 400);
-
-    const parsed = createExpenseSchema.partial().safeParse(updates);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
 
     const { data, error } = await ctx.supabase
       .from("expenses")
-      .update(parsed.data as unknown as Database["public"]["Tables"]["expenses"]["Update"])
+      .update(body as unknown as Database["public"]["Tables"]["expenses"]["Update"])
       .eq("id", id)
       .eq("school_id", schoolId)
       .eq("is_deleted", false)
@@ -143,20 +118,14 @@ export async function PATCH(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-
+export const DELETE = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
@@ -170,10 +139,6 @@ export async function DELETE(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse({ deleted: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { deleted: true };
+  },
+});

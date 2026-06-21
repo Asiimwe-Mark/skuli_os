@@ -1,32 +1,16 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route, AuthError, dbError } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["PARENT"]);
-
+export const GET = route({
+  roles: ["PARENT"],
+  handler: async (ctx, request) => {
     const { searchParams } = new URL(request.url);
     const studentId = searchParams.get("student_id");
     const termId = searchParams.get("term_id");
 
-    if (!studentId) return errorResponse("student_id is required", 400);
+    if (!studentId) throw new AuthError("student_id is required", 400);
 
     // SECURITY (audit H-2): parent_students is the SOLE authority on
-    // which students belong to which parent. The previous version fell
-    // back to a parent_phone / parent_email match — but phone and
-    // email are mutable, not unique, and can be reassigned. We now
-    // require a parent_students link row and reject otherwise. This
-    // means a parent who has a child on the books but no link row
-    // must add the link in the portal admin — that's the correct
-    // model: explicit link, not implicit phone/email match.
+    // which students belong to which parent.
     const { data: link } = await ctx.supabase
       .from("parent_students")
       .select("id")
@@ -35,7 +19,7 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
 
     if (!link) {
-      return errorResponse("Not linked to this student", 403);
+      throw new AuthError("Not linked to this student", 403);
     }
 
     const { data: student } = await ctx.supabase
@@ -44,9 +28,8 @@ export async function GET(request: NextRequest) {
       .eq("id", studentId)
       .maybeSingle();
 
-    if (!student) return errorResponse("Student not found", 404);
+    if (!student) throw new AuthError("Student not found", 404);
 
-    // Build attendance query
     let query = ctx.supabase
       .from("attendance_records")
       .select("*")
@@ -54,7 +37,6 @@ export async function GET(request: NextRequest) {
       .order("date", { ascending: false });
 
     if (termId) {
-      // Get term date range
       const { data: term } = await ctx.supabase
         .from("terms")
         .select("start_date, end_date")
@@ -70,7 +52,6 @@ export async function GET(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
-    // Calculate summary
     const summary = { present: 0, absent: 0, late: 0, excused: 0, rate: 0 };
     for (const r of records ?? []) {
       if (r.status in summary) {
@@ -78,8 +59,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Calculate expected school days (weekdays minus holidays) for rate denominator
-    let schoolDays = summary.present + summary.absent + summary.late + summary.excused;
+    let schoolDays =
+      summary.present + summary.absent + summary.late + summary.excused;
     if (termId) {
       const { data: term } = await ctx.supabase
         .from("terms")
@@ -88,7 +69,6 @@ export async function GET(request: NextRequest) {
         .single();
 
       if (term && term.start_date && term.end_date) {
-        // Count weekdays in term
         let weekdayCount = 0;
         const current = new Date(term.start_date);
         const end = new Date(term.end_date);
@@ -98,7 +78,6 @@ export async function GET(request: NextRequest) {
           current.setDate(current.getDate() + 1);
         }
 
-        // Subtract holidays that fall on weekdays
         const { data: holidays } = await ctx.supabase
           .from("calendar_events")
           .select("event_date, end_date")
@@ -112,7 +91,10 @@ export async function GET(request: NextRequest) {
           for (const h of holidays) {
             const hStart = new Date(h.event_date);
             const hEnd = h.end_date ? new Date(h.end_date) : hStart;
-            const clampStart = hStart < new Date(term.start_date) ? new Date(term.start_date) : hStart;
+            const clampStart =
+              hStart < new Date(term.start_date)
+                ? new Date(term.start_date)
+                : hStart;
             const clampEnd = hEnd > end ? end : hEnd;
             const hCurrent = new Date(clampStart);
             while (hCurrent <= clampEnd) {
@@ -127,12 +109,11 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    summary.rate = schoolDays > 0 ? Math.round((summary.present / schoolDays) * 10000) / 100 : 0;
+    summary.rate =
+      schoolDays > 0
+        ? Math.round((summary.present / schoolDays) * 10000) / 100
+        : 0;
 
-    return successResponse({ records: records ?? [], summary });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { records: records ?? [], summary };
+  },
+});

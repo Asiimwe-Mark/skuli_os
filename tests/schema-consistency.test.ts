@@ -170,8 +170,10 @@ function buildSchemaCatalog(migrationSql: string): SchemaCatalog {
   }
 
   // INTENTIONALLY-UNUSED markers: read from the original (un-stripped) SQL
-  // because they are comments and were just stripped above.
-  const blockRe = /--\s*INTENTIONALLY-UNUSED[^\n]*\n([\s\S]*?)(?=\n--\s*[A-Z]|\nCREATE|\nALTER|\nDROP|\nINSERT|\nUPDATE|\nDELETE|\nDO\s|\n--\s*\n|$)/gi;
+  // because they are comments and were just stripped above. The marker
+  // comment block extends until the next blank line; the CREATE / FUNCTION
+  // / bucket statement that follows the block is what we actually record.
+  const blockRe = /--\s*INTENTIONALLY-UNUSED[^\n]*\n([\s\S]*?)(?=\n\s*\n|$)/gi;
   while ((m = blockRe.exec(migrationSql))) {
     const block = m[1].replace(/--[^\n]*/g, "");
     const tableInBlock = /TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([A-Za-z0-9_."]+)/i.exec(block);

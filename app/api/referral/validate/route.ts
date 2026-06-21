@@ -1,9 +1,9 @@
-import { NextRequest } from "next/server";
+import { publicRoute } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 // GET ?code=XYZ : public endpoint. Returns whether a referral code is valid
 // and the referring school's name. No authentication required.
-export async function GET(request: NextRequest) {
+export const GET = publicRoute(async (request) => {
   const code = request.nextUrl.searchParams.get("code")?.trim();
   if (!code) {
     return Response.json({ valid: false, referrerSchoolName: "" });
@@ -26,4 +26,4 @@ export async function GET(request: NextRequest) {
     valid: true,
     referrerSchoolName: school?.name ?? "a SKULI school",
   });
-}
+});

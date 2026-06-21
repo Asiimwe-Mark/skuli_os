@@ -108,9 +108,14 @@ vi.mock("@/lib/api-helpers", async () => {
 });
 
 import { GET } from "@/app/api/fees/accounts/search/route";
+import { NextRequest } from "next/server";
 
 function fakeGet(url = "http://test.local/api/fees/accounts/search") {
-  return new Request(url, { method: "GET" });
+  // The new `route()` wrapper reads `req.nextUrl.pathname` on every
+  // error path. A bare `new Request(...)` cast does not populate
+  // `nextUrl`, so error-path tests would crash inside the wrapper.
+  // Build a real NextRequest from a real URL instead.
+  return new NextRequest(new Request(url, { method: "GET" }));
 }
 
 function setProfile(role = "SCHOOL_ADMIN", school_id: string | null = "s1") {

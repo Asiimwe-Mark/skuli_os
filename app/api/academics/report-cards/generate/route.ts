@@ -1,15 +1,7 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { generateReportCardsSchema } from "@/lib/validations/marks";
-import { type GradingScaleRow } from "@/lib/utils/grades";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import "@/lib/utils/grades";
+import { route, errorResponse, dbError } from "@/lib/http";
 
 type StudentRow = Database["public"]["Tables"]["students"]["Row"];
 type MarkRow = Database["public"]["Tables"]["marks"]["Row"];
@@ -17,7 +9,6 @@ type ClassRow = Database["public"]["Tables"]["classes"]["Row"];
 type ClassSubjectRow = Database["public"]["Tables"]["class_subjects"]["Row"];
 type SubjectRow = Database["public"]["Tables"]["subjects"]["Row"];
 type ClassEnrollmentRow = Database["public"]["Tables"]["class_enrollments"]["Row"];
-type ReportCardRow = Database["public"]["Tables"]["report_cards"]["Row"];
 
 type EnrolledStudent = ClassEnrollmentRow & {
   student: Pick<StudentRow, "id" | "full_name" | "admission_number"> | null;
@@ -27,19 +18,12 @@ type ClassSubjectWithSubject = ClassSubjectRow & {
   subject: Pick<SubjectRow, "id" | "name" | "code" | "max_marks"> | null;
 };
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = generateReportCardsSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    const { class_id, term_id, academic_year_id } = parsed.data;
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
+  schema: generateReportCardsSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
+    const { class_id, term_id, academic_year_id } = body;
 
     // Verify class belongs to this school
     const { data: cls } = await ctx.supabase
@@ -94,19 +78,19 @@ export async function POST(request: NextRequest) {
           subjectMap.set(cs.subject_id, {
             name: subj.name,
             code: subj.code ?? '',
-            max_marks: subj.max_marks });
+            max_marks: subj.max_marks,
+          });
         }
       }
     }
 
     // Fetch grading scales for this school
-    const { data: gradingScaleData } = await ctx.supabase
+    await ctx.supabase
       .from("grading_scales")
       .select("grade, min_score, max_score, label")
       .eq("school_id", schoolId)
       .eq("is_deleted", false)
-      .order("sort_order") as unknown as { data: GradingScaleRow[] | null };
-    const gradingScales = gradingScaleData ?? [];
+      .order("sort_order");
 
     // Compute totals per student with BOT/MID/EOT breakdown
     type SubjectBreakdown = {
@@ -176,7 +160,8 @@ export async function POST(request: NextRequest) {
         totalMaxMarks,
         average,
         subjectCount,
-        subjectBreakdowns });
+        subjectBreakdowns,
+      });
     }
 
     // Sort by average descending and assign positions
@@ -193,7 +178,8 @@ export async function POST(request: NextRequest) {
       average: sr.average,
       position_in_class: index + 1,
       class_size: classSize,
-      is_published: false }));
+      is_published: false,
+    }));
 
     const { data: reportCards, error } = await ctx.supabase
       .from("report_cards")
@@ -214,16 +200,15 @@ export async function POST(request: NextRequest) {
         class_id,
         term_id,
         class_name: cls.name,
-        students_processed: classSize },
-      ip_address: null });
+        students_processed: classSize,
+      },
+      ip_address: null,
+    });
 
-    return successResponse({
+    return {
       report_cards: reportCards ?? [],
       class_size: classSize,
-      class_name: cls.name });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+      class_name: cls.name,
+    };
+  },
+});

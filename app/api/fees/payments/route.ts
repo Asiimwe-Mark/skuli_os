@@ -1,28 +1,14 @@
-import { NextRequest } from "next/server";
-import crypto from "crypto";
 import type { Database } from "@/types/database";
+import crypto from "crypto";
 import { recordPaymentSchema } from "@/lib/validations/fees";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse, dbError, paginatedResponse, respond } from "@/lib/http";
 import { sendPushToUser } from "@/lib/push";
 import { writeAuditLog } from "@/lib/audit-log";
 
-type FeePaymentRow = Database["public"]["Tables"]["fee_payments"]["Row"];
-type FeeAccountRow = Database["public"]["Tables"]["fee_accounts"]["Row"];
-type TermRow = Database["public"]["Tables"]["terms"]["Row"];
-type SchoolRow = Database["public"]["Tables"]["schools"]["Row"];
-
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const studentId = searchParams.get("student_id");
@@ -57,31 +43,15 @@ export async function GET(request: NextRequest) {
 
     if (error) return dbError(error, "Failed to load payments");
 
-    return successResponse({
-      payments: data ?? [],
-      total: count ?? 0,
-      page,
-      limit,
-      totalPages: Math.ceil((count ?? 0) / limit),
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return paginatedResponse(data ?? [], count ?? 0, page, limit);
+  },
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = recordPaymentSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: recordPaymentSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
     // Find the fee account for this student (current term). Audit 2.6
     // (4.14): use maybeSingle() so a missing account returns null
@@ -90,7 +60,7 @@ export async function POST(request: NextRequest) {
     let feeAccountQuery = ctx.supabase
       .from("fee_accounts")
       .select("id, student_id, term_id")
-      .eq("student_id", parsed.data.student_id)
+      .eq("student_id", body.student_id)
       .eq("school_id", schoolId);
 
     // If the client provides a specific fee_account_id, use it
@@ -144,15 +114,15 @@ export async function POST(request: NextRequest) {
       .insert({
         school_id: schoolId,
         fee_account_id: feeAccount.id,
-        student_id: parsed.data.student_id,
-        amount: parsed.data.amount,
-        payment_method: parsed.data.payment_method,
-        mobile_money_provider: parsed.data.mobile_money_provider ?? null,
-        mobile_money_transaction_id: parsed.data.mobile_money_transaction_id ?? null,
-        phone_used: parsed.data.phone_used ?? null,
+        student_id: body.student_id,
+        amount: body.amount,
+        payment_method: body.payment_method,
+        mobile_money_provider: body.mobile_money_provider ?? null,
+        mobile_money_transaction_id: body.mobile_money_transaction_id ?? null,
+        phone_used: body.phone_used ?? null,
         received_by_user_id: ctx.user.id,
-        payment_date: parsed.data.payment_date,
-        notes: parsed.data.notes ?? null,
+        payment_date: body.payment_date,
+        notes: body.notes ?? null,
         receipt_number: receiptNumber,
         status: "confirmed",
         term_id: feeAccount.term_id ?? null,
@@ -173,10 +143,10 @@ export async function POST(request: NextRequest) {
       entity_type: "fee_payment",
       entity_id: payment?.id ?? null,
       new_value: {
-        amount: parsed.data.amount,
-        method: parsed.data.payment_method,
+        amount: body.amount,
+        method: body.payment_method,
         receipt: receiptNumber,
-        student_id: parsed.data.student_id,
+        student_id: body.student_id,
       },
     });
 
@@ -185,7 +155,7 @@ export async function POST(request: NextRequest) {
       const { data: student } = await ctx.supabase
         .from("students")
         .select("full_name, parent_phone")
-        .eq("id", parsed.data.student_id)
+        .eq("id", body.student_id)
         .single();
 
       if (student?.parent_phone) {
@@ -199,7 +169,7 @@ export async function POST(request: NextRequest) {
         if (parentUser) {
           await sendPushToUser(ctx.supabase, parentUser.id, {
             title: "Payment Received",
-            body: `${parsed.data.amount.toLocaleString()} UGX for ${student.full_name}`,
+            body: `${body.amount.toLocaleString()} UGX for ${student.full_name}`,
             url: "/portal/fees",
           });
         }
@@ -208,10 +178,6 @@ export async function POST(request: NextRequest) {
       // Push notification failure should not block payment recording
     }
 
-    return successResponse(payment, 201);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return respond.status(201, payment);
+  },
+});

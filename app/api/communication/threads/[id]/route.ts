@@ -1,44 +1,27 @@
 // app/api/communication/threads/[id]/route.ts
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-} from "@/lib/api-helpers";
+import { z } from "zod";
+import { route, dbError } from "@/lib/http";
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+const patchBodySchema = z.object({
+  is_read: z.boolean(),
+});
 
-    const { id: threadId } = await params;
-    const body = await req.json();
-    const { is_read } = body;
-
-    if (typeof is_read !== "boolean") {
-      return errorResponse("is_read boolean required", 400);
-    }
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: patchBodySchema,
+  handler: async (ctx, body, _request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id: threadId } = (params ?? {}) as { id: string };
 
     const { data, error } = await ctx.supabase
       .from("message_threads")
-      .update({ is_read })
+      .update({ is_read: body.is_read })
       .eq("id", threadId)
       .eq("school_id", schoolId)
       .select()
       .single();
 
     if (error) return dbError(error, "Database error");
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = err instanceof Error && "status" in err ? (err as { status: number }).status : 500;
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});

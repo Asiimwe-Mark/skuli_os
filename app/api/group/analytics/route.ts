@@ -1,26 +1,17 @@
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 
-export async function GET() {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["GROUP_ADMIN", "SUPER_ADMIN"]);
-
-    // Get the group
+export const GET = route({
+  roles: ["GROUP_ADMIN", "SUPER_ADMIN"],
+  noSchoolRequired: true,
+  handler: async (ctx) => {
     const { data: groupAdmin } = await ctx.supabase
       .from("group_admins")
       .select("group_id")
       .eq("user_id", ctx.user.id)
       .single();
 
-    if (!groupAdmin) return errorResponse("No group found", 404);
+    if (!groupAdmin) throw new Error("No group found");
 
-    // Get schools in this group
     const { data: schools } = await ctx.supabase
       .from("schools")
       .select("id, name")
@@ -29,14 +20,13 @@ export async function GET() {
       .order("name");
 
     if (!schools || schools.length === 0) {
-      return successResponse({
+      return {
         fee_by_school: [],
         attendance_by_week: [],
         marks_by_school: [],
-      });
+      };
     }
 
-    // Fee collection per school (current term)
     const { data: currentTerm } = await ctx.supabase
       .from("terms")
       .select("id")
@@ -44,7 +34,7 @@ export async function GET() {
       .limit(1)
       .maybeSingle();
 
-    const feeBySchool = [];
+    const feeBySchool: { name: string; value: number }[] = [];
     for (const school of schools) {
       let feeQuery = ctx.supabase
         .from("fee_payments")
@@ -53,7 +43,6 @@ export async function GET() {
         .eq("status", "confirmed");
 
       if (currentTerm) {
-        // Get payments for current term via fee_accounts
         const { data: accounts } = await ctx.supabase
           .from("fee_accounts")
           .select("id")
@@ -63,18 +52,20 @@ export async function GET() {
         if (accounts && accounts.length > 0) {
           feeQuery = feeQuery.in(
             "fee_account_id",
-            accounts.map((a: any) => a.id)
+            accounts.map((a: { id: string }) => a.id),
           );
         }
       }
 
       const { data: payments } = await feeQuery;
-      const total = (payments ?? []).reduce((s: number, p: any) => s + (p.amount ?? 0), 0);
+      const total = (payments ?? []).reduce(
+        (s: number, p: { amount?: number }) => s + (p.amount ?? 0),
+        0,
+      );
       feeBySchool.push({ name: school.name, value: total });
     }
 
-    // Attendance per school per week (last 8 weeks)
-    const attendanceByWeek = [];
+    const attendanceByWeek: Array<Record<string, number | string>> = [];
     const now = new Date();
     for (let w = 7; w >= 0; w--) {
       const weekStart = new Date(now);
@@ -96,14 +87,15 @@ export async function GET() {
           .lte("date", endStr);
 
         const total = records?.length ?? 0;
-        const present = (records ?? []).filter((r: any) => r.status === "present").length;
+        const present = (records ?? []).filter(
+          (r: { status: string }) => r.status === "present",
+        ).length;
         weekData[school.name] = total > 0 ? Math.round((present / total) * 100) : 0;
       }
       attendanceByWeek.push(weekData);
     }
 
-    // Average marks per school
-    const marksBySchool = [];
+    const marksBySchool: { name: string; value: number }[] = [];
     for (const school of schools) {
       const { data: marks } = await ctx.supabase
         .from("marks")
@@ -114,23 +106,25 @@ export async function GET() {
       const avg =
         total > 0
           ? Math.round(
-              ((marks ?? []).reduce((s: number, m: any) => s + (m.score / m.max_score) * 100, 0) /
+              ((marks ?? []).reduce(
+                (
+                  s: number,
+                  m: { score: number | null; max_score: number },
+                ) => s + ((m.score ?? 0) / m.max_score) * 100,
+                0,
+              ) /
                 total) *
-                100
+                100,
             ) / 100
           : 0;
 
       marksBySchool.push({ name: school.name, value: avg });
     }
 
-    return successResponse({
+    return {
       fee_by_school: feeBySchool,
       attendance_by_week: attendanceByWeek,
       marks_by_school: marksBySchool,
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    };
+  },
+});

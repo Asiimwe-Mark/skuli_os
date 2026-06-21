@@ -35,13 +35,15 @@ export async function sendInviteEmail(
   schoolName: string,
   userName: string,
   loginUrl: string,
-  tempPassword: string
 ): Promise<void> {
   await resend.emails.send({
     from: 'SKULI <noreply@skuli.app>',
     to,
     subject: `You're Invited to ${schoolName} on SKULI`,
-    html: getInviteEmailHtml(schoolName, userName, loginUrl, to, tempPassword),
+    // §8.11: the password is no longer transmitted. The set-password
+    // link is delivered by Supabase via `inviteUserByEmail`; this
+    // branded email is purely for context.
+    html: getInviteEmailHtml(schoolName, userName, loginUrl),
   });
 }
 

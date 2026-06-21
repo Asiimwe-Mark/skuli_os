@@ -1,15 +1,9 @@
-import { NextRequest } from 'next/server';
-import { z } from 'zod';
-import {
-  getSupabaseAndUser,
-  successResponse,
-  errorResponse,
-  AuthError,
-} from '@/lib/api-helpers';
-import { generateTuitionRef } from '@/lib/utils/pesapal-ref';
-import { sanitizePhoneForPayment } from '@/lib/utils/phone';
-import { submitOrderRequest } from '@/lib/gateways/pesapal';
-import { checkRateLimitAsync } from '@/lib/utils/rate-limit';
+import { z } from "zod";
+import { route, AuthError } from "@/lib/http";
+import { generateTuitionRef } from "@/lib/utils/pesapal-ref";
+import { sanitizePhoneForPayment } from "@/lib/utils/phone";
+import { submitOrderRequest } from "@/lib/gateways/pesapal";
+import { checkRateLimitAsync } from "@/lib/utils/rate-limit";
 
 // Maximum UGX per single tuition payment - 200M UGX (?$55k) is a generous
 // practical ceiling that still rejects obviously malicious / typo'd values.
@@ -23,10 +17,10 @@ const schema = z.object({
   phone: z.string().min(9),
 });
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-
+export const POST = route({
+  roles: ["PARENT", "SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema,
+  handler: async (ctx, body) => {
     // Rate limit: 10 payment initiations per user per 5 minutes.
     // Prevents spamming the gateway and creating orphan PENDING tuition rows.
     const rl = await checkRateLimitAsync(
@@ -35,21 +29,20 @@ export async function POST(request: NextRequest) {
       5 * 60 * 1000
     );
     if (!rl.success) {
-      return errorResponse('Too many payment requests. Please try again later.', 429);
+      throw new AuthError(
+        "Too many payment requests. Please try again later.",
+        429,
+      );
     }
 
-    const body = await request.json();
-    const parsed = schema.safeParse(body);
-    if (!parsed.success) return errorResponse(parsed.error.issues[0].message, 400);
-
-    const { student_id, amount, fee_type_id, fee_type_label, phone } = parsed.data;
+    const { student_id, amount, fee_type_id, fee_type_label, phone } = body;
 
     // -- Security: sanitise phone number -------------------------------
     let cleanPhone: string;
     try {
       cleanPhone = sanitizePhoneForPayment(phone);
     } catch (e) {
-      return errorResponse((e as Error).message, 400);
+      throw new AuthError((e as Error).message, 400);
     }
 
     const supabase = ctx.supabase;
@@ -61,7 +54,7 @@ export async function POST(request: NextRequest) {
       .eq('is_deleted', false)
       .single();
 
-    if (studentErr || !student) return errorResponse('Student not found', 404);
+    if (studentErr || !student) throw new AuthError("Student not found", 404);
     const st = student as unknown as {
       id: string;
       school_id: string;
@@ -86,7 +79,10 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       if (!link) {
-        return errorResponse('You can only pay fees for your own children', 403);
+        throw new AuthError(
+          "You can only pay fees for your own children",
+          403,
+        );
       }
     }
 
@@ -104,9 +100,9 @@ export async function POST(request: NextRequest) {
     } | null;
 
     if (!sch?.pesapal_ipn_id) {
-      return errorResponse(
-        'Online payments not configured for this school. Contact the school admin.',
-        400
+      throw new AuthError(
+        "Online payments not configured for this school. Contact the school admin.",
+        400,
       );
     }
 
@@ -183,17 +179,10 @@ export async function POST(request: NextRequest) {
       ip_address: null,
     } as never);
 
-    return successResponse({
+    return {
       redirect_url: pesapalResponse.redirectUrl,
       merchant_reference: merchantRef,
       order_tracking_id: pesapalResponse.orderTrackingId,
-    });
-  } catch (err) {
-    if (err instanceof AuthError) return errorResponse(err.message, err.status);
-    // Log the full error server-side, but return a generic message to the
-    // client so we never leak stack traces, DB column names, or other
-    // server internals to unauthenticated callers.
-    console.error('POST /api/v1/payments/initiate error:', err);
-    return errorResponse('Internal server error', 500);
-  }
-}
+    };
+  },
+});

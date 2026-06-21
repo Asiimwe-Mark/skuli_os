@@ -1,17 +1,10 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { sendSmsSchema } from "@/lib/validations/communication";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-} from "@/lib/api-helpers";
+import { route, AuthError } from "@/lib/http";
 import { formatUGX } from "@/lib/utils/currency";
 import { getSchoolCredentials, sendSms } from "@/lib/africas-talking/client";
+import { createAdminClient } from "@/lib/supabase/admin";
 
-type StudentRow = Database["public"]["Tables"]["students"]["Row"];
 type SchoolRow = Database["public"]["Tables"]["schools"]["Row"];
 
 interface Recipient {
@@ -32,7 +25,7 @@ function personalizeMessage(
     school_name: string;
     term: string;
     deadline?: string;
-  }
+  },
 ): string {
   return template
     .replace(/\{parent_name\}/gi, recipient.parent_name)
@@ -41,34 +34,27 @@ function personalizeMessage(
     .replace(/\{school_name\}/gi, recipient.school_name)
     .replace(/\{term\}/gi, recipient.term)
     .replace(/\{deadline\}/gi, recipient.deadline ?? "")
-    .replace(/\{results_link\}/gi, `${process.env.NEXT_PUBLIC_APP_URL || ""}/portal/results`);
+    .replace(
+      /\{results_link\}/gi,
+      `${process.env.NEXT_PUBLIC_APP_URL || ""}/portal/results`,
+    );
 }
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = sendSmsSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: sendSmsSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
     const supabase = ctx.supabase;
 
-    // Get school info (only non-sensitive fields)
-    const { data: school } = await supabase
+    const { data: school } = (await supabase
       .from("schools")
       .select("name")
       .eq("id", schoolId)
-      .single() as { data: Pick<SchoolRow, "name"> | null };
+      .single()) as { data: Pick<SchoolRow, "name"> | null };
 
-    // Get encrypted AT credentials via helper (never selects plaintext keys)
     const atCredentials = await getSchoolCredentials(supabase, schoolId);
 
-    // Get current term
     const { data: currentTerm } = await supabase
       .from("terms")
       .select("id, name")
@@ -78,11 +64,10 @@ export async function POST(request: NextRequest) {
 
     const termName = currentTerm?.name || "";
 
-    // Resolve recipients with personalization data
     const recipients: Recipient[] = [];
 
-    if (parsed.data.target_audience === "custom" && parsed.data.custom_phones) {
-      for (const phone of parsed.data.custom_phones) {
+    if (body.target_audience === "custom" && body.custom_phones) {
+      for (const phone of body.custom_phones) {
         recipients.push({
           phone,
           parent_name: "Parent",
@@ -92,10 +77,6 @@ export async function POST(request: NextRequest) {
         });
       }
     } else {
-      // Pre-allocate the balances map so the defaulter branch can
-      // populate it from the same query that scopes the .in()
-      // filter (audit 4.15). For the non-defaulter audiences it
-      // stays empty and the recipients fall back to balance = 0.
       const balances = new Map<string, number>();
 
       let studentsQuery = supabase
@@ -106,42 +87,52 @@ export async function POST(request: NextRequest) {
         .eq("status", "active")
         .not("parent_phone", "is", null);
 
-      if (parsed.data.target_audience === "class" && parsed.data.target_class_ids?.length) {
-        studentsQuery = studentsQuery.in("current_class_id", parsed.data.target_class_ids);
+      if (
+        body.target_audience === "class" &&
+        body.target_class_ids?.length
+      ) {
+        studentsQuery = studentsQuery.in(
+          "current_class_id",
+          body.target_class_ids,
+        );
       }
 
-      if (parsed.data.target_audience === "defaulters") {
-        // Audit 4.15: previously the defaulter query ran twice — once
-        // to scope the students .in() filter and once after the
-        // students query to populate the balances map for the
-        // personalized message. We now do the query once, use it
-        // for both purposes.
-        const { data: defaulterAccounts } = await supabase
+      if (body.target_audience === "defaulters") {
+        const { data: defaulterAccounts } = (await supabase
           .from("fee_accounts")
           .select("student_id, balance")
           .eq("school_id", schoolId)
           .eq("term_id", currentTerm?.id || "")
-          .gt("balance", 0) as { data: { student_id: string; balance: number }[] | null };
+          .gt("balance", 0)) as {
+          data: { student_id: string; balance: number }[] | null;
+        };
 
         if (defaulterAccounts && defaulterAccounts.length > 0) {
           const studentIds = defaulterAccounts.map((a) => a.student_id);
           studentsQuery = studentsQuery.in("id", studentIds);
-          // Pre-populate the balances map so we don't need a second
-          // fee_accounts SELECT after the students query.
           for (const a of defaulterAccounts) {
             balances.set(a.student_id, Number(a.balance) || 0);
           }
         } else {
-          return successResponse({ sent: 0, totalCost: 0, recipients: 0, message: "No defaulters found" });
+          return {
+            sent: 0,
+            totalCost: 0,
+            recipients: 0,
+            message: "No defaulters found",
+          };
         }
       }
 
-      const { data: students } = await studentsQuery as { data: { id: string; full_name: string; parent_name: string | null; parent_phone: string | null }[] | null };
+      const { data: students } = (await studentsQuery) as {
+        data: {
+          id: string;
+          full_name: string;
+          parent_name: string | null;
+          parent_phone: string | null;
+        }[] | null;
+      };
 
       if (students) {
-        // The defaulter balances are already pre-populated in the
-        // map above (audit 4.15), so this block is just the dedup
-        // + recipient build.
         const seen = new Set<string>();
         for (const s of students) {
           if (s.parent_phone && !seen.has(s.parent_phone)) {
@@ -159,45 +150,36 @@ export async function POST(request: NextRequest) {
     }
 
     if (recipients.length === 0) {
-      return errorResponse("No recipients found", 400);
+      throw new AuthError("No recipients found", 400);
     }
 
-    // Check if scheduled for later
-    if (parsed.data.scheduled_at) {
-      const scheduledDate = new Date(parsed.data.scheduled_at);
+    if (body.scheduled_at) {
+      const scheduledDate = new Date(body.scheduled_at);
       if (scheduledDate > new Date()) {
-        // Store as scheduled announcement - will be picked up by Edge Function
         await supabase.from("announcements").insert({
           school_id: schoolId,
-          title: parsed.data.title || "Scheduled SMS",
-          body: parsed.data.message_body,
-          target_audience: parsed.data.target_audience,
-          target_class_ids: parsed.data.target_class_ids || [],
+          title: body.title || "Scheduled SMS",
+          body: body.message_body,
+          target_audience: body.target_audience,
+          target_class_ids: body.target_class_ids || [],
           sent_via: "sms",
           scheduled_at: scheduledDate.toISOString(),
           scheduled_status: "pending",
           sent_by: ctx.user.id,
         } as unknown as Database["public"]["Tables"]["announcements"]["Insert"]);
 
-        return successResponse({
+        return {
           sent: 0,
           totalCost: 0,
           recipients: recipients.length,
           scheduled: true,
           scheduled_at: scheduledDate.toISOString(),
           message: `SMS scheduled for ${scheduledDate.toISOString()}`,
-        });
+        };
       }
     }
 
-    // In-app notification channel.
-    // Audit 4.14: previously the channel did N round-trips — one
-    // users SELECT per recipient phone — and N more inserts into
-    // in_app_notifications. For a 200-parent broadcast that's 400
-    // round-trips. Now: 1 users SELECT with .in() on the phone
-    // list, and 1 batched INSERT into in_app_notifications with
-    // all rows at once. Two round-trips total regardless of size.
-    if (parsed.data.channels.in_app) {
+    if (body.channels.in_app) {
       const uniquePhones = Array.from(new Set(recipients.map((r) => r.phone)));
       if (uniquePhones.length > 0) {
         const { data: linkedUsers } = await supabase
@@ -205,30 +187,59 @@ export async function POST(request: NextRequest) {
           .select("id, phone")
           .in("phone", uniquePhones)
           .eq("is_deleted", false);
-        const userIds = (linkedUsers ?? []).map((u: { id: string }) => u.id);
+        const userIds = (linkedUsers ?? []).map(
+          (u: { id: string }) => u.id,
+        );
         if (userIds.length > 0) {
           const notificationRows = userIds.map((userId) => ({
             school_id: schoolId,
             recipient_user_id: userId,
-            title: parsed.data.title || "School Announcement",
-            body: parsed.data.message_body,
+            title: body.title || "School Announcement",
+            body: body.message_body,
             type: "info",
           }));
-          await supabase.from("in_app_notifications").insert(notificationRows as unknown as Database["public"]["Tables"]["in_app_notifications"]["Insert"]);
+          await supabase
+            .from("in_app_notifications")
+            .insert(
+              notificationRows as unknown as Database["public"]["Tables"]["in_app_notifications"]["Insert"],
+            );
         }
       }
     }
 
-    // SMS channel
     let sent = 0;
     let totalCost = 0;
-    const smsCostPerUnit = 25; // UGX
+    const smsCostPerUnit = 25;
 
-    if (parsed.data.channels.sms) {
+    if (body.channels.sms) {
       const hasATCredentials = !!atCredentials;
+      const adminClient = createAdminClient();
+      const spendCheck = await adminClient.rpc(
+        "record_sms_spend" as never,
+        { p_school_id: schoolId, p_cost: 0 } as never,
+      );
+      const initialSpend = Array.isArray(spendCheck.data)
+        ? spendCheck.data[0]
+        : (spendCheck.data as
+            | {
+                allowed: boolean;
+                cap_ugx: number;
+                spent_ugx: number;
+                remaining_ugx: number;
+                reason: string;
+              }
+            | null);
+      if (initialSpend && initialSpend.allowed === false) {
+        throw new AuthError(
+          "Monthly SMS spend cap reached. Increase the cap in Settings before sending.",
+          429,
+        );
+      }
+      let capRemaining = Number(initialSpend?.remaining_ugx ?? 0);
+      const capDisabled = initialSpend ? initialSpend.cap_ugx === 0 : false;
 
       for (const recipient of recipients) {
-        const personalizedMessage = personalizeMessage(parsed.data.message_body, {
+        const personalizedMessage = personalizeMessage(body.message_body, {
           parent_name: recipient.parent_name,
           student_name: recipient.student_name,
           balance: recipient.balance,
@@ -239,7 +250,18 @@ export async function POST(request: NextRequest) {
         const smsCount = Math.ceil(personalizedMessage.length / 160);
         const cost = smsCount * smsCostPerUnit;
 
-        const smsLog: any = {
+        if (!capDisabled && cost > capRemaining) {
+          return {
+            sent,
+            totalCost,
+            recipients: recipients.length,
+            pending: recipients.length - sent,
+            message:
+              "SMS spend cap reached. The remaining recipients were not sent.",
+          };
+        }
+
+        const smsLog: Record<string, unknown> = {
           school_id: schoolId,
           recipient_phone: recipient.phone,
           message_body: personalizedMessage,
@@ -248,7 +270,6 @@ export async function POST(request: NextRequest) {
           cost,
         };
 
-        // Send via Africa's Talking if credentials available
         if (hasATCredentials && atCredentials) {
           try {
             const atResponse = await sendSms(
@@ -257,49 +278,67 @@ export async function POST(request: NextRequest) {
                 message: personalizedMessage,
                 from: process.env.AFRICAS_TALKING_SENDER_ID || "SKULI",
               },
-              atCredentials
+              atCredentials,
             );
 
             const atRecipient = atResponse.SMSMessageData?.Recipients?.[0];
 
             if (atRecipient) {
               smsLog.africa_talking_message_id = atRecipient.messageId;
-              smsLog.status = atRecipient.statusCode === 101 ? "sent" : "failed";
+              smsLog.status =
+                atRecipient.statusCode === 101 ? "sent" : "failed";
               smsLog.sent_at = new Date().toISOString();
               if (atRecipient.statusCode === 101) {
-                smsLog.cost = parseFloat(atRecipient.cost?.replace("UGX", "") || "0");
+                smsLog.cost = parseFloat(
+                  atRecipient.cost?.replace("UGX", "") || "0",
+                );
+                capRemaining = Math.max(
+                  0,
+                  capRemaining - Number(smsLog.cost),
+                );
+              } else {
+                capRemaining = Math.max(0, capRemaining - cost);
               }
+            } else {
+              capRemaining = Math.max(0, capRemaining - cost);
             }
           } catch {
             smsLog.status = "failed";
+            capRemaining = Math.max(0, capRemaining - cost);
           }
+        } else {
+          capRemaining = Math.max(0, capRemaining - cost);
         }
 
-        const { error: logError } = await supabase.from("sms_logs").insert(smsLog);
+        const { error: logError } = await supabase
+          .from("sms_logs")
+          .insert(smsLog as Database["public"]["Tables"]["sms_logs"]["Insert"]);
         if (!logError) {
           sent++;
           totalCost += Number(smsLog.cost) || cost;
         }
 
-        // Rate limit
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
 
-    // Create announcement record
     await supabase.from("announcements").insert({
       school_id: schoolId,
-      title: parsed.data.title || "SMS Broadcast",
-      body: parsed.data.message_body,
-      target_audience: parsed.data.target_audience,
-      target_class_ids: parsed.data.target_class_ids || [],
-      sent_via: parsed.data.channels.sms && parsed.data.channels.in_app ? "sms,in_app" : parsed.data.channels.sms ? "sms" : "in_app",
+      title: body.title || "SMS Broadcast",
+      body: body.message_body,
+      target_audience: body.target_audience,
+      target_class_ids: body.target_class_ids || [],
+      sent_via:
+        body.channels.sms && body.channels.in_app
+          ? "sms,in_app"
+          : body.channels.sms
+            ? "sms"
+            : "in_app",
       sent_at: new Date().toISOString(),
       sent_by: ctx.user.id,
       sms_cost: totalCost,
     } as unknown as Database["public"]["Tables"]["announcements"]["Insert"]);
 
-    // Audit log
     await supabase.from("audit_logs").insert({
       school_id: schoolId,
       user_id: ctx.user.id,
@@ -308,15 +347,11 @@ export async function POST(request: NextRequest) {
       new_value: {
         recipients: sent,
         cost: totalCost,
-        audience: parsed.data.target_audience,
-        channels: parsed.data.channels,
+        audience: body.target_audience,
+        channels: body.channels,
       },
     } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse({ sent, totalCost, recipients: recipients.length });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = err instanceof Error && "status" in err ? (err as { status: number }).status : 500;
-    return errorResponse(message, status);
-  }
-}
+    return { sent, totalCost, recipients: recipients.length };
+  },
+});

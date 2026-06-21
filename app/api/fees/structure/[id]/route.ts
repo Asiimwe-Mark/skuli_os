@@ -1,26 +1,15 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse, dbError } from "@/lib/http";
 
-type FeeStructureRow = Database["public"]["Tables"]["fee_structures"]["Row"];
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id } = params ?? {};
 
-interface RouteContext {
-  params: Promise<{ id: string }>;
-}
-
-export async function PATCH(request: NextRequest, { params }: RouteContext) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-    const { id } = await params;
+    if (!id) {
+      return errorResponse("Fee structure ID required", 400);
+    }
 
     const { data: existing } = await ctx.supabase
       .from("fee_structures")
@@ -28,7 +17,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       .eq("id", id)
       .eq("school_id", schoolId)
       .eq("is_deleted", false)
-      .single() as { data: Record<string, any> | null };
+      .single() as { data: Record<string, unknown> | null };
 
     if (!existing) {
       return errorResponse("Fee structure not found", 404);
@@ -84,23 +73,23 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       action: "fee_structure_updated",
       entity_type: "fee_structure",
       entity_id: id,
-      old_value: { name: existing.name, amount: existing.amount },
-      new_value: allowedFields } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      old_value: { name: (existing as { name: string }).name, amount: (existing as { amount: number }).amount },
+      new_value: allowedFields,
+    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function DELETE(request: NextRequest, { params }: RouteContext) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-    const { id } = await params;
+export const DELETE = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, _request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id } = params ?? {};
+
+    if (!id) {
+      return errorResponse("Fee structure ID required", 400);
+    }
 
     const { data: existing } = await ctx.supabase
       .from("fee_structures")
@@ -130,12 +119,9 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       action: "fee_structure_deleted",
       entity_type: "fee_structure",
       entity_id: id,
-      old_value: { name: existing.name, amount: existing.amount } } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      old_value: { name: existing.name, amount: existing.amount },
+    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse({ deleted: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { deleted: true };
+  },
+});

@@ -1,40 +1,16 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { updateStudentSchema } from "@/lib/validations/student";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse, dbError } from "@/lib/http";
 
-type StudentRow = Database["public"]["Tables"]["students"]["Row"];
-type ClassRow = Database["public"]["Tables"]["classes"]["Row"];
-type TermRow = Database["public"]["Tables"]["terms"]["Row"];
-type ClassEnrollmentRow = Database["public"]["Tables"]["class_enrollments"]["Row"];
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"],
+  handler: async (ctx, _request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id } = params ?? {};
 
-type EnrollmentWithJoins = ClassEnrollmentRow & {
-  class: Pick<ClassRow, "id" | "name"> | null;
-  term: Pick<TermRow, "id" | "name" | "academic_year_id"> | null;
-};
-
-type StudentWithJoins = StudentRow & {
-  current_class: Pick<ClassRow, "id" | "name" | "level" | "stream"> | null;
-  class_enrollments: EnrollmentWithJoins[];
-};
-
-interface RouteContext {
-  params: Promise<{ id: string }>;
-}
-
-export async function GET(request: NextRequest, { params }: RouteContext) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"]);
-    const { id } = await params;
+    if (!id) {
+      return errorResponse("Student ID is required", 400);
+    }
 
     const { data: student, error } = await ctx.supabase
       .from("students")
@@ -59,20 +35,19 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
       return errorResponse("Student not found", 404);
     }
 
-    return successResponse(student);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return student;
+  },
+});
 
-export async function PATCH(request: NextRequest, { params }: RouteContext) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-    const { id } = await params;
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id } = params ?? {};
+
+    if (!id) {
+      return errorResponse("Student ID is required", 400);
+    }
 
     // Fetch existing student for audit comparison
     const { data: existing } = await ctx.supabase
@@ -81,7 +56,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       .eq("id", id)
       .eq("school_id", schoolId)
       .eq("is_deleted", false)
-      .single() as { data: Record<string, any> | null };
+      .single() as { data: Record<string, unknown> | null };
 
     if (!existing) {
       return errorResponse("Student not found", 404);
@@ -94,6 +69,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
 
     const { id: _id, ...updateData } = parsed.data;
+    void _id;
 
     const { data: student, error } = await ctx.supabase
       .from("students")
@@ -112,7 +88,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     if (
       student &&
       parsed.data.current_class_id &&
-      parsed.data.current_class_id !== existing!.current_class_id
+      parsed.data.current_class_id !== (existing as { current_class_id: string | null }).current_class_id
     ) {
       const { data: term } = await ctx.supabase
         .from("terms")
@@ -143,23 +119,23 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
       action: "student_updated",
       entity_type: "student",
       entity_id: id,
-      old_value: { name: existing!.full_name, status: existing!.status },
-      new_value: updateData } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      old_value: { name: (existing as { full_name: string }).full_name, status: (existing as { status: string }).status },
+      new_value: updateData,
+    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse(student);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return student;
+  },
+});
 
-export async function DELETE(request: NextRequest, { params }: RouteContext) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "SUPER_ADMIN"]);
-    const { id } = await params;
+export const DELETE = route({
+  roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+  handler: async (ctx, _request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id } = params ?? {};
+
+    if (!id) {
+      return errorResponse("Student ID is required", 400);
+    }
 
     const { data: existing } = await ctx.supabase
       .from("students")
@@ -189,12 +165,9 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
       action: "student_deleted",
       entity_type: "student",
       entity_id: id,
-      old_value: { name: existing.full_name, admission: existing.admission_number } } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      old_value: { name: existing.full_name, admission: existing.admission_number },
+    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse({ deleted: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { deleted: true };
+  },
+});

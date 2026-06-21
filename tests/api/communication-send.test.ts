@@ -12,6 +12,7 @@
  * review and confirmed by the actual route at runtime.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { NextRequest } from "next/server";
 import { AuthError } from "@/lib/api-helpers";
 
 type Profile = {
@@ -71,11 +72,34 @@ vi.mock("@/lib/api-helpers", async () => {
 
 import { POST } from "@/app/api/communication/send/route";
 
+// §12.5: the route calls createAdminClient() (server-only) to
+// invoke record_sms_spend. The client is mocked below so the
+// test does not need a real Supabase connection, and the
+// server-only guard is satisfied at import time.
+vi.mock("@/lib/supabase/admin", () => ({
+  createAdminClient: () => ({
+    rpc: async () => ({
+      data: [
+        {
+          allowed: true,
+          spent_ugx: 0,
+          cap_ugx: 50000,
+          remaining_ugx: 50000,
+          reason: "",
+        },
+      ],
+      error: null,
+    }),
+  }),
+}));
+
 function fakePost(body: unknown) {
-  return new Request("http://test.local/api/communication/send", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  return new NextRequest(
+    new Request("http://test.local/api/communication/send", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 function setProfile(role = "SCHOOL_ADMIN", school_id: string | null = "s1") {

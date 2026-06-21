@@ -1,38 +1,17 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { payrollRunSchema } from "@/lib/validations/staff";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route, AuthError, dbError } from "@/lib/http";
 
-type StaffRow = Database["public"]["Tables"]["staff"]["Row"];
-type PayrollRecordRow = Database["public"]["Tables"]["payroll_records"]["Row"];
-
-// NSSF rates for Uganda: 5% employee, 10% employer
 const NSSF_EMPLOYEE_RATE = 0.05;
 const NSSF_EMPLOYER_RATE = 0.10;
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "SUPER_ADMIN"]);
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+  schema: payrollRunSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
+    const { month, year } = body;
 
-    const body = await request.json();
-    const parsed = payrollRunSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    const { month, year } = parsed.data;
-
-    // Check if payroll was already generated for this month/year
     const { count: existingCount } = await ctx.supabase
       .from("payroll_records")
       .select("*", { count: "exact", head: true })
@@ -41,25 +20,25 @@ export async function POST(request: NextRequest) {
       .eq("year", year);
 
     if (existingCount && existingCount > 0) {
-      return errorResponse(
+      throw new AuthError(
         `Payroll for ${month}/${year} has already been generated (${existingCount} records). Delete existing records first if you want to regenerate.`,
-        400
+        400,
       );
     }
 
-    // Get all active staff. Narrow columns to what payroll run needs.
-    const { data: staffList } = await ctx.supabase
+    const { data: staffList } = (await ctx.supabase
       .from("staff")
       .select("id, basic_salary, full_name, employee_number")
       .eq("school_id", schoolId)
       .eq("is_active", true)
-      .eq("is_deleted", false) as { data: { id: string; basic_salary: number }[] | null };
+      .eq("is_deleted", false)) as {
+      data: { id: string; basic_salary: number }[] | null;
+    };
 
     if (!staffList || staffList.length === 0) {
-      return errorResponse("No active staff found", 400);
+      throw new AuthError("No active staff found", 400);
     }
 
-    let created = 0;
     const payrollRecords: Record<string, unknown>[] = [];
 
     for (const staff of staffList) {
@@ -68,7 +47,7 @@ export async function POST(request: NextRequest) {
       const nssfEmployer = Math.round(gross * NSSF_EMPLOYER_RATE);
       const netSalary = gross - nssfEmployee;
 
-      const record = {
+      payrollRecords.push({
         school_id: schoolId,
         staff_id: staff.id,
         month,
@@ -79,34 +58,28 @@ export async function POST(request: NextRequest) {
         nssf_employee: nssfEmployee,
         nssf_employer: nssfEmployer,
         net_salary: netSalary,
-        payment_status: "pending" as const,
-      };
-
-      payrollRecords.push(record);
+        payment_status: "pending",
+      });
     }
 
-    // Batch insert all payroll records
     const { data, error } = await ctx.supabase
       .from("payroll_records")
-      .insert(payrollRecords as unknown as Database["public"]["Tables"]["payroll_records"]["Insert"])
+      .insert(
+        payrollRecords as unknown as Database["public"]["Tables"]["payroll_records"]["Insert"],
+      )
       .select();
 
     if (error) return dbError(error, "Database error");
-    created = data?.length ?? 0;
+    const created = data?.length ?? 0;
 
-    // Audit log
     await ctx.supabase.from("audit_logs").insert({
       school_id: schoolId,
       user_id: ctx.user.id,
       action: "payroll_generated",
       entity_type: "payroll_record",
-      new_value: { month, year, created, staff_count: staffList!.length },
+      new_value: { month, year, created, staff_count: staffList.length },
     } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse({ created, month, year });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { created, month, year };
+  },
+});

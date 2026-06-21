@@ -1,49 +1,40 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse,
-} from "@/lib/api-helpers";
+import { route, AuthError } from "@/lib/http";
 import { AttendanceCertificatePDF } from "@/lib/pdf/attendance-certificate";
 import type { AttendanceCertificateData } from "@/lib/pdf/attendance-certificate";
 import { Document, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"]);
-
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const studentId = searchParams.get("student_id");
     const termId = searchParams.get("term_id");
 
     if (!studentId) {
-      return errorResponse("student_id is required", 400);
+      throw new AuthError("student_id is required", 400);
     }
 
-    // Get student
     const { data: student } = await ctx.supabase
       .from("students")
-      .select("id, full_name, admission_number, current_class_id, current_class:classes(name)")
+      .select(
+        "id, full_name, admission_number, current_class_id, current_class:classes(name)",
+      )
       .eq("id", studentId)
       .eq("school_id", schoolId)
       .single();
 
     if (!student) {
-      return errorResponse("Student not found", 404);
+      throw new AuthError("Student not found", 404);
     }
 
-    // Get school
     const { data: school } = await ctx.supabase
       .from("schools")
       .select("name")
       .eq("id", schoolId)
       .single();
 
-    // Get term info
     let term;
     if (termId) {
       const { data } = await ctx.supabase
@@ -64,10 +55,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (!term) {
-      return errorResponse("Term not found", 404);
+      throw new AuthError("Term not found", 404);
     }
 
-    // Get attendance records
     const { data: records } = await ctx.supabase
       .from("attendance_records")
       .select("status, date")
@@ -76,7 +66,6 @@ export async function GET(request: NextRequest) {
       .gte("date", term.start_date)
       .lte("date", term.end_date);
 
-    // Get holidays that affect attendance for this term
     const { data: holidays } = await ctx.supabase
       .from("calendar_events")
       .select("event_date, end_date")
@@ -86,9 +75,8 @@ export async function GET(request: NextRequest) {
       .lte("event_date", term.end_date)
       .or(`end_date.gte.${term.start_date},end_date.is.null`);
 
-    // Count unique holiday dates
     const holidayDates = new Set<string>();
-    (holidays || []).forEach((h: any) => {
+    (holidays || []).forEach((h: { event_date: string; end_date: string | null }) => {
       const start = new Date(h.event_date);
       const end = h.end_date ? new Date(h.end_date) : start;
       for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
@@ -96,7 +84,6 @@ export async function GET(request: NextRequest) {
       }
     });
 
-    // Count weekdays in the term range, then subtract holidays that fall on weekdays
     function countWeekdays(startDate: string, endDate: string): number {
       let count = 0;
       const current = new Date(startDate);
@@ -109,14 +96,17 @@ export async function GET(request: NextRequest) {
       return count;
     }
 
-    const totalSchoolDays = countWeekdays(term.start_date ?? '', term.end_date ?? '') - holidayDates.size;
+    const totalSchoolDays =
+      countWeekdays(term.start_date ?? "", term.end_date ?? "") - holidayDates.size;
     const totalPresent = (records || []).filter(
-      (r: { status: string }) => r.status === "present" || r.status === "late"
+      (r: { status: string }) => r.status === "present" || r.status === "late",
     ).length;
-    const attendanceRate = totalSchoolDays > 0 ? Math.round((totalPresent / totalSchoolDays) * 100) : 0;
+    const attendanceRate =
+      totalSchoolDays > 0
+        ? Math.round((totalPresent / totalSchoolDays) * 100)
+        : 0;
     const totalDays = totalSchoolDays;
 
-    // Get class teacher and headmaster names
     const studentData = student as unknown as {
       full_name: string;
       admission_number: string;
@@ -124,7 +114,6 @@ export async function GET(request: NextRequest) {
       current_class: { name: string } | null;
     };
 
-    // Try to get class teacher
     const { data: classInfo } = await ctx.supabase
       .from("classes")
       .select("class_teacher_id")
@@ -141,7 +130,6 @@ export async function GET(request: NextRequest) {
       if (teacher) classTeacherName = teacher.full_name;
     }
 
-    // Get headmaster
     const { data: headmaster } = await ctx.supabase
       .from("users")
       .select("full_name")
@@ -164,7 +152,11 @@ export async function GET(request: NextRequest) {
     };
 
     const buffer = await renderToBuffer(
-      React.createElement(Document, null, React.createElement(AttendanceCertificatePDF, { data }))
+      React.createElement(
+        Document,
+        null,
+        React.createElement(AttendanceCertificatePDF, { data }),
+      ),
     );
 
     return new Response(new Uint8Array(buffer), {
@@ -173,11 +165,5 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="attendance-certificate-${studentData.admission_number}.pdf"`,
       },
     });
-  } catch (err) {
-    if (err instanceof Error && "status" in err) {
-      const apiErr = err as { status: number; message: string };
-      return errorResponse(apiErr.message, apiErr.status);
-    }
-    return errorResponse("Internal server error", 500);
-  }
-}
+  },
+});

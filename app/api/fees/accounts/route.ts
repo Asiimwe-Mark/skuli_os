@@ -1,24 +1,17 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
+  route,
   errorResponse,
   dbError,
-  getErrorStatus,
-} from "@/lib/api-helpers";
-import { withSchoolCache, setCacheHeader, invalidateSchool } from "@/lib/api-cache";
+  paginatedResponse,
+} from "@/lib/http";
+import { withSchoolReadCache } from "@/lib/http/with-cache";
+import { invalidateSchool } from "@/lib/api-cache";
 
-type FeeAccountRow = Database["public"]["Tables"]["fee_accounts"]["Row"];
-type StudentRow = Database["public"]["Tables"]["students"]["Row"];
-
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const termId = searchParams.get("term_id");
@@ -36,7 +29,7 @@ export async function GET(request: NextRequest) {
     // the school tag is implicit in the LRU key, so a single
     // invalidateSchool(schoolId) on a mutation purges every variant.
     const inputShape = `fees-accounts:${termId ?? "_"}:${classId ?? "_"}:${status ?? "_"}:${page}:${limit}`;
-    const { value, hit } = await withSchoolCache(
+    const { value, applyTo } = await withSchoolReadCache(
       { schoolId, inputShape },
       async () => {
         // Audit 9.1: previously the classId branch did an extra round-trip
@@ -68,30 +61,23 @@ export async function GET(request: NextRequest) {
           .range(from, to);
 
         if (error) throw new Error(`postgrest:${error.code ?? "unknown"}:${error.message}`);
-        return {
-          accounts: data ?? [],
-          total: count ?? 0,
+        return paginatedResponse(
+          data ?? [],
+          count ?? 0,
           page,
           limit,
-          totalPages: Math.ceil((count ?? 0) / limit),
-        };
+        );
       },
     );
 
-    const response = successResponse(value);
-    return setCacheHeader(response, hit);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return applyTo(value);
+  },
+});
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const body = await request.json();
     const { id, ...updates } = body;
@@ -156,10 +142,6 @@ export async function PATCH(request: NextRequest) {
     // (term, class, status, page) variant for this school in Redis.
     await invalidateSchool(schoolId);
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});

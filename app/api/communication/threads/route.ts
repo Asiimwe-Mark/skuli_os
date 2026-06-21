@@ -1,23 +1,12 @@
 // app/api/communication/threads/route.ts
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route, dbError } from "@/lib/http";
 
-export async function GET(req: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const supabase = ctx.supabase;
-    const { searchParams } = new URL(req.url);
+    const { searchParams } = new URL(request.url);
     const search = (searchParams.get("search") || "").trim();
     // Audit 4.3 (9.6): previously the route returned every thread
     // in the school, then ran an in-memory full_name filter. For a
@@ -92,16 +81,12 @@ export async function GET(req: NextRequest) {
       last_message: lastMessages[t.id] || null,
     }));
 
-    return successResponse({
+    return {
       threads: result,
       total: count ?? result.length,
       page,
       limit,
       totalPages: Math.ceil((count ?? result.length) / limit),
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    };
+  },
+});

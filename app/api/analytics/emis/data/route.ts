@@ -1,24 +1,12 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 import { aggregateEmisData } from "@/lib/emis/aggregate";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "SUPER_ADMIN"]);
-
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const termId = request.nextUrl.searchParams.get("term_id") ?? undefined;
     const data = await aggregateEmisData(ctx.supabase, schoolId, termId);
-    return successResponse(data);
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+    return data;
+  },
+});

@@ -1,43 +1,34 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-} from "@/lib/api-helpers";
+import { route, AuthError, dbError } from "@/lib/http";
 
-export async function POST(req: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["PARENT"]);
+export const POST = route({
+  roles: ["PARENT"],
+  handler: async (ctx, request) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      slot_id?: string;
+      student_id?: string;
+      notes?: string;
+    };
 
-    const body = await req.json();
-    const { slot_id, student_id, notes } = body;
-
-    if (!slot_id || !student_id) {
-      return errorResponse("slot_id and student_id are required", 400);
+    if (!body.slot_id || !body.student_id) {
+      throw new AuthError("slot_id and student_id are required", 400);
     }
 
     const supabase = ctx.supabase;
 
     // SECURITY (audit H-2): verify parent_students link FIRST so an
-    // unlinked parent cannot even lock a slot. The previous version
-    // atomically claimed the slot before checking the link, which
-    // meant a parent with no link row could lock another student's
-    // slot. parent_students is the sole authority — no phone fallback.
+    // unlinked parent cannot even lock a slot. parent_students is
+    // the sole authority — no phone fallback.
     const { data: parentLink } = await supabase
       .from("parent_students")
       .select("student_id")
       .eq("parent_id", ctx.user.id)
-      .eq("student_id", student_id)
+      .eq("student_id", body.student_id)
       .maybeSingle();
 
     if (!parentLink) {
-      return errorResponse("Not linked to this student", 403);
+      throw new AuthError("Not linked to this student", 403);
     }
 
-    // Get parent's profile info (don't trust client-supplied name/phone)
     const { data: parentProfile } = await supabase
       .from("users")
       .select("full_name, phone")
@@ -47,24 +38,20 @@ export async function POST(req: NextRequest) {
     const parentName = parentProfile?.full_name ?? "Parent";
     const parentPhone = parentProfile?.phone ?? "";
 
-    // Check slot availability with atomic update to prevent double-booking.
-    // We scope to the same school as the parent student — a slot from
-    // a different school cannot be claimed even if the parent knew the
-    // slot_id.
     const { data: studentSchool } = await supabase
       .from("students")
       .select("school_id")
-      .eq("id", student_id)
+      .eq("id", body.student_id)
       .maybeSingle();
 
     if (!studentSchool) {
-      return errorResponse("Student not found", 404);
+      throw new AuthError("Student not found", 404);
     }
 
     const { data: slot, error: slotError } = await supabase
       .from("meeting_slots")
       .update({ is_booked: true })
-      .eq("id", slot_id)
+      .eq("id", body.slot_id)
       .eq("school_id", studentSchool.school_id)
       .eq("is_booked", false)
       .eq("is_deleted", false)
@@ -72,27 +59,27 @@ export async function POST(req: NextRequest) {
       .single();
 
     if (slotError || !slot) {
-      return errorResponse("Slot not available or already booked", 400);
+      throw new AuthError("Slot not available or already booked", 400);
     }
 
     const { data: booking, error: bookingError } = await supabase
       .from("meeting_bookings")
       .insert({
-        slot_id,
+        slot_id: body.slot_id,
         school_id: slot.school_id,
-        student_id,
+        student_id: body.student_id,
         parent_name: parentName,
         parent_phone: parentPhone,
-        notes: notes ?? null,
+        notes: body.notes ?? null,
         status: "pending" as const,
         reminder_sent: false,
       })
       .select()
       .single();
 
-    if (bookingError) return dbError(bookingError, "Failed to book meeting", 500);
+    if (bookingError)
+      return dbError(bookingError, "Failed to book meeting", 500);
 
-    // Send confirmation SMS (fire-and-forget)
     const { data: staff } = await supabase
       .from("staff")
       .select("full_name")
@@ -120,10 +107,6 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    return successResponse(booking, 201);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = err instanceof Error && "status" in err ? (err as { status: number }).status : 500;
-    return errorResponse(message, status);
-  }
-}
+    return booking;
+  },
+});

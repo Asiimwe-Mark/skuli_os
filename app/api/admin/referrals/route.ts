@@ -1,23 +1,16 @@
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 
 // GET: SUPER_ADMIN only. All referral codes with owner school name,
 // total referral count and total credited months.
-export async function GET() {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
-
+export const GET = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  handler: async (ctx) => {
     const { data: codes, error } = await ctx.supabase
       .from("referral_codes")
       .select("id, code, owner_school_id, is_active, created_at, schools:owner_school_id(name)");
 
-    if (error) return errorResponse("Failed to load referrals", 500);
+    if (error) throw new Error("Failed to load referrals");
 
     const codeIds = (codes ?? []).map((c) => c.id);
     const ownerIds = (codes ?? []).map((c) => c.owner_school_id);
@@ -30,7 +23,10 @@ export async function GET() {
       : { data: [] };
 
     const { data: credits } = ownerIds.length
-      ? await ctx.supabase.from("billing_credits").select("school_id, months").in("school_id", ownerIds)
+      ? await ctx.supabase
+          .from("billing_credits")
+          .select("school_id, months")
+          .in("school_id", ownerIds)
       : { data: [] };
 
     const creditsBySchool: Record<string, number> = {};
@@ -50,8 +46,6 @@ export async function GET() {
     });
 
     rows.sort((a, b) => b.totalReferrals - a.totalReferrals);
-    return successResponse({ referrals: rows });
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+    return { referrals: rows };
+  },
+});

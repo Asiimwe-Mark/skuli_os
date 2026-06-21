@@ -9,33 +9,26 @@
 // authority on which children belong to which parent; we no longer fall
 // back to a phone match. If a parent has no link row, the request is
 // denied with 403.
-import { NextRequest } from "next/server";
 import crypto from "crypto";
+import { z } from "zod";
 import type { Database } from "@/types/database";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-} from "@/lib/api-helpers";
+import { route, errorResponse } from "@/lib/http";
 import { getSchoolCredentials } from "@/lib/africas-talking/client";
 import { requestMobileMoneyPayment } from "@/lib/africas-talking/mobile-money";
 import { detectMobileMoneyProvider } from "@/lib/utils/phone";
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["PARENT", "SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+const stkPushSchema = z.object({
+  student_id: z.string().uuid(),
+  amount: z.number().positive("amount must be greater than zero"),
+  phone: z.string().optional(),
+});
 
-    const body = await request.json();
+export const POST = route({
+  roles: ["PARENT", "SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: stkPushSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
     const { student_id, amount, phone } = body;
-
-    if (!student_id || !amount || amount <= 0) {
-      return errorResponse("student_id and a positive amount are required", 400);
-    }
-
     const supabase = ctx.supabase;
 
     // Get student info (scoped to school for non-parent users)
@@ -116,7 +109,7 @@ export async function POST(request: NextRequest) {
     const result = await requestMobileMoneyPayment(
       {
         phoneNumber: paymentPhone,
-        amount: Number(amount),
+        amount,
         currencyCode: "UGX",
         metadata: {
           student_id,
@@ -142,7 +135,7 @@ export async function POST(request: NextRequest) {
       school_id: schoolId,
       student_id,
       fee_account_id: feeAccount?.id || null,
-      amount: Number(amount),
+      amount,
       payment_method: "mobile_money" as const,
       mobile_money_provider: detectMobileMoneyProvider(paymentPhone),
       phone_used: paymentPhone,
@@ -167,7 +160,7 @@ export async function POST(request: NextRequest) {
       entity_type: "fee_payment",
       new_value: {
         student_id,
-        amount: Number(amount),
+        amount,
         phone: paymentPhone,
         transaction_id: result.transactionId,
       },
@@ -176,18 +169,11 @@ export async function POST(request: NextRequest) {
       ip_address: null,
     });
 
-    return successResponse({
+    return {
       transactionId: result.transactionId,
       status: result.status,
       description: result.description,
       message: "Payment request sent. Check your phone to confirm.",
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status =
-      err instanceof Error && "status" in err
-        ? (err as { status: number }).status
-        : 500;
-    return errorResponse(message, status);
-  }
-}
+    };
+  },
+});

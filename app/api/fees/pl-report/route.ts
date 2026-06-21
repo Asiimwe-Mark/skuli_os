@@ -1,17 +1,11 @@
-import { NextRequest } from "next/server";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { PlReportPDF } from "@/lib/pdf/pl-report";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse, getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const termId = searchParams.get("term_id");
@@ -42,6 +36,14 @@ export async function GET(request: NextRequest) {
       .eq("school_id", schoolId)
       .eq("is_deleted", false);
 
+    // The original code typed these as `any` (data joins through
+    // !inner foreign-key selects aren't easy to express without
+    // bringing in the full Database row types). PR 4 can pick up
+    // the type work; for now we keep the same shape and silence
+    // ESLint inline. The audit/migration guide §7.6 explicitly
+    // puts these inline `: any` casts out of scope for the
+    // wrapper refactor.
+    /* eslint-disable @typescript-eslint/no-explicit-any */
     const accountIds = (termAccounts || []).map((a: any) => a.id);
 
     let termPayments: any[] = [];
@@ -69,6 +71,7 @@ export async function GET(request: NextRequest) {
         p.fee_accounts?.class_enrollments?.classes?.name || "General";
       incomeMap.set(className, (incomeMap.get(className) || 0) + Number(p.amount));
     });
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     const income_rows = Array.from(incomeMap.entries()).map(
       ([class_name, amount]) => ({
@@ -87,11 +90,13 @@ export async function GET(request: NextRequest) {
       .eq("term_id", termId)
       .eq("is_deleted", false);
 
+    /* eslint-disable @typescript-eslint/no-explicit-any */
     const expenseMap = new Map<string, number>();
     (expenses || []).forEach((e: any) => {
       const catName = e.expense_categories?.name || "Uncategorized";
       expenseMap.set(catName, (expenseMap.get(catName) || 0) + Number(e.amount));
     });
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     const expense_rows = Array.from(expenseMap.entries()).map(
       ([category_name, amount]) => ({ category_name, amount })
@@ -116,13 +121,14 @@ export async function GET(request: NextRequest) {
         total_expenses })
     );
 
+    // Migration guide §7.3: PDF routes return a binary blob. The
+    // route() wrapper passes a Response through unchanged (PR 2),
+    // so we can build the binary Response here and return it.
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="pl-report-${termName.replace(/\s/g, "-")}.pdf"` } });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+        "Content-Disposition": `attachment; filename="pl-report-${termName.replace(/\s/g, "-")}.pdf"`,
+      },
+    });
+  },
+});

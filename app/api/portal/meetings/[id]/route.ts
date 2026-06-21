@@ -1,21 +1,9 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-} from "@/lib/api-helpers";
+import { route, AuthError, dbError } from "@/lib/http";
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["PARENT"]);
-
-    const { id } = await params;
+export const PATCH = route({
+  roles: ["PARENT"],
+  handler: async (ctx, _request, params) => {
+    const { id } = (params ?? {}) as { id: string };
     const supabase = ctx.supabase;
 
     const { data: booking } = await supabase
@@ -24,9 +12,9 @@ export async function PATCH(
       .eq("id", id)
       .single();
 
-    if (!booking) return errorResponse("Not found", 404);
+    if (!booking) throw new AuthError("Not found", 404);
 
-    // Verify parent is linked to this student
+    // SECURITY (audit H-2): parent_students is the sole authority.
     const { data: parentLink } = await supabase
       .from("parent_students")
       .select("student_id")
@@ -35,7 +23,7 @@ export async function PATCH(
       .maybeSingle();
 
     if (!parentLink) {
-      return errorResponse("Not linked to this student", 403);
+      throw new AuthError("Not linked to this student", 403);
     }
 
     const { data, error } = await supabase
@@ -65,7 +53,9 @@ export async function PATCH(
       .single();
 
     if (slot && school && booking.parent_phone) {
-      const teacherName = (slot.teacher as unknown as { full_name: string } | null)?.full_name ?? "your teacher";
+      const teacherName =
+        (slot.teacher as unknown as { full_name: string } | null)
+          ?.full_name ?? "your teacher";
       await supabase.from("sms_logs").insert({
         school_id: booking.school_id,
         recipient_phone: booking.parent_phone,
@@ -80,10 +70,6 @@ export async function PATCH(
       });
     }
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = err instanceof Error && "status" in err ? (err as { status: number }).status : 500;
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});

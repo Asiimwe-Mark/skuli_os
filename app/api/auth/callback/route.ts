@@ -1,8 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import { publicRoute } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
+export const GET = publicRoute(async (request) => {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get("code");
   const rawNext = searchParams.get("next") ?? "/dashboard";
@@ -29,14 +30,17 @@ export async function GET(request: NextRequest) {
             });
           },
         },
-      }
+      },
     );
 
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
-    console.error("[auth/callback] exchangeCodeForSession returned error:", error.message);
+    console.error(
+      "[auth/callback] exchangeCodeForSession returned error:",
+      error.message,
+    );
     return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);
   } catch (err) {
     // exchangeCodeForSession can throw on network timeouts, malformed
@@ -46,4 +50,4 @@ export async function GET(request: NextRequest) {
     console.error("[auth/callback] exchangeCodeForSession threw:", err);
     return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);
   }
-}
+});

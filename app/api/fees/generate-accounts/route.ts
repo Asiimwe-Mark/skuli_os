@@ -1,53 +1,34 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { generateFeeAccountsSchema } from "@/lib/validations/fees";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse, getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse } from "@/lib/http";
 
-type FeeStructureRow = Database["public"]["Tables"]["fee_structures"]["Row"];
-type TermRow = Database["public"]["Tables"]["terms"]["Row"];
-type ClassEnrollmentRow = Database["public"]["Tables"]["class_enrollments"]["Row"];
-type FeeAccountRow = Database["public"]["Tables"]["fee_accounts"]["Row"];
-type FeeAccountInsert = Database["public"]["Tables"]["fee_accounts"]["Insert"];
-type AuditLogInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
-
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR"]);
-
-    const body = await request.json();
-    const parsed = generateFeeAccountsSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR"],
+  schema: generateFeeAccountsSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
     // Get fee structures for this term
     let structuresQuery = ctx.supabase
       .from("fee_structures")
       .select("*")
       .eq("school_id", schoolId)
-      .eq("term_id", parsed.data.term_id)
+      .eq("term_id", body.term_id)
       .eq("is_deleted", false);
 
-    if (parsed.data.class_id) {
+    if (body.class_id) {
       // The class must belong to this school before we use it to filter.
       const { data: cls } = await ctx.supabase
         .from("classes")
         .select("id")
-        .eq("id", parsed.data.class_id)
+        .eq("id", body.class_id)
         .eq("school_id", schoolId)
         .maybeSingle();
       if (!cls) {
         return errorResponse("Invalid class for this school", 400);
       }
       structuresQuery = structuresQuery.or(
-        `class_id.is.null,class_id.eq.${parsed.data.class_id}`
+        `class_id.is.null,class_id.eq.${body.class_id}`
       );
     }
 
@@ -60,7 +41,7 @@ export async function POST(request: NextRequest) {
     const { data: term } = await ctx.supabase
       .from("terms")
       .select("academic_year_id")
-      .eq("id", parsed.data.term_id)
+      .eq("id", body.term_id)
       .eq("school_id", schoolId)
       .single() as { data: { academic_year_id: string } | null };
 
@@ -76,10 +57,10 @@ export async function POST(request: NextRequest) {
     let enrollmentsQuery = ctx.supabase
       .from("class_enrollments")
       .select("student_id, class_id, student:students(school_id)")
-      .eq("term_id", parsed.data.term_id);
+      .eq("term_id", body.term_id);
 
-    if (parsed.data.class_id) {
-      enrollmentsQuery = enrollmentsQuery.eq("class_id", parsed.data.class_id);
+    if (body.class_id) {
+      enrollmentsQuery = enrollmentsQuery.eq("class_id", body.class_id);
     }
 
     const { data: rawEnrollments } = await enrollmentsQuery as {
@@ -107,7 +88,7 @@ export async function POST(request: NextRequest) {
         .from("fee_accounts")
         .select("id")
         .eq("student_id", enrollment.student_id)
-        .eq("term_id", parsed.data.term_id)
+        .eq("term_id", body.term_id)
         .eq("school_id", schoolId)
         .single() as { data: { id: string } | null };
 
@@ -127,17 +108,19 @@ export async function POST(request: NextRequest) {
       const { data: newAccount, error } = await ctx.supabase.from("fee_accounts").insert({
         school_id: schoolId,
         student_id: enrollment.student_id,
-        term_id: parsed.data.term_id,
+        term_id: body.term_id,
         academic_year_id: term!.academic_year_id,
         total_expected: totalExpected,
         total_paid: 0,
         balance: totalExpected,
-        status: "unpaid" } as unknown as Database["public"]["Tables"]["fee_accounts"]["Insert"]).select("id").single();
+        status: "unpaid",
+      } as unknown as Database["public"]["Tables"]["fee_accounts"]["Insert"]).select("id").single();
 
       if (!error && newAccount) {
         // Recalculate to apply any discounts
         await ctx.supabase.rpc("recalculate_fee_account", {
-          p_account_id: newAccount.id });
+          p_account_id: newAccount.id,
+        });
         created++;
       }
     }
@@ -148,12 +131,9 @@ export async function POST(request: NextRequest) {
       user_id: ctx.user.id,
       action: "fee_accounts_generated",
       entity_type: "fee_account",
-      new_value: { term_id: parsed.data.term_id, created, skipped } } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      new_value: { term_id: body.term_id, created, skipped },
+    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse({ created, skipped });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { created, skipped };
+  },
+});

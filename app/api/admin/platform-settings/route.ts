@@ -1,96 +1,63 @@
-import { NextRequest } from "next/server";
 import type { Database } from "@/types/database";
 import { z } from "zod";
-
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase/admin";
 
-export async function GET() {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
-
+export const GET = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  handler: async () => {
     const admin = createAdminClient();
-
     const { data, error } = await admin
       .from("platform_settings")
       .select("key, value, updated_at, updated_by");
-
-    if (error) return dbError(error, "Database error");
-
-    return successResponse(data ?? []);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    if (error) throw new Error("Database error");
+    return data ?? [];
+  },
+});
 
 const patchSchema = z.object({
   key: z.string().min(1),
-  value: z.any() });
+  value: z.unknown(),
+});
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = patchSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
+export const PATCH = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  schema: patchSchema,
+  handler: async (ctx, body) => {
     const admin = createAdminClient();
-
     const { data, error } = await admin
       .from("platform_settings")
       .upsert(
         {
-          key: parsed.data.key,
-          value: parsed.data.value,
+          key: body.key,
+          value: body.value as Database["public"]["Tables"]["platform_settings"]["Insert"]["value"],
           updated_by: ctx.user.id,
-          updated_at: new Date().toISOString() },
-        { onConflict: "key" }
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "key" },
       )
       .select()
       .single();
-
-    if (error) return dbError(error, "Database error", 400);
-
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    if (error) throw new Error("Database error");
+    return data;
+  },
+});
 
 const broadcastSchema = z.object({
   action: z.literal("broadcast"),
   title: z.string().min(1),
-  message: z.string().min(1) });
+  message: z.string().min(1),
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = broadcastSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
+export const POST = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  schema: broadcastSchema,
+  handler: async (_ctx, body) => {
     const admin = createAdminClient();
 
-    // Find all active SCHOOL_ADMIN users with non-deleted schools
     const { data: admins } = await admin
       .from("users")
       .select("id, schools!inner(is_deleted)")
@@ -99,30 +66,27 @@ export async function POST(request: NextRequest) {
       .eq("schools.is_deleted", false);
 
     if (!admins || admins.length === 0) {
-      return successResponse({ sent_to: 0 });
+      return { sent_to: 0 };
     }
 
-    // Insert one notification per admin
-    const notifications = admins.map((a: any) => ({
+    const notifications = admins.map((a: { id: string }) => ({
       recipient_user_id: a.id,
       school_id: null,
-      title: parsed.data.title,
-      body: parsed.data.message,
+      title: body.title,
+      body: body.message,
       type: "announcement",
       is_read: false,
       related_entity_type: null,
-      related_entity_id: null }));
+      related_entity_id: null,
+    }));
 
     const { error } = await admin
       .from("in_app_notifications")
-      .insert(notifications as unknown as Database["public"]["Tables"]["in_app_notifications"]["Insert"]);
+      .insert(
+        notifications as unknown as Database["public"]["Tables"]["in_app_notifications"]["Insert"],
+      );
+    if (error) throw new Error("Database error");
 
-    if (error) return dbError(error, "Database error", 400);
-
-    return successResponse({ sent_to: admins.length });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { sent_to: admins.length };
+  },
+});

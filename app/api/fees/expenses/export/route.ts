@@ -1,18 +1,9 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse,
-  dbError,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route, dbError } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const termId = searchParams.get("term_id");
@@ -43,6 +34,9 @@ export async function GET(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
+    // Pre-existing inline `: any` casts on data joins; migration guide
+    // §7.6 puts these out of scope for the wrapper refactor.
+    /* eslint-disable @typescript-eslint/no-explicit-any */
     const rows = [
       ["Date", "Category", "Description", "Amount", "Method", "Receipt #", "Recorded By", "Notes"],
       ...(data || []).map((e: any) => [
@@ -62,6 +56,7 @@ export async function GET(request: NextRequest) {
         row.map((cell: any) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
       )
       .join("\n");
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     return new Response(csv, {
       headers: {
@@ -69,9 +64,5 @@ export async function GET(request: NextRequest) {
         "Content-Disposition": `attachment; filename="expenses-${termId || "all"}.csv"`,
       },
     });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+  },
+});

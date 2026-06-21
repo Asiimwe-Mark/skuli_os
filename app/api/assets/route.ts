@@ -1,30 +1,22 @@
-import { NextRequest } from "next/server";
 import { createAssetSchema, updateAssetSchema } from "@/lib/validations/assets";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, AuthError, dbError } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const category = searchParams.get("category");
     const search = searchParams.get("search");
 
     let query = ctx.supabase
       .from("assets")
-      .select(`
+      .select(
+        `
         *,
         users!assigned_to (id, full_name)
-      `)
+      `,
+      )
       .eq("school_id", schoolId)
       .eq("is_deleted", false)
       .order("name");
@@ -33,89 +25,72 @@ export async function GET(request: NextRequest) {
       query = query.eq("category", category);
     }
     if (search) {
-      query = query.or(`name.ilike.%${search}%,asset_code.ilike.%${search}%,location.ilike.%${search}%`);
+      query = query.or(
+        `name.ilike.%${search}%,asset_code.ilike.%${search}%,location.ilike.%${search}%`,
+      );
     }
 
     const { data, error } = await query;
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse(data || []);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data || [];
+  },
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: createAssetSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
-    const body = await request.json();
-    const parsed = createAssetSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    // If assigning to a user, that user must belong to this school.
-    if (parsed.data.assigned_to) {
+    if (body.assigned_to) {
       const { data: assignee } = await ctx.supabase
         .from("users")
         .select("id")
-        .eq("id", parsed.data.assigned_to)
+        .eq("id", body.assigned_to)
         .eq("school_id", schoolId)
         .maybeSingle();
-      if (!assignee) return errorResponse("Assigned user not found in this school", 400);
+      if (!assignee)
+        throw new AuthError("Assigned user not found in this school", 400);
     }
 
     const { data, error } = await ctx.supabase
       .from("assets")
       .insert({
         school_id: schoolId,
-        name: parsed.data.name,
-        asset_code: parsed.data.asset_code ?? null,
-        category: parsed.data.category ?? null,
-        purchase_date: parsed.data.purchase_date ?? null,
-        purchase_price: parsed.data.purchase_price ?? null,
-        current_value: parsed.data.current_value ?? parsed.data.purchase_price ?? null,
-        condition: parsed.data.condition,
-        location: parsed.data.location ?? null,
-        assigned_to: parsed.data.assigned_to ?? null,
-        notes: parsed.data.notes ?? null })
-      .select(`
+        name: body.name,
+        asset_code: body.asset_code ?? null,
+        category: body.category ?? null,
+        purchase_date: body.purchase_date ?? null,
+        purchase_price: body.purchase_price ?? null,
+        current_value: body.current_value ?? body.purchase_price ?? null,
+        condition: body.condition,
+        location: body.location ?? null,
+        assigned_to: body.assigned_to ?? null,
+        notes: body.notes ?? null,
+      })
+      .select(
+        `
         *,
         users!assigned_to (id, full_name)
-      `)
+      `,
+      )
       .single();
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: updateAssetSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id, ...updates } = body;
 
-    const body = await request.json();
-    const parsed = updateAssetSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    const { id, ...updates } = parsed.data;
-
-    // If reassigning to a user, that user must belong to this school.
     if (updates.assigned_to) {
       const { data: assignee } = await ctx.supabase
         .from("users")
@@ -123,7 +98,8 @@ export async function PATCH(request: NextRequest) {
         .eq("id", updates.assigned_to)
         .eq("school_id", schoolId)
         .maybeSingle();
-      if (!assignee) return errorResponse("Assigned user not found in this school", 400);
+      if (!assignee)
+        throw new AuthError("Assigned user not found in this school", 400);
     }
 
     const { data, error } = await ctx.supabase
@@ -132,32 +108,27 @@ export async function PATCH(request: NextRequest) {
       .eq("id", id)
       .eq("school_id", schoolId)
       .eq("is_deleted", false)
-      .select(`
+      .select(
+        `
         *,
         users!assigned_to (id, full_name)
-      `)
+      `,
+      )
       .single();
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const DELETE = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
+    const id = new URL(request.url).searchParams.get("id");
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get("id");
-
-    if (!id) return errorResponse("Asset ID is required", 400);
+    if (!id) throw new AuthError("Asset ID is required", 400);
 
     const { error } = await ctx.supabase
       .from("assets")
@@ -167,10 +138,6 @@ export async function DELETE(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse({ deleted: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { deleted: true };
+  },
+});

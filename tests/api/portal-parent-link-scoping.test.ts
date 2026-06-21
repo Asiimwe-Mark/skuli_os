@@ -242,8 +242,11 @@ describe("H-2: /api/portal/report-card-pdf rejects unlinked parents", () => {
     loginAsParent();
     mockState.fromQueues["parent_students"] = [{ data: null, error: null }];
     const { GET } = await import("@/app/api/portal/report-card-pdf/route");
-    const req = new Request(
-      "http://localhost/api/portal/report-card-pdf?student_id=student-1&term_id=term-1"
+    const { NextRequest } = await import("next/server");
+    const req = new NextRequest(
+      new Request(
+        "http://localhost/api/portal/report-card-pdf?student_id=student-1&term_id=term-1",
+      ),
     );
     const res = await GET(req as never);
     expect(res.status).toBe(403);
@@ -259,7 +262,12 @@ describe("H-2: /api/portal/students only uses parent_students as the link source
     loginAsParent();
     mockState.fromQueues["parent_students"] = [{ data: [], error: null }];
     const { GET } = await import("@/app/api/portal/students/route");
-    const res = await GET();
+    // The wrapper requires a NextRequest even when the handler does
+    // not read it. POST a real NextRequest so the wrapper has a
+    // valid request to thread through auth + role checks.
+    const { NextRequest } = await import("next/server");
+    const req = new NextRequest(new Request("http://localhost/api/portal/students"));
+    const res = await GET(req);
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.data.students).toEqual([]);

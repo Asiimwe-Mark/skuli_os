@@ -126,7 +126,7 @@ app/
 ├── group/                # GROUP_ADMIN portal
 ├── login/                # Auth pages
 ├── onboard/              # School onboarding flow
-└── api/                  # API routes
+└── api/                  # API routes (every route uses lib/http)
 
 components/
 ├── dashboard/            # Sidebar, Topbar, Command Palette
@@ -135,10 +135,57 @@ components/
 ├── shared/               # EmptyState, DataTable, StatCard
 └── ui/                   # shadcn/ui primitives
 
+lib/
+└── http/                 # The route() wrapper + Zod / RBAC / cache
+                           # helpers. Every app/api/**/route.ts imports
+                           # from here; @/lib/api-helpers is forbidden
+                           # by eslint.config.mjs.
+
 store/
 ├── school.ts             # School context (Zustand)
 └── ui.ts                 # UI state with localStorage persistence
 ```
+
+---
+
+## API Route Contract
+
+Every `app/api/**/route.ts` follows the same shape:
+
+```ts
+import { route } from "@/lib/http";
+import { mySchema } from "@/lib/validations/...";
+
+export const POST = route({
+  roles: ["SCHOOL_ADMIN"],
+  schema: mySchema,
+  handler: async (ctx, body) => {
+    // ctx.profile.school_id is guaranteed non-null for non-SUPER_ADMIN
+    // ctx.supabase is the user's session-bound client
+    return await doWork(ctx, body);
+  },
+});
+```
+
+The `route()` wrapper composes:
+
+1. **Auth + RBAC** — `getSupabaseAndUser()` and role gating, applied before
+   the handler runs. Handlers that need cross-tenant access (e.g. SUPER_ADMIN
+   on `/api/admin/*`) set `noSchoolRequired: true`.
+2. **Body validation** — Zod schemas passed as `schema:` are parsed before
+   the handler. The handler's second argument is the typed `body`.
+3. **Error envelope** — handlers throw `AuthError("...", 404)` for known
+   client errors or return a value for success. Unhandled exceptions route
+   through `handleRouteError` and never leak PG messages.
+
+`publicRoute()` is the same shape but without Supabase auth — used by
+`/api/webhooks/*`, `/api/auth/callback`, `/api/concierge/request`,
+`/api/onboard`, `/api/referral/validate`, and `/api/push/process-queue`.
+Webhooks verify HMAC inside the handler.
+
+ESLint enforces the contract: `app/api/**/route.ts` cannot import
+`@/lib/api-helpers` (the source of the old hand-rolled pattern) or
+`@supabase/supabase-js` directly. See `eslint.config.mjs`.
 
 ---
 

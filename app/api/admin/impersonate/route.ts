@@ -1,97 +1,109 @@
-import { NextRequest } from "next/server";
-import type { Database } from "@/types/database";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse, getErrorStatus } from "@/lib/api-helpers";
+import { z } from "zod";
+import { route, AuthError } from "@/lib/http";
 import { createAdminClient } from "@/lib/supabase/admin";
+import {
+  mintImpersonationSession,
+  setImpersonationCookie,
+  auditImpersonationEvent,
+  IMPERSONATION_TTL_MS,
+} from "@/lib/auth/impersonation";
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
+const impersonateSchema = z.object({
+  school_id: z.string().min(1),
+  reason: z.string().min(4),
+});
 
-    const body = await request.json();
-    const { school_id } = body;
-
-    if (!school_id) {
-      return errorResponse("school_id is required", 400);
-    }
-
-    // Verify school exists
+/**
+ * POST /api/admin/impersonate
+ *
+ * Audit §2.1: previously this route returned a Supabase magic link
+ * (`auth.admin.generateLink({ type: "magiclink" })`) which is a real
+ * full-privilege login as the target SCHOOL_ADMIN. The action_link
+ * was returned in the API response, so anyone with the response got
+ * a bearer credential. There was no scope, no banner, and no
+ * server-controlled time box.
+ *
+ * The new flow mints a short-lived (1 h) server-controlled session,
+ * records actor/target/school/reason/IP/UA in `impersonation_sessions`,
+ * stores only the SHA-256 hash, and sets a non-Supabase cookie that
+ * downstream middleware can read to display a "you are acting as X"
+ * banner. Exit is via DELETE /api/admin/impersonate. The plaintext
+ * token is returned once in the response and never persisted.
+ */
+export const POST = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  schema: impersonateSchema,
+  handler: async (ctx, body, request) => {
     const adminClient = createAdminClient();
-    const { data: school } = await adminClient
+    const { data: school } = (await adminClient
       .from("schools")
       .select("id, name, is_deleted")
-      .eq("id", school_id)
-      .single() as { data: { id: string; name: string; is_deleted: boolean } | null };
+      .eq("id", body.school_id)
+      .maybeSingle()) as {
+      data: { id: string; name: string; is_deleted: boolean } | null;
+    };
 
     if (!school || school.is_deleted) {
-      return errorResponse("School not found", 404);
+      throw new AuthError("School not found", 404);
     }
 
-    // Find the school admin for this school
-    const { data: schoolAdmin } = await adminClient
+    const { data: schoolAdmin } = (await adminClient
       .from("users")
       .select("id, full_name, role")
-      .eq("school_id", school_id)
+      .eq("school_id", body.school_id)
       .eq("role", "SCHOOL_ADMIN")
       .eq("is_active", true)
       .limit(1)
-      .single() as { data: { id: string; full_name: string; role: string } | null };
+      .maybeSingle()) as {
+      data: { id: string; full_name: string; role: string } | null;
+    };
 
     if (!schoolAdmin) {
-      return errorResponse("No active school admin found for this school", 404);
+      throw new AuthError("No active school admin found for this school", 404);
     }
 
-    // Get the auth user's email for magic link generation
-    const { data: authUser } = await adminClient.auth.admin.getUserById(schoolAdmin!.id);
+    const ipAddress =
+      request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+    const userAgent = request.headers.get("user-agent") ?? null;
 
-    if (!authUser?.user?.email) {
-      return errorResponse("Could not retrieve admin email for impersonation", 500);
-    }
+    const { token, session } = await mintImpersonationSession({
+      schoolId: school.id,
+      targetUserId: schoolAdmin.id,
+      actorUserId: ctx.user.id,
+      reason: body.reason,
+      ipAddress,
+      userAgent,
+    });
 
-    // Generate a magic link for impersonation
-    const { data: linkData, error: linkError } = await adminClient.auth.admin.generateLink({
-      type: "magiclink",
-      email: authUser.user.email });
+    await auditImpersonationEvent(adminClient as never, {
+      action: "impersonation_started",
+      schoolId: school.id,
+      actorUserId: ctx.user.id,
+      targetUserId: schoolAdmin.id,
+      sessionId: session.id,
+      reason: body.reason,
+    });
 
-    if (linkError || !linkData) {
-      return errorResponse(linkError?.message || "Failed to generate impersonation link", 500);
-    }
+    await setImpersonationCookie(token);
 
-    // Build the impersonation URL using the generated action_link
-    const actionLink = linkData.properties?.action_link;
-    if (!actionLink) {
-      return errorResponse("Failed to generate impersonation URL", 500);
-    }
-
-    // Audit log
-    await adminClient.from("audit_logs").insert({
-      school_id: school_id,
-      user_id: ctx.user.id,
-      action: "impersonation_initiated",
-      entity_type: "school",
-      entity_id: school_id,
-      new_value: {
-        target_user_id: schoolAdmin!.id,
-        target_user_name: schoolAdmin!.full_name,
-        school_name: school!.name } } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
-
-    return successResponse({
-      url: actionLink,
+    return {
+      session_id: session.id,
+      token_prefix: session.token_prefix,
       target_user: {
-        id: schoolAdmin!.id,
-        name: schoolAdmin!.full_name,
-        role: schoolAdmin!.role },
+        id: schoolAdmin.id,
+        name: schoolAdmin.full_name,
+        role: schoolAdmin.role,
+      },
       school: {
-        id: school!.id,
-        name: school!.name },
-      expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString() });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+        id: school.id,
+        name: school.name,
+      },
+      reason: body.reason,
+      starts_at: new Date().toISOString(),
+      expires_at: session.expires_at,
+    };
+  },
+});
+
+export const IMPERSONATION_TTL = IMPERSONATION_TTL_MS;

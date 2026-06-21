@@ -1,25 +1,13 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 import { bulkImportBodySchema, resolveFullName } from "@/lib/validations/bulk-import";
 
 // POST: validate rows without inserting. Returns per-row validity, errors and warnings.
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = bulkImportBodySchema.safeParse(body);
-    if (!parsed.success) return errorResponse(parsed.error.issues[0].message, 400);
-    const { rows } = parsed.data;
+export const POST = route({
+  roles: ["SCHOOL_ADMIN"],
+  schema: bulkImportBodySchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
+    const { rows } = body;
 
     const { data: classes } = await ctx.supabase
       .from("classes")
@@ -34,7 +22,9 @@ export async function POST(request: NextRequest) {
       .eq("school_id", schoolId)
       .eq("is_deleted", false);
     const existingAdmissions = new Set(
-      (students ?? []).map((s) => s.admission_number).filter(Boolean) as string[]
+      (students ?? [])
+        .map((s: { admission_number: string | null }) => s.admission_number)
+        .filter((v): v is string => Boolean(v))
     );
 
     const errors: { row: number; reason: string }[] = [];
@@ -54,13 +44,11 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    return successResponse({
+    return {
       total: rows.length,
       validCount: rows.length - errors.length,
       errors,
       warnings,
-    });
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+    };
+  },
+});

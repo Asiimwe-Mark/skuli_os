@@ -1,20 +1,13 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse,
-} from "@/lib/api-helpers";
 import { AttendanceRegisterPDF } from "@/lib/pdf/attendance-register";
 import type { AttendanceRegisterData } from "@/lib/pdf/attendance-register";
 import { Document, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
+import { route, errorResponse } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const classId = searchParams.get("class_id");
@@ -117,17 +110,13 @@ export async function GET(request: NextRequest) {
       "July", "August", "September", "October", "November", "December",
     ];
 
+    // Migration guide §7.3: PDF routes return a binary blob. The
+    // route() wrapper passes a Response through unchanged.
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="attendance-register-${cls.name}-${monthNames[month - 1]}-${year}.pdf"`,
       },
     });
-  } catch (err) {
-    if (err instanceof Error && "status" in err) {
-      const apiErr = err as { status: number; message: string };
-      return errorResponse(apiErr.message, apiErr.status);
-    }
-    return errorResponse("Internal server error", 500);
-  }
-}
+  },
+});

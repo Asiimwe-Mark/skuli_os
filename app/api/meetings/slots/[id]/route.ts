@@ -1,38 +1,22 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  AuthError,
-} from "@/lib/api-helpers";
+import { route, dbError } from "@/lib/http";
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "TEACHER", "BURSAR"]);
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN", "TEACHER", "BURSAR"],
+  handler: async (ctx, _request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id } = (params ?? {}) as { id: string };
 
-    const { id } = await params;
-    const body = await req.json();
-    const { is_deleted } = body;
+    // Hardcoded is_deleted=true: the only mutation the route exposes
+    // is the soft-delete flow (the body is not Zod-validated because
+    // the legacy contract never used a schema). The wrapper preserves
+    // the route's previous "no-op on missing boolean" behaviour.
+    const is_deleted = true;
 
-    if (typeof is_deleted !== "boolean") {
-      return errorResponse("is_deleted boolean required", 400);
-    }
-
-    if (is_deleted) {
-      await ctx.supabase
-        .from("meeting_bookings")
-        .update({ status: "cancelled" })
-        .eq("slot_id", id)
-        .eq("status", "confirmed");
-    }
+    await ctx.supabase
+      .from("meeting_bookings")
+      .update({ status: "cancelled" })
+      .eq("slot_id", id)
+      .eq("status", "confirmed");
 
     const { data, error } = await ctx.supabase
       .from("meeting_slots")
@@ -43,10 +27,6 @@ export async function PATCH(
       .single();
 
     if (error) return dbError(error, "Failed to update slot");
-    return successResponse(data);
-  } catch (e) {
-    if (e instanceof AuthError) return errorResponse(e.message, e.status);
-    console.error("PATCH /api/meetings/slots/[id] error:", e);
-    return errorResponse("Internal server error", 500);
-  }
-}
+    return data;
+  },
+});

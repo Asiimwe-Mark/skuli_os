@@ -1,28 +1,89 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route, AuthError } from "@/lib/http";
 import { importTemplateSchema } from "@/lib/validations/marketplace";
 
-interface SmsBody { text: string }
-interface FeeItem { name: string; is_mandatory: boolean; amount: number }
-interface FeeBody { items: FeeItem[] }
+// §10.3: hard caps so a marketplace import cannot inject arbitrarily
+// long SMS messages or thousands of fee line items. The fee_structures
+// table has no per-row size cap, so the import route is the only
+// chokepoint.
+const MAX_SMS_BODY_LENGTH = 1600;
+const MAX_FEE_IMPORT_ITEMS = 200;
+const MAX_FEE_ITEM_NAME_LENGTH = 120;
+const MAX_FEE_ITEM_AMOUNT = 50_000_000;
 
-export async function POST(request: NextRequest, context: { params: Promise<{ id: string }> }) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+function sanitizeSmsBody(raw: unknown): string {
+  if (typeof raw !== "string") return "";
+  // Strip ASCII control characters; truncate. Newlines are kept
+  // because SMS templates intentionally use them.
+  return raw.replace(/[\x00-\x1F]/g, "").slice(0, MAX_SMS_BODY_LENGTH);
+}
 
-    const { id } = await context.params;
-    const body = await request.json().catch(() => ({}));
-    const parsed = importTemplateSchema.safeParse(body);
-    if (!parsed.success) return errorResponse(parsed.error.issues[0].message, 400);
+function validateFeeItems(
+  raw: unknown,
+):
+  | { ok: true; rows: Array<{ name: string; amount: number; is_mandatory: boolean }> }
+  | { ok: false; error: string } {
+  if (!Array.isArray(raw)) {
+    return { ok: false, error: "Template body is malformed: items[] missing" };
+  }
+  if (raw.length === 0) {
+    return { ok: false, error: "Template has no fee items" };
+  }
+  if (raw.length > MAX_FEE_IMPORT_ITEMS) {
+    return {
+      ok: false,
+      error: `Template has ${raw.length} items; max is ${MAX_FEE_IMPORT_ITEMS}`,
+    };
+  }
+  const rows: Array<{ name: string; amount: number; is_mandatory: boolean }> = [];
+  for (const it of raw) {
+    if (!it || typeof it !== "object") {
+      return { ok: false, error: "Template contains a non-object item" };
+    }
+    const candidate = it as Record<string, unknown>;
+    const name = typeof candidate.name === "string" ? candidate.name.trim() : "";
+    if (name.length === 0) {
+      return { ok: false, error: "Every fee item needs a non-empty name" };
+    }
+    if (name.length > MAX_FEE_ITEM_NAME_LENGTH) {
+      return {
+        ok: false,
+        error: `Fee item name longer than ${MAX_FEE_ITEM_NAME_LENGTH} chars`,
+      };
+    }
+    const amount = Number(candidate.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_FEE_ITEM_AMOUNT) {
+      return {
+        ok: false,
+        error: `Fee amount must be between 0 and ${MAX_FEE_ITEM_AMOUNT} UGX`,
+      };
+    }
+    rows.push({
+      name,
+      amount,
+      is_mandatory: Boolean(candidate.is_mandatory),
+    });
+  }
+  return { ok: true, rows };
+}
+
+interface SmsBody {
+  text: string;
+}
+interface FeeItem {
+  name: string;
+  is_mandatory: boolean;
+  amount: number;
+}
+interface FeeBody {
+  items: FeeItem[];
+}
+
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: importTemplateSchema,
+  handler: async (ctx, body, _request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id } = (params ?? {}) as { id: string };
 
     const { data: template, error: tErr } = await ctx.supabase
       .from("marketplace_templates")
@@ -31,61 +92,73 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
       .eq("is_deleted", false)
       .maybeSingle();
 
-    if (tErr || !template) return errorResponse("Template not found", 404);
+    if (tErr || !template) {
+      throw new AuthError("Template not found", 404);
+    }
 
     let createdCount = 0;
 
-    if (parsed.data.target === "sms_template" || parsed.data.target === "report_comment") {
+    if (body.target === "sms_template" || body.target === "report_comment") {
       const tbody = template.body as unknown as SmsBody;
+      const safeText = sanitizeSmsBody(tbody?.text);
+      if (safeText.length === 0) {
+        throw new AuthError("Template body is empty", 400);
+      }
       const { error } = await ctx.supabase.from("sms_templates").insert({
         school_id: schoolId,
         name: `${template.name} (from Marketplace)`,
-        body: tbody.text ?? "",
+        body: safeText,
         variables: template.variables ?? [],
         is_default: false,
       });
-      if (error) return errorResponse("Failed to import template", 500);
+      if (error) throw new AuthError("Failed to import template", 500);
       createdCount = 1;
-    } else if (parsed.data.target === "fee_structure") {
-      if (!parsed.data.class_id || !parsed.data.term_id) {
-        return errorResponse("class_id and term_id are required for fee structures", 400);
+    } else if (body.target === "fee_structure") {
+      if (!body.class_id || !body.term_id) {
+        throw new AuthError(
+          "class_id and term_id are required for fee structures",
+          400,
+        );
       }
       const fbody = template.body as unknown as FeeBody;
-      const items = fbody.items ?? [];
-      const rows = items.map((it) => ({
+      const validation = validateFeeItems(fbody?.items);
+      if (!validation.ok) {
+        throw new AuthError(validation.error, 400);
+      }
+      const rows = validation.rows.map((it) => ({
         school_id: schoolId,
-        class_id: parsed.data.class_id!,
-        term_id: parsed.data.term_id!,
+        class_id: body.class_id!,
+        term_id: body.term_id!,
         name: it.name,
         amount: it.amount,
         is_mandatory: it.is_mandatory,
       }));
       if (rows.length > 0) {
-        const { error } = await ctx.supabase.from("fee_structures").insert(rows);
-        if (error) return errorResponse("Failed to import fee structure", 500);
+        const { error } = await ctx.supabase
+          .from("fee_structures")
+          .insert(rows);
+        if (error) throw new AuthError("Failed to import fee structure", 500);
       }
       createdCount = rows.length;
     }
 
-    // Increment use_count
     await ctx.supabase
       .from("marketplace_templates")
-      .update({ use_count: ((template as { use_count?: number }).use_count ?? 0) + 1 })
+      .update({
+        use_count:
+          ((template as { use_count?: number }).use_count ?? 0) + 1,
+      })
       .eq("id", id);
-    // Use an RPC-free increment fallback handled above; also try a precise increment.
 
-    // Audit log
     await ctx.supabase.from("audit_logs").insert({
       school_id: schoolId,
       user_id: ctx.user.id,
       action: "MARKETPLACE_IMPORT",
       entity_type: "marketplace_template",
       entity_id: id,
-      new_value: { target: parsed.data.target, created: createdCount },
+      new_value: { target: body.target, created: createdCount },
     });
 
-    return successResponse({ imported: createdCount });
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+    return { imported: createdCount };
+  },
+});

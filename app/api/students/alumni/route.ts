@@ -1,13 +1,5 @@
-import { NextRequest } from "next/server";
 import { z } from "zod";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse, dbError, paginatedResponse, respond } from "@/lib/http";
 
 const createAlumniSchema = z.object({
   first_name: z.string().min(1, "First name is required"),
@@ -20,7 +12,8 @@ const createAlumniSchema = z.object({
   email: z.string().email("Invalid email").optional().nullable().or(z.literal("")),
   profession: z.string().optional().nullable(),
   notes: z.string().optional().nullable(),
-  student_id: z.string().uuid().optional().nullable() });
+  student_id: z.string().uuid().optional().nullable(),
+});
 
 const updateAlumniSchema = z.object({
   id: z.string().uuid(),
@@ -33,12 +26,13 @@ const updateAlumniSchema = z.object({
   phone: z.string().optional().nullable(),
   email: z.string().email().optional().nullable().or(z.literal("")),
   profession: z.string().optional().nullable(),
-  notes: z.string().optional().nullable() });
+  notes: z.string().optional().nullable(),
+});
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const q = searchParams.get("q");
@@ -70,46 +64,32 @@ export async function GET(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
-    return successResponse({
-      alumni: data ?? [],
-      total: count ?? 0,
-      page,
-      limit,
-      totalPages: Math.ceil((count ?? 0) / limit) });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return paginatedResponse(data ?? [], count ?? 0, page, limit);
+  },
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = createAlumniSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
+export const POST = route({
+  roles: ["SCHOOL_ADMIN"],
+  schema: createAlumniSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { data, error } = await ctx.supabase
       .from("alumni")
       .insert({
         school_id: schoolId,
-        first_name: parsed.data.first_name,
-        last_name: parsed.data.last_name,
-        graduation_year: parsed.data.graduation_year,
-        last_class: parsed.data.last_class || null,
-        admission_number: parsed.data.admission_number || null,
-        current_school: parsed.data.current_school || null,
-        phone: parsed.data.phone || null,
-        email: parsed.data.email || null,
-        profession: parsed.data.profession || null,
-        notes: parsed.data.notes || null,
-        student_id: parsed.data.student_id || null })
+        first_name: body.first_name,
+        last_name: body.last_name,
+        graduation_year: body.graduation_year,
+        last_class: body.last_class || null,
+        admission_number: body.admission_number || null,
+        current_school: body.current_school || null,
+        phone: body.phone || null,
+        email: body.email || null,
+        profession: body.profession || null,
+        notes: body.notes || null,
+        student_id: body.student_id || null,
+      })
       .select()
       .single();
 
@@ -126,27 +106,16 @@ export async function POST(request: NextRequest) {
       ip_address: null,
     });
 
-    return successResponse(data, 201);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return respond.status(201, data);
+  },
+});
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = updateAlumniSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
-
-    const { id, ...updates } = parsed.data;
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN"],
+  schema: updateAlumniSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id, ...updates } = body;
 
     // Verify ownership
     const { data: existing } = await ctx.supabase
@@ -179,20 +148,14 @@ export async function PATCH(request: NextRequest) {
       ip_address: null,
     });
 
-    return successResponse(data);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return data;
+  },
+});
 
-export async function DELETE(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN"]);
-
+export const DELETE = route({
+  roles: ["SCHOOL_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) return errorResponse("Missing id parameter", 400);
@@ -226,10 +189,6 @@ export async function DELETE(request: NextRequest) {
       ip_address: null,
     });
 
-    return successResponse({ deleted: true });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return { deleted: true };
+  },
+});

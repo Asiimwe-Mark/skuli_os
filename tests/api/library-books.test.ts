@@ -103,7 +103,7 @@ describe("GET /api/library/books (audit 4.1, 9.5)", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.success).toBe(true);
-    expect(json.data.books).toEqual([]);
+    expect(json.data.items).toEqual([]);
     expect(json.data.total).toBe(0);
     expect(json.data.page).toBe(1);
     expect(json.data.limit).toBe(50);

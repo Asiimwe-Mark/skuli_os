@@ -88,9 +88,15 @@ vi.mock("@/lib/api-helpers", async () => {
 });
 
 import { GET } from "@/app/api/communication/threads/route";
+import { NextRequest } from "next/server";
 
 function fakeGet(url = "http://test.local/api/communication/threads") {
-  return new Request(url, { method: "GET" });
+  // The new `route()` wrapper reads `req.nextUrl.pathname` on every
+  // error path. A bare `new Request(...)` cast does not populate
+  // `nextUrl`, so error-path tests would crash inside the wrapper
+  // with "Cannot read properties of undefined (reading 'pathname')".
+  // Build a real NextRequest from a real URL instead.
+  return new NextRequest(new Request(url, { method: "GET" }));
 }
 
 function setProfile(role = "SCHOOL_ADMIN", school_id: string | null = "s1") {

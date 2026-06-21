@@ -18,6 +18,7 @@
  *   7. All roles can read terms (teacher, admin, bursar, parent)
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { NextRequest } from 'next/server';
 import { AuthError } from '@/lib/api-helpers';
 
 type Profile = {
@@ -81,10 +82,23 @@ vi.mock('@/lib/api-cache', () => ({
   },
 }));
 
+// `@/lib/http` re-exports `respond` and `withSchoolReadCache` from
+// `./respond` and `./with-cache`. The test mocks `@/lib/api-cache`
+// (which `with-cache.ts` consumes), but `respond.ts` re-exports
+// `successResponse` from `@/lib/api-helpers` — which IS the real
+// module under this test. So importing through `@/lib/http` exercises
+// the same code paths as the production route, just with the cache
+// mock substituted. We don't need to mock `@/lib/http` itself.
+
 import { GET } from '@/app/api/terms/route';
 
 function makeRequest(url = 'http://test.local/api/terms') {
-  return new Request(url, { method: 'GET' });
+  // The new `route()` wrapper reads `req.nextUrl.pathname` on every
+  // error path. A bare `new Request(...)` cast does not populate
+  // `nextUrl`, so error-path tests would crash inside the wrapper
+  // with "Cannot read properties of undefined (reading 'pathname')".
+  // Construct a real NextRequest from a real URL instead.
+  return new NextRequest(new Request(url, { method: 'GET' }));
 }
 
 function setProfile(role = 'SCHOOL_ADMIN', school_id: string | null = 'school-1') {

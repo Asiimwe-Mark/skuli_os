@@ -1,11 +1,7 @@
-import { NextRequest } from 'next/server';
-import { renderToBuffer } from '@react-pdf/renderer';
-import { ReceiptPDF } from '@/lib/pdf/receipt';
-import {
-  getSupabaseAndUser,
-  errorResponse,
-  AuthError,
-} from '@/lib/api-helpers';
+import { renderToBuffer } from "@react-pdf/renderer";
+import { ReceiptPDF } from "@/lib/pdf/receipt";
+import { route, errorResponse } from "@/lib/http";
+import { generateQrDataUrl } from "@/lib/utils/qr";
 
 /**
  * GET /api/fees/receipt-pdf/[payment_id]
@@ -13,15 +9,21 @@ import {
  *   - tuition_payments.id (text composite reference)
  *   - fee_payments.id (uuid)
  * Includes a QR code encoding https://skuli.app/verify-receipt/[receipt_number].
+ *
+ * Auth goes through Supabase so we still use `route()`. Role gating:
+ * PARENT must have a parent_students link to the student; staff must
+ * belong to the same school as the payment. SUPER_ADMIN bypasses the
+ * school check (the wrapper handles that).
  */
-export async function GET(
-  _req: NextRequest,
-  { params }: { params: Promise<{ payment_id: string }> }
-) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const { payment_id } = await params;
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://skuli.app';
+export const GET = route({
+  // No `roles` gate — every signed-in user is allowed; the per-role
+  // access logic runs inside the handler (parent_students link or
+  // same-school check). The wrapper still applies auth and the
+  // school_id-required guard for non-SUPER_ADMIN.
+  roles: [],
+  handler: async (ctx, _request, params) => {
+    const { payment_id } = (params ?? {}) as { payment_id: string };
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "https://skuli.app";
 
     type ReceiptData = {
       schoolId: string;
@@ -36,42 +38,44 @@ export async function GET(
 
     // Try tuition_payments (text id) first
     const { data: tp } = await ctx.supabase
-      .from('tuition_payments')
-      .select('school_id, student_id, amount, status, receipt_number, pesapal_order_tracking_id, created_at, fee_type_label')
-      .eq('id', payment_id)
+      .from("tuition_payments")
+      .select("school_id, student_id, amount, status, receipt_number, pesapal_order_tracking_id, created_at, fee_type_label")
+      .eq("id", payment_id)
       .maybeSingle();
 
     if (tp) {
       const t = tp as unknown as {
         school_id: string;
         student_id: string;
-        amount: number;
+        amount: string | number;
         status: string;
         receipt_number: string | null;
         pesapal_order_tracking_id: string | null;
         created_at: string;
       };
-      if (t.status !== 'COMPLETED') return errorResponse('Receipt available only for completed payments', 400);
+      if (t.status !== "COMPLETED") {
+        return errorResponse("Receipt available only for completed payments", 400);
+      }
       receipt = {
         schoolId: t.school_id,
         studentId: t.student_id,
         amount: Number(t.amount),
-        method: 'mobile_money',
-        date: new Date(t.created_at).toLocaleDateString('en-UG'),
+        method: "mobile_money",
+        date: new Date(t.created_at).toLocaleDateString("en-UG"),
         receiptNumber: t.receipt_number || payment_id,
         transactionId: t.pesapal_order_tracking_id || undefined,
       };
     } else {
       const { data: fp } = await ctx.supabase
-        .from('fee_payments')
-        .select('school_id, student_id, amount, payment_method, status, receipt_number, payment_date, mobile_money_transaction_id')
-        .eq('id', payment_id)
+        .from("fee_payments")
+        .select("school_id, student_id, amount, payment_method, status, receipt_number, payment_date, mobile_money_transaction_id")
+        .eq("id", payment_id)
         .maybeSingle();
-      if (!fp) return errorResponse('Payment not found', 404);
+      if (!fp) return errorResponse("Payment not found", 404);
       const f = fp as unknown as {
         school_id: string;
         student_id: string;
-        amount: number;
+        amount: string | number;
         payment_method: string;
         receipt_number: string | null;
         payment_date: string;
@@ -89,22 +93,22 @@ export async function GET(
     }
 
     // Access control: parents only their children; staff only same school
-    if (ctx.profile.role === 'PARENT') {
+    if (ctx.profile.role === "PARENT") {
       const { data: link } = await ctx.supabase
-        .from('parent_students')
-        .select('student_id')
-        .eq('parent_id', ctx.user.id)
-        .eq('student_id', receipt.studentId)
+        .from("parent_students")
+        .select("student_id")
+        .eq("parent_id", ctx.user.id)
+        .eq("student_id", receipt.studentId)
         .maybeSingle();
-      if (!link) return errorResponse('Forbidden', 403);
+      if (!link) return errorResponse("Forbidden", 403);
     } else if (ctx.profile.school_id && ctx.profile.school_id !== receipt.schoolId) {
-      return errorResponse('Forbidden', 403);
+      return errorResponse("Forbidden", 403);
     }
 
     const { data: schoolRow } = await ctx.supabase
-      .from('schools')
-      .select('name, address, motto, logo_url, phone')
-      .eq('id', receipt.schoolId)
+      .from("schools")
+      .select("name, address, motto, logo_url, phone")
+      .eq("id", receipt.schoolId)
       .single();
     const school = (schoolRow as unknown as {
       name: string;
@@ -112,12 +116,12 @@ export async function GET(
       motto?: string;
       logo_url?: string;
       phone?: string;
-    }) || { name: 'School' };
+    }) || { name: "School" };
 
     const { data: studentRow } = await ctx.supabase
-      .from('students')
-      .select('full_name, admission_number, fee_accounts(balance)')
-      .eq('id', receipt.studentId)
+      .from("students")
+      .select("full_name, admission_number, fee_accounts(balance)")
+      .eq("id", receipt.studentId)
       .single();
     const student = studentRow as unknown as {
       full_name: string;
@@ -130,16 +134,17 @@ export async function GET(
         ? Number(student.fee_accounts[0].balance) || 0
         : 0;
 
-    // QR code: server-side via qrserver image endpoint (no extra dependency)
+    // §14.4: render the QR locally. We no longer hit
+    // api.qrserver.com from the PDF generator (privacy + reliability).
     const verifyUrl = `${appUrl}/verify-receipt/${encodeURIComponent(receipt.receiptNumber)}`;
-    const qrDataUrl = `https://api.qrserver.com/v1/create-qr-code/?size=80x80&data=${encodeURIComponent(verifyUrl)}`;
+    const qrDataUrl = (await generateQrDataUrl(verifyUrl, { size: 240 })) ?? undefined;
 
     const buffer = await renderToBuffer(
       ReceiptPDF({
         school,
         student: {
-          full_name: student?.full_name || 'Student',
-          admission_number: student?.admission_number || '-',
+          full_name: student?.full_name || "Student",
+          admission_number: student?.admission_number || "-",
         },
         payment: {
           receipt_number: receipt.receiptNumber,
@@ -149,20 +154,19 @@ export async function GET(
           mobile_money_transaction_id: receipt.transactionId,
         },
         balance,
-        received_by: 'SKULI Online (Pesapal)',
+        received_by: "SKULI Online (Pesapal)",
         qrDataUrl,
       })
     );
 
+    // §6.2/B2: PII GET. No cache: a parent re-downloading the
+    // same URL would otherwise pull a stale PDF from a proxy.
     return new Response(new Uint8Array(buffer), {
       headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="receipt-${receipt.receiptNumber}.pdf"`,
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="receipt-${receipt.receiptNumber}.pdf"`,
+        "Cache-Control": "no-store",
       },
     });
-  } catch (err) {
-    if (err instanceof AuthError) return errorResponse(err.message, err.status);
-    console.error('GET /api/fees/receipt-pdf error:', err);
-    return errorResponse('Internal server error', 500);
-  }
-}
+  },
+});

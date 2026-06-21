@@ -1,5 +1,0 @@
-[functions.scheduled-sms-sender]
-verify_jwt = false
-
-[functions.scheduled-sms-sender.cron]
-schedule = "*/5 * * * *"

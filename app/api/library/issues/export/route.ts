@@ -1,17 +1,9 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, dbError } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get("status");
@@ -42,6 +34,9 @@ export async function GET(request: NextRequest) {
 
     if (error) return dbError(error, "Database error");
 
+    // Pre-existing inline `: any` casts on data joins; migration
+    // guide §7.6 puts these out of scope for the wrapper refactor.
+    /* eslint-disable @typescript-eslint/no-explicit-any */
     const rows = [
       ["Book Title", "Author", "ISBN", "Student", "Admission #", "Issued Date", "Due Date", "Returned", "Fine (UGX)", "Fine Paid"],
       ...(data || []).map((i: any) => [
@@ -63,14 +58,13 @@ export async function GET(request: NextRequest) {
         row.map((cell: any) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
       )
       .join("\n");
+    /* eslint-enable @typescript-eslint/no-explicit-any */
 
     return new Response(csv, {
       headers: {
         "Content-Type": "text/csv",
-        "Content-Disposition": `attachment; filename="library-issues-${status || "all"}.csv"` } });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+        "Content-Disposition": `attachment; filename="library-issues-${status || "all"}.csv"`,
+      },
+    });
+  },
+});

@@ -1,31 +1,15 @@
-import { NextRequest } from "next/server";
 import crypto from "crypto";
 import type { Database } from "@/types/database";
 import { createStudentSchema } from "@/lib/validations/student";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse, dbError, paginatedResponse, respond } from "@/lib/http";
 import { writeAuditLog } from "@/lib/audit-log";
-import { withSchoolCache, setCacheHeader, invalidateSchool } from "@/lib/api-cache";
+import { withSchoolReadCache } from "@/lib/http/with-cache";
+import { invalidateSchool } from "@/lib/api-cache";
 
-type StudentRow = Database["public"]["Tables"]["students"]["Row"];
-type ClassRow = Database["public"]["Tables"]["classes"]["Row"];
-type TermRow = Database["public"]["Tables"]["terms"]["Row"];
-
-type StudentWithClass = StudentRow & {
-  current_class: Pick<ClassRow, "id" | "name"> | null;
-};
-
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const classId = searchParams.get("class_id");
@@ -60,7 +44,7 @@ export async function GET(request: NextRequest) {
       if (allowedClassIds.size === 0) {
         // Teacher teaches no classes — return empty rather than the
         // full list. The page's empty state will render.
-        return successResponse({ students: [], total: 0, page, limit, totalPages: 0 });
+        return paginatedResponse([], 0, page, limit);
       }
       if (classId && !allowedClassIds.has(classId)) {
         return errorResponse("You do not have access to this class", 403);
@@ -68,7 +52,7 @@ export async function GET(request: NextRequest) {
     }
 
     const inputShape = `students-list:${classId ?? "_"}:${status ?? "_"}:${search ?? "_"}:${page}:${limit}`;
-    const { value, hit } = await withSchoolCache(
+    const { value, applyTo } = await withSchoolReadCache(
       { schoolId, inputShape },
       async () => {
         let query = ctx.supabase
@@ -100,39 +84,22 @@ export async function GET(request: NextRequest) {
           .range(from, to);
 
         if (error) throw new Error(`postgrest:${error.code ?? "unknown"}:${error.message}`);
-        return {
-          students: data ?? [],
-          total: count ?? 0,
-          page,
-          limit,
-          totalPages: Math.ceil((count ?? 0) / limit),
-        };
+        return paginatedResponse(data ?? [], count ?? 0, page, limit);
       },
     );
 
-    const response = successResponse(value);
-    return setCacheHeader(response, hit);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return applyTo(value);
+  },
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
-
-    const body = await request.json();
-    const parsed = createStudentSchema.safeParse(body);
-    if (!parsed.success) {
-      return errorResponse(parsed.error.issues[0].message, 400);
-    }
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: createStudentSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
 
     // Generate admission number if not provided (UUID suffix avoids race conditions)
-    let admissionNumber = parsed.data.admission_number;
+    let admissionNumber = body.admission_number;
     if (!admissionNumber) {
       const uniqueSuffix = crypto.randomUUID().slice(0, 6).toUpperCase();
       admissionNumber = `ADM-${uniqueSuffix}`;
@@ -143,26 +110,26 @@ export async function POST(request: NextRequest) {
       .insert({
         school_id: schoolId,
         admission_number: admissionNumber,
-        full_name: parsed.data.full_name,
-        date_of_birth: parsed.data.date_of_birth ?? null,
-        gender: parsed.data.gender ?? null,
-        photo_url: parsed.data.photo_url ?? null,
-        parent_name: parsed.data.parent_name,
-        parent_phone: parsed.data.parent_phone,
-        parent_email: parsed.data.parent_email ?? null,
-        parent_nid: parsed.data.parent_nid ?? null,
-        current_class_id: parsed.data.current_class_id,
-        enrollment_date: parsed.data.enrollment_date,
+        full_name: body.full_name,
+        date_of_birth: body.date_of_birth ?? null,
+        gender: body.gender ?? null,
+        photo_url: body.photo_url ?? null,
+        parent_name: body.parent_name,
+        parent_phone: body.parent_phone,
+        parent_email: body.parent_email ?? null,
+        parent_nid: body.parent_nid ?? null,
+        current_class_id: body.current_class_id,
+        enrollment_date: body.enrollment_date,
         status: "active" as const,
         exit_date: null,
       })
       .select()
-      .single() as { data: { id: string } | null; error: any };
+      .single() as { data: { id: string } | null; error: { message: string } | null };
 
     if (error) return dbError(error, "Database error", 400);
 
     // Create class enrollment for the current term
-    if (student && parsed.data.current_class_id) {
+    if (student && body.current_class_id) {
       const { data: term } = await ctx.supabase
         .from("terms")
         .select("id, academic_year_id")
@@ -173,9 +140,10 @@ export async function POST(request: NextRequest) {
       if (term) {
         await ctx.supabase.from("class_enrollments").insert({
           student_id: student!.id,
-          class_id: parsed.data.current_class_id,
+          class_id: body.current_class_id,
           term_id: term.id,
-          academic_year_id: term.academic_year_id } as unknown as Database["public"]["Tables"]["class_enrollments"]["Insert"]);
+          academic_year_id: term.academic_year_id,
+        } as unknown as Database["public"]["Tables"]["class_enrollments"]["Insert"]);
       }
     }
 
@@ -216,7 +184,7 @@ export async function POST(request: NextRequest) {
       action: "student_created",
       entity_type: "student",
       entity_id: student?.id ?? null,
-      new_value: { name: parsed.data.full_name, admission: admissionNumber },
+      new_value: { name: body.full_name, admission: admissionNumber },
     });
 
     // Bust the school-wide cache so the next students list / dashboard
@@ -224,10 +192,6 @@ export async function POST(request: NextRequest) {
     // Redis (SCAN + DEL).
     await invalidateSchool(schoolId);
 
-    return successResponse(student, 201);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return respond.status(201, student);
+  },
+});

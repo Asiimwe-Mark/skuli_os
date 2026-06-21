@@ -10,6 +10,10 @@ export const createFeeStructureSchema = z.object({
 
 export const recordPaymentSchema = z.object({
   student_id: z.string().uuid('Select a student'),
+  // Optional passthrough so the route can skip the term lookup when the
+  // caller already knows the account. Validated separately at the route
+  // layer (must belong to this school + student).
+  fee_account_id: z.string().uuid().optional(),
   amount: z.number().positive('Amount must be greater than 0'),
   payment_method: z.enum(['mobile_money', 'cash', 'bank', 'waiver']),
   mobile_money_provider: z.enum(['mtn', 'airtel']).optional().nullable(),

@@ -219,7 +219,8 @@ const validBody = {
   admin: {
     full_name: 'John Mukasa',
     email: 'john@school.com',
-    password: 'password123',
+    // §8.9: 12+ chars, upper, lower, digit, symbol.
+    password: 'P@ssw0rd-Strong!',
   },
   plan: 'growth',
   start_trial: true,

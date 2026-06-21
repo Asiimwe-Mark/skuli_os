@@ -1,12 +1,5 @@
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  AuthError,
-} from '@/lib/api-helpers';
-import { getSchoolCredentials, fetchApplicationData } from '@/lib/africas-talking/client';
+import { route, errorResponse } from "@/lib/http";
+import { getSchoolCredentials, fetchApplicationData } from "@/lib/africas-talking/client";
 
 // Simple in-memory cache: schoolId -> { data, expires }
 // Max 500 entries to prevent memory leaks; stale entries are pruned on access.
@@ -27,22 +20,24 @@ function pruneCache() {
   }
 }
 
-export async function GET() {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ['SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN']);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx) => {
+    const schoolId = ctx.profile.school_id!;
 
     // Check cache
     const cached = balanceCache.get(schoolId);
     if (cached && cached.expires > Date.now()) {
-      return successResponse(cached.data);
+      return cached.data;
     }
 
     // Get school's decrypted AT credentials
     const credentials = await getSchoolCredentials(ctx.supabase, schoolId);
     if (!credentials) {
-      return errorResponse('Africa\'s Talking credentials not configured. Please set them in Settings > API Keys.', 400);
+      return errorResponse(
+        "Africa's Talking credentials not configured. Please set them in Settings > API Keys.",
+        400,
+      );
     }
 
     try {
@@ -53,7 +48,7 @@ export async function GET() {
       let appData: unknown;
       const cached = balanceCache.get(schoolId);
       const timeout = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('AT balance timeout')), 5000)
+        setTimeout(() => reject(new Error("AT balance timeout")), 5000),
       );
       try {
         appData = await Promise.race([
@@ -61,17 +56,17 @@ export async function GET() {
           timeout,
         ]);
       } catch (err) {
-        console.warn('[sms-balance] AT API timeout/error, serving cached', err);
+        console.warn("[sms-balance] AT API timeout/error, serving cached", err);
         if (cached) {
-          return successResponse({ ...(cached.data as Record<string, unknown>), stale: true });
+          return { ...(cached.data as Record<string, unknown>), stale: true };
         }
-        return errorResponse('Africa\'s Talking balance API timed out', 502);
+        return errorResponse("Africa's Talking balance API timed out", 502);
       }
       const balanceData = {
         balance: (appData as Record<string, unknown>)?.userData
           ? ((appData as Record<string, unknown>).userData as Record<string, unknown>)?.balance
           : 0,
-        currency: 'UGX',
+        currency: "UGX",
         account: credentials.username,
       };
 
@@ -82,13 +77,12 @@ export async function GET() {
         expires: Date.now() + CACHE_TTL_MS,
       });
 
-      return successResponse(balanceData);
+      return balanceData;
     } catch {
-      return errorResponse('Failed to fetch SMS balance from Africa\'s Talking. Please verify your credentials.', 502);
+      return errorResponse(
+        "Failed to fetch SMS balance from Africa's Talking. Please verify your credentials.",
+        502,
+      );
     }
-  } catch (e) {
-    if (e instanceof AuthError) return errorResponse(e.message, e.status);
-    console.error('GET /api/communication/sms-balance error:', e);
-    return errorResponse('Internal server error', 500);
-  }
-}
+  },
+});

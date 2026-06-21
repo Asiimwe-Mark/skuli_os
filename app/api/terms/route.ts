@@ -16,30 +16,20 @@
  *   academic_year_id  (optional) — filter by academic year
  *   current_only      (optional) — return only is_current=true terms
  */
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  successResponse,
-  errorResponse,
-  dbError,
-  getErrorStatus,
-} from "@/lib/api-helpers";
-import { withSchoolCache, setCacheHeader } from "@/lib/api-cache";
+import { route, respond, withSchoolReadCache } from "@/lib/http";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    // All roles can read terms — needed by teachers, parents, admins
-
+export const GET = route({
+  // All signed-in roles can read terms — needed by teachers, parents, admins.
+  roles: [],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const academicYearId = searchParams.get("academic_year_id");
     const currentOnly = searchParams.get("current_only") === "true";
 
     const inputShape = `terms:${academicYearId ?? "_"}:${currentOnly}`;
 
-    const { value, hit } = await withSchoolCache(
+    const { value, applyTo } = await withSchoolReadCache(
       { schoolId, inputShape, revalidateSeconds: 120 },
       async () => {
         let query = ctx.supabase
@@ -72,12 +62,6 @@ export async function GET(request: NextRequest) {
       }
     );
 
-    const response = successResponse(value);
-    return setCacheHeader(response, hit);
-  } catch (err: unknown) {
-    const status = getErrorStatus(err);
-    const message =
-      err instanceof Error ? err.message : "Failed to load terms";
-    return errorResponse(message, status);
-  }
-}
+    return applyTo(respond.cacheable(value));
+  },
+});

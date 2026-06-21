@@ -1,23 +1,21 @@
-import { NextRequest } from "next/server";
 import { ReportCardPDF } from "@/lib/pdf/report-card";
 import { Document, renderToBuffer } from "@react-pdf/renderer";
 import React from "react";
-import {
-  getSupabaseAndUser,
-  errorResponse,
-  AuthError,
-} from "@/lib/api-helpers";
+import { route, AuthError } from "@/lib/http";
+import { getGrade as getGradeShared } from "@/lib/utils/grades";
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-
+export const GET = route({
+  // No `roles` gate — every signed-in user can hit this; the
+  // per-role access logic (parent_students link) runs inside the
+  // handler. The wrapper still applies auth.
+  roles: [],
+  handler: async (ctx, request) => {
     const { searchParams } = new URL(request.url);
     const studentId = searchParams.get("student_id");
     const termId = searchParams.get("term_id");
 
     if (!studentId || !termId) {
-      return errorResponse("student_id and term_id are required", 400);
+      throw new AuthError("student_id and term_id are required", 400);
     }
 
     // SECURITY (audit H-2): parent_students is the SOLE authority on
@@ -35,7 +33,7 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
 
     if (!parentLink) {
-      return errorResponse("Not authorized for this student", 403);
+      throw new AuthError("Not authorized for this student", 403);
     }
 
     // Get student info
@@ -46,7 +44,7 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
 
     if (!student) {
-      return errorResponse("Student not found", 404);
+      throw new AuthError("Student not found", 404);
     }
 
     // Get term info
@@ -66,7 +64,7 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
 
     if (!reportCard) {
-      return errorResponse("Report card not found", 404);
+      throw new AuthError("Report card not found", 404);
     }
 
     // Get attendance for the term
@@ -102,17 +100,17 @@ export async function GET(request: NextRequest) {
         (holidays || []).forEach((h: { event_date: string; end_date: string | null }) => {
           const s = new Date(h.event_date);
           const e = h.end_date ? new Date(h.end_date) : s;
-          for (let d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
+          for (const d = new Date(s); d <= e; d.setDate(d.getDate() + 1)) {
             allHolidayDates.add(d.toISOString().split("T")[0]);
           }
         });
       }
 
       // Compute school days in the term (weekdays minus holidays)
-      const startDate = new Date(termDates.start_date ?? '');
-      const endDate = new Date(termDates.end_date ?? '');
+      const startDate = new Date(termDates.start_date ?? "");
+      const endDate = new Date(termDates.end_date ?? "");
       let totalWorkingDays = 0;
-      for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+      for (const d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
         const day = d.getDay();
         if (day !== 0 && day !== 6) {
           const dateStr = d.toISOString().split("T")[0];
@@ -137,7 +135,7 @@ export async function GET(request: NextRequest) {
     } | null;
 
     if (!termData) {
-      return errorResponse("Term not found", 404);
+      throw new AuthError("Term not found", 404);
     }
 
     // Compute subjects from marks (report_cards table doesn't store subjects array)
@@ -175,18 +173,20 @@ export async function GET(request: NextRequest) {
       subjectMap.set(subjId, existing);
     }
 
-    function getGrade(avg: number): string {
-      if (!gradingScales || gradingScales.length === 0) return "";
-      for (const gs of gradingScales) {
-        if (avg >= gs.min_score && avg <= gs.max_score) return gs.grade;
-      }
-      return "";
-    }
-
+    // §14.5: grading computation is centralised in
+    // lib/utils/grades. The portal route used to ship its own
+    // `getGrade(avg)` loop that silently disagreed with the marks
+    // sheet when the per-row loop sorted descending (the marks
+    // sheet page used `[...scale].sort((a,b)=>b.min_score - a.min_score)`,
+    // this route walked the rows in DB order). The shared helper
+    // is the single source of truth and matches the marks page.
     const subjects = Array.from(subjectMap.values()).map((s) => ({
       name: s.name,
       total: s.total,
-      grade: getGrade(s.maxScore > 0 ? Math.round((s.total / s.maxScore) * 100) : 0),
+      grade: getGradeShared(
+        s.maxScore > 0 ? Math.round((s.total / s.maxScore) * 100) : 0,
+        gradingScales ?? [],
+      ),
       remarks: "",
     }));
 
@@ -225,15 +225,13 @@ export async function GET(request: NextRequest) {
       React.createElement(Document, null, React.createElement(ReportCardPDF, pdfData))
     );
 
+    // §6.2/B2: PII GET.
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="report-card-${studentData.admission_number}-${termData.name}.pdf"`,
+        "Cache-Control": "no-store",
       },
     });
-  } catch (e) {
-    if (e instanceof AuthError) return errorResponse(e.message, e.status);
-    console.error("Report card PDF error:", e);
-    return errorResponse("Internal server error", 500);
-  }
-}
+  },
+});

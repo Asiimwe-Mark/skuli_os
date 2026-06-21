@@ -1,55 +1,45 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 import {
   createMarketplaceTemplateSchema,
   updateMarketplaceTemplateSchema,
 } from "@/lib/validations/marketplace";
 
-export async function GET() {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  handler: async (ctx) => {
     const { data, error } = await ctx.supabase
       .from("marketplace_templates")
-      .select("id, category, name, description, body, variables, tags, use_count, is_featured, is_deleted, created_at")
+      .select(
+        "id, category, name, description, body, variables, tags, use_count, is_featured, is_deleted, created_at",
+      )
       .eq("is_deleted", false)
       .order("created_at", { ascending: false });
-    if (error) return errorResponse("Failed to load", 500);
-    return successResponse({ templates: data ?? [] });
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+    if (error) throw new Error("Failed to load");
+    return { templates: data ?? [] };
+  },
+});
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
-    const body = await request.json().catch(() => ({}));
-    const parsed = createMarketplaceTemplateSchema.safeParse(body);
-    if (!parsed.success) return errorResponse(parsed.error.issues[0].message, 400);
-
+export const POST = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  schema: createMarketplaceTemplateSchema,
+  handler: async (ctx, body) => {
     const { data, error } = await ctx.supabase
       .from("marketplace_templates")
       .insert({
-        category: parsed.data.category,
-        name: parsed.data.name,
-        description: parsed.data.description ?? null,
-        body: parsed.data.body as import("@/types/database").Json,
-        variables: parsed.data.variables ?? [],
-        tags: parsed.data.tags ?? [],
-        is_featured: parsed.data.is_featured ?? false,
+        category: body.category,
+        name: body.name,
+        description: body.description ?? null,
+        body: body.body as import("@/types/database").Json,
+        variables: body.variables ?? [],
+        tags: body.tags ?? [],
+        is_featured: body.is_featured ?? false,
         created_by: ctx.user.id,
       })
       .select("id")
       .single();
-    if (error || !data) return errorResponse("Failed to create", 500);
+    if (error || !data) throw new Error("Failed to create");
 
     await ctx.supabase.from("audit_logs").insert({
       school_id: ctx.profile.school_id,
@@ -57,25 +47,23 @@ export async function POST(request: NextRequest) {
       action: "MARKETPLACE_TEMPLATE_CREATED",
       entity_type: "marketplace_template",
       entity_id: data.id,
-      new_value: { name: parsed.data.name, category: parsed.data.category },
+      new_value: { name: body.name, category: body.category },
     });
-    return successResponse({ id: data.id }, 201);
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+    return { id: data.id };
+  },
+});
 
-export async function PATCH(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["SUPER_ADMIN"]);
-    const body = await request.json().catch(() => ({}));
-    const parsed = updateMarketplaceTemplateSchema.safeParse(body);
-    if (!parsed.success) return errorResponse(parsed.error.issues[0].message, 400);
-
-    const { id, ...rest } = parsed.data;
-    const { error } = await ctx.supabase.from("marketplace_templates").update(rest as never).eq("id", id);
-    if (error) return errorResponse("Failed to update", 500);
+export const PATCH = route({
+  roles: ["SUPER_ADMIN"],
+  noSchoolRequired: true,
+  schema: updateMarketplaceTemplateSchema,
+  handler: async (ctx, body) => {
+    const { id, ...rest } = body;
+    const { error } = await ctx.supabase
+      .from("marketplace_templates")
+      .update(rest as never)
+      .eq("id", id);
+    if (error) throw new Error("Failed to update");
 
     await ctx.supabase.from("audit_logs").insert({
       school_id: ctx.profile.school_id,
@@ -85,8 +73,6 @@ export async function PATCH(request: NextRequest) {
       entity_id: id,
       new_value: rest as unknown as import("@/types/database").Json,
     });
-    return successResponse({ updated: true });
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+    return { updated: true };
+  },
+});

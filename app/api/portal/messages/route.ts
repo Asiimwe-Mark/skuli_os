@@ -1,16 +1,8 @@
-import {
-  getSupabaseAndUser,
-  requireRole,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 
-export async function GET() {
-  try {
-    const ctx = await getSupabaseAndUser();
-    requireRole(ctx, ["PARENT"]);
-
+export const GET = route({
+  roles: ["PARENT"],
+  handler: async (ctx) => {
     // Audit 4.13: the SMS query needs user.phone to scope. We fetch
     // the phone first (small indexed lookup), then run the two
     // message queries in parallel. This was 3 sequential round-trips
@@ -74,10 +66,6 @@ export async function GET() {
       (a, b) => new Date(b.sent_at as string).getTime() - new Date(a.sent_at as string).getTime()
     );
 
-    return successResponse(messages.slice(0, 100));
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+    return messages.slice(0, 100);
+  },
+});

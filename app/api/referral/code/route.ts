@@ -1,19 +1,10 @@
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  getErrorStatus,
-} from "@/lib/api-helpers";
+import { route } from "@/lib/http";
 
 // GET: return the calling school's referral code and stats.
-export async function GET() {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "GROUP_ADMIN", "SUPER_ADMIN"]);
-
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "GROUP_ADMIN", "SUPER_ADMIN"],
+  handler: async (ctx) => {
+    const schoolId = ctx.profile.school_id!;
     const { data: code } = await ctx.supabase
       .from("referral_codes")
       .select("id, code, is_active, created_at")
@@ -21,13 +12,13 @@ export async function GET() {
       .maybeSingle();
 
     if (!code) {
-      return successResponse({
+      return {
         code: null,
         totalReferrals: 0,
         creditedMonths: 0,
         pendingReferrals: 0,
         referrals: [],
-      });
+      };
     }
 
     const { data: referrals } = await ctx.supabase
@@ -45,7 +36,6 @@ export async function GET() {
     const list = referrals ?? [];
     const pending = list.filter((r) => !r.rewarded_at).length;
 
-    // Resolve referred school names (best-effort).
     const schoolIds = list.map((r) => r.referred_school_id);
     const namesById: Record<string, string> = {};
     if (schoolIds.length > 0) {
@@ -56,7 +46,7 @@ export async function GET() {
       for (const s of schools ?? []) namesById[s.id] = s.name;
     }
 
-    return successResponse({
+    return {
       code: code.code,
       isActive: code.is_active,
       totalReferrals: list.length,
@@ -68,8 +58,6 @@ export async function GET() {
         signupDate: r.created_at,
         status: r.rewarded_at ? "credited" : "pending",
       })),
-    });
-  } catch (e) {
-    return errorResponse(e instanceof Error ? e.message : "Error", getErrorStatus(e));
-  }
-}
+    };
+  },
+});

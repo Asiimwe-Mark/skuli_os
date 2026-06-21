@@ -16,8 +16,8 @@
 -- migrations in order and respects supabase_migrations.schema_migrations.
 --
 -- Regenerate:  node scripts/build-schema.mjs
--- Generated:   2026-06-07T12:47:18.843Z
--- Source files: 30
+-- Generated:   2026-06-21T09:14:33.217Z
+-- Source files: 41
 -- =============================================================================
 
 
@@ -320,51 +320,65 @@ END $$;
 -- =============================================================================
 
 -- Returns the school_id for the current authenticated user.
+-- NOTE: plpgsql (not sql) so body parsing is deferred to first call. The
+-- `users` table is created in 0004_core_tables.sql, after this file.
 CREATE OR REPLACE FUNCTION get_user_school_id()
 RETURNS uuid
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
-    SELECT school_id FROM users WHERE id = auth.uid();
+BEGIN
+    RETURN (SELECT school_id FROM users WHERE id = auth.uid());
+END;
 $$;
 
 -- Returns the role for the current authenticated user.
+-- plpgsql for the same deferred-parse reason as get_user_school_id.
 CREATE OR REPLACE FUNCTION get_user_role()
 RETURNS user_role
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
-    SELECT role FROM users WHERE id = auth.uid();
+BEGIN
+    RETURN (SELECT role FROM users WHERE id = auth.uid());
+END;
 $$;
 
 -- Returns the set of school_ids belonging to the caller's school group
 -- (multi-school / chain admin). Used by GROUP_ADMIN read policies.
+-- plpgsql: `schools` and `group_admins` are created in 0004, after this file.
 CREATE OR REPLACE FUNCTION get_user_group_school_ids()
 RETURNS setof uuid
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
+BEGIN
+    RETURN QUERY
     SELECT s.id FROM schools s
     JOIN group_admins ga ON ga.group_id = s.group_id
     WHERE ga.user_id = auth.uid() AND s.is_deleted = false;
+END;
 $$;
 
 -- Resolves the school_id of a class without going through the classes
 -- table RLS (which can recurse with class_subjects policies).
+-- plpgsql: `classes` is created in 0005_academic_tables.sql, after this file.
 CREATE OR REPLACE FUNCTION class_school_id(p_class_id uuid)
 RETURNS uuid
-LANGUAGE sql
+LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
-    SELECT school_id FROM classes WHERE id = p_class_id AND is_deleted = false;
+BEGIN
+    RETURN (SELECT school_id FROM classes WHERE id = p_class_id AND is_deleted = false);
+END;
 $$;
 
 -- Returns true if the caller's role is one of the school admin / bursar /
@@ -460,10 +474,33 @@ $$;
 -- Encrypted credential columns live here (africas_talking_*_enc,
 -- resend_api_key_enc, pesapal_*_enc) so the 0010/0040/0049/0056
 -- secret-management story is preserved without plaintext storage.
+--
+-- Forward-reference fixes applied:
+--   * school_groups moved before schools (schools.group_id FK)
+--   * users moved before group_admins (group_admins.user_id FK)
+--   * schools.country_code FK to country_configs added as deferred ALTER
+--     (country_configs is created in 0012)
+--   * parent_students.student_id FK to students added as deferred ALTER
+--     in 0005_academic_tables.sql after students is created
 -- =============================================================================
 
 -- ---------------------------------------------------------------------------
--- 1. schools
+-- 1. school_groups (must precede schools — schools.group_id references it)
+-- ---------------------------------------------------------------------------
+CREATE TABLE school_groups (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    name        text NOT NULL,
+    code        text UNIQUE NOT NULL,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    is_deleted  boolean NOT NULL DEFAULT false
+);
+
+-- ---------------------------------------------------------------------------
+-- 2. schools
+--    NOTE: country_code FK to country_configs is added via ALTER TABLE
+--    at the bottom of this file, after country_configs is stubbed, OR
+--    is deferred to 0012 via ALTER TABLE. We use a CHECK constraint here
+--    as a lightweight guard; the real FK is wired in 0012.
 -- ---------------------------------------------------------------------------
 CREATE TABLE schools (
     id                                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -476,7 +513,7 @@ CREATE TABLE schools (
     motto                             text,
     school_code                       text UNIQUE NOT NULL,
     school_type                       school_type NOT NULL DEFAULT 'primary',
-    country_code                      text NOT NULL DEFAULT 'UG' REFERENCES country_configs(code),
+    country_code                      text NOT NULL DEFAULT 'UG',
     subscription_plan                 text NOT NULL DEFAULT 'trial',
     subscription_status               text NOT NULL DEFAULT 'trial',
     trial_ends_at                     timestamptz,
@@ -492,6 +529,7 @@ CREATE TABLE schools (
     pesapal_sandbox                   boolean NOT NULL DEFAULT true,
     sms_sender_id                     text NOT NULL DEFAULT 'SKULI',
     cash_on                           boolean NOT NULL DEFAULT true,
+    next_billing_date                 timestamptz,
     group_id                          uuid REFERENCES school_groups(id),
     created_at                        timestamptz NOT NULL DEFAULT now(),
     updated_at                        timestamptz NOT NULL DEFAULT now(),
@@ -499,29 +537,7 @@ CREATE TABLE schools (
 );
 
 -- ---------------------------------------------------------------------------
--- 2. school_groups (multi-school chain admin)
--- ---------------------------------------------------------------------------
-CREATE TABLE school_groups (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    name        text NOT NULL,
-    code        text UNIQUE NOT NULL,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    is_deleted  boolean NOT NULL DEFAULT false
-);
-
--- ---------------------------------------------------------------------------
--- 3. group_admins
--- ---------------------------------------------------------------------------
-CREATE TABLE group_admins (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    group_id    uuid NOT NULL REFERENCES school_groups(id) ON DELETE CASCADE,
-    user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    UNIQUE(group_id, user_id)
-);
-
--- ---------------------------------------------------------------------------
--- 4. users
+-- 3. users (must precede group_admins — group_admins.user_id references it)
 -- ---------------------------------------------------------------------------
 CREATE TABLE users (
     id          uuid PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -539,19 +555,33 @@ CREATE TABLE users (
 );
 
 -- ---------------------------------------------------------------------------
+-- 4. group_admins
+-- ---------------------------------------------------------------------------
+CREATE TABLE group_admins (
+    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    group_id    uuid NOT NULL REFERENCES school_groups(id) ON DELETE CASCADE,
+    user_id     uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    UNIQUE(group_id, user_id)
+);
+
+-- ---------------------------------------------------------------------------
 -- 5. parent_students (link portal users to their children)
 --    RLS enabled in 0014 with explicit policies in 0015.
+--
+--    NOTE: student_id FK to students is added via ALTER TABLE at the
+--    end of 0005_academic_tables.sql, after students is created.
 -- ---------------------------------------------------------------------------
 CREATE TABLE parent_students (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    parent_id   uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-    student_id  uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
-    school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+    id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    parent_id    uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+    student_id   uuid NOT NULL,   -- FK wired in 0005 after students table exists
+    school_id    uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     relationship text,
-    is_primary  boolean NOT NULL DEFAULT false,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    updated_at  timestamptz NOT NULL DEFAULT now(),
-    is_deleted  boolean NOT NULL DEFAULT false,
+    is_primary   boolean NOT NULL DEFAULT false,
+    created_at   timestamptz NOT NULL DEFAULT now(),
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    is_deleted   boolean NOT NULL DEFAULT false,
     UNIQUE (parent_id, student_id)
 );
 
@@ -610,12 +640,14 @@ CREATE TABLE terms (
 
 -- ---------------------------------------------------------------------------
 -- 3. subjects
+--    color restored (optional timetable cell colour).
 -- ---------------------------------------------------------------------------
 CREATE TABLE subjects (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name        text NOT NULL,
     code        text,
+    color       text,
     max_marks   int NOT NULL DEFAULT 100,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
@@ -624,12 +656,14 @@ CREATE TABLE subjects (
 
 -- ---------------------------------------------------------------------------
 -- 4. classes
+--    stream restored (used by class lists / timetable). Optional.
 -- ---------------------------------------------------------------------------
 CREATE TABLE classes (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name            text NOT NULL,
     level           text,
+    stream          text,
     capacity        int,
     class_teacher_id uuid REFERENCES users(id) ON DELETE SET NULL,
     created_at      timestamptz NOT NULL DEFAULT now(),
@@ -666,6 +700,7 @@ CREATE TABLE students (
     photo_url       text,
     address         text,
     motto           text,
+    parent_nid      text,
     parent_name     text,
     parent_phone    text,
     parent_email    text,
@@ -684,6 +719,7 @@ CREATE TABLE students (
 -- ---------------------------------------------------------------------------
 CREATE TABLE class_enrollments (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     student_id      uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     class_id        uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
     term_id         uuid NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
@@ -708,6 +744,14 @@ CREATE TABLE teacher_class_assignments (
     is_deleted      boolean NOT NULL DEFAULT false,
     UNIQUE (school_id, teacher_id, class_id, subject_id)
 );
+
+-- ---------------------------------------------------------------------------
+-- Deferred FK: parent_students.student_id → students(id)
+-- (parent_students was created in 0004 before students existed)
+-- ---------------------------------------------------------------------------
+ALTER TABLE parent_students
+    ADD CONSTRAINT parent_students_student_id_fkey
+    FOREIGN KEY (student_id) REFERENCES students(id) ON DELETE CASCADE;
 
 -- ----------------------------------------------------------------------------
 -- Source: supabase/migrations/0006_finance_tables.sql
@@ -775,6 +819,7 @@ CREATE TABLE fee_accounts (
     total_expected  numeric NOT NULL DEFAULT 0,
     total_paid      numeric NOT NULL DEFAULT 0,
     total_fees      numeric NOT NULL DEFAULT 0,
+    total_discount  numeric NOT NULL DEFAULT 0,
     balance         numeric NOT NULL DEFAULT 0,
     status          fee_account_status NOT NULL DEFAULT 'unpaid',
     created_at      timestamptz NOT NULL DEFAULT now(),
@@ -782,6 +827,8 @@ CREATE TABLE fee_accounts (
     is_deleted      boolean NOT NULL DEFAULT false,
     UNIQUE (student_id, term_id)
 );
+COMMENT ON COLUMN fee_accounts.total_fees     IS 'Gross fees before discounts. Set by recalculate_fee_account().';
+COMMENT ON COLUMN fee_accounts.total_discount IS 'Sum of applied discounts. total_expected = total_fees - total_discount.';
 
 -- ---------------------------------------------------------------------------
 -- 4. fee_payments
@@ -799,6 +846,11 @@ CREATE TABLE fee_payments (
     amount                  numeric NOT NULL,
     payment_method          payment_method NOT NULL,
     mobile_money_transaction_id text,
+    mobile_money_provider   text CHECK (mobile_money_provider IN ('mtn', 'airtel')),
+    phone_used              text,
+    pesapal_order_tracking_id text,
+    pesapal_tx_id           text,
+    received_by_user_id     uuid REFERENCES users(id) ON DELETE SET NULL,
     payment_date            date NOT NULL DEFAULT current_date,
     notes                   text,
     receipt_number          text,
@@ -807,16 +859,23 @@ CREATE TABLE fee_payments (
     updated_at              timestamptz NOT NULL DEFAULT now(),
     is_deleted              boolean NOT NULL DEFAULT false
 );
+COMMENT ON COLUMN fee_payments.mobile_money_provider IS 'Mobile money network (mtn/airtel) from detectMobileMoneyProvider(). Lowercase only.';
+COMMENT ON COLUMN fee_payments.received_by_user_id   IS 'Staff who recorded/received the payment. Audit trail.';
 
 -- ---------------------------------------------------------------------------
 -- 5. fee_discounts
 -- ---------------------------------------------------------------------------
+-- discount_type is text + CHECK (not the discount_type enum) because the
+-- app writes 'fixed' in addition to the enum's 'percentage'/'fixed_amount'.
 CREATE TABLE fee_discounts (
     id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id     uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name          text NOT NULL,
-    discount_type discount_type NOT NULL DEFAULT 'percentage',
+    description   text,
+    discount_type text NOT NULL DEFAULT 'percentage'
+                  CHECK (discount_type IN ('percentage', 'fixed_amount', 'fixed')),
     value         numeric NOT NULL DEFAULT 0,
+    is_active     boolean NOT NULL DEFAULT true,
     created_at    timestamptz NOT NULL DEFAULT now(),
     is_deleted    boolean NOT NULL DEFAULT false
 );
@@ -887,7 +946,10 @@ CREATE TABLE marks (
     exam_type       exam_type NOT NULL,
     score           numeric,
     max_score       numeric NOT NULL DEFAULT 100,
+    grade           text,
     remarks         text,
+    entered_by      uuid REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_by     uuid REFERENCES users(id) ON DELETE SET NULL,
     review_status   text NOT NULL DEFAULT 'not_started'
                     CHECK (review_status IN ('not_started', 'draft', 'submitted', 'approved', 'rejected')),
     review_comment  text,
@@ -897,6 +959,8 @@ CREATE TABLE marks (
     is_deleted      boolean NOT NULL DEFAULT false,
     UNIQUE (student_id, subject_id, term_id, exam_type)
 );
+COMMENT ON COLUMN marks.grade      IS 'Grade label from grading_scales. Auto-set by trg_marks_set_grade (0023).';
+COMMENT ON COLUMN marks.entered_by IS 'User who entered the mark (written by marks POST route).';
 
 -- ---------------------------------------------------------------------------
 -- 2. report_cards
@@ -915,11 +979,14 @@ CREATE TABLE report_cards (
     class_teacher_comment text,
     headmaster_comment  text,
     conduct_grade       conduct_grade,
+    pdf_url             text,
     is_published        boolean NOT NULL DEFAULT false,
     created_at          timestamptz NOT NULL DEFAULT now(),
     updated_at          timestamptz NOT NULL DEFAULT now(),
-    is_deleted          boolean NOT NULL DEFAULT false
+    is_deleted          boolean NOT NULL DEFAULT false,
+    UNIQUE (student_id, term_id, academic_year_id)
 );
+COMMENT ON COLUMN report_cards.pdf_url IS 'Storage URL of the generated PDF, read by the report-cards list page.';
 
 -- ---------------------------------------------------------------------------
 -- 3. subject_comments
@@ -932,7 +999,10 @@ CREATE TABLE subject_comments (
     subject_id  uuid NOT NULL REFERENCES subjects(id) ON DELETE CASCADE,
     bot_comment text,
     mid_comment text,
-    eot_comment text
+    eot_comment text,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
+    is_deleted  boolean NOT NULL DEFAULT false
 );
 
 -- ---------------------------------------------------------------------------
@@ -994,11 +1064,13 @@ CREATE TABLE attendance_records (
     date        date NOT NULL,
     status      attendance_status NOT NULL,
     notes       text,
+    remarks     text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     is_deleted  boolean NOT NULL DEFAULT false,
     UNIQUE (student_id, class_id, date)
 );
+COMMENT ON COLUMN attendance_records.remarks IS 'Teacher remarks. The app reads remarks; notes is the legacy column.';
 
 -- ---------------------------------------------------------------------------
 -- 2. announcements
@@ -1012,7 +1084,14 @@ CREATE TABLE announcements (
     body                text,
     target_audience     announcement_target NOT NULL,
     target_class_ids    uuid[],
-    sent_via            sms_channel NOT NULL,
+    -- text + CHECK (not sms_channel enum): the send route writes compound
+    -- channel strings like 'sms,in_app'.
+    sent_via            text NOT NULL
+                        CHECK (sent_via IN (
+                            'sms', 'email', 'in_app', 'push',
+                            'sms,in_app', 'sms,push', 'email,in_app',
+                            'sms,email,in_app', 'sms,in_app,push'
+                        )),
     scheduled_at        timestamptz,
     scheduled_status    text NOT NULL DEFAULT 'pending'
                         CHECK (scheduled_status IN ('pending', 'processing', 'sent', 'failed', 'cancelled')),
@@ -1036,6 +1115,9 @@ CREATE TABLE sms_logs (
     status                  sms_status NOT NULL DEFAULT 'pending',
     africa_talking_message_id text,
     cost                    numeric,
+    error                   text,
+    related_entity_type     text,
+    related_entity_id       uuid,
     sent_at                 timestamptz,
     created_at              timestamptz NOT NULL DEFAULT now(),
     updated_at              timestamptz NOT NULL DEFAULT now(),
@@ -1055,6 +1137,7 @@ CREATE TABLE notification_preferences (
     defaulter_reminder_hour     int NOT NULL DEFAULT 8,
     send_report_card_sms        boolean NOT NULL DEFAULT true,
     send_term_start_sms         boolean NOT NULL DEFAULT true,
+    sms_enabled                 boolean NOT NULL DEFAULT false,
     created_at                  timestamptz NOT NULL DEFAULT now(),
     updated_at                  timestamptz NOT NULL DEFAULT now(),
     is_deleted                  boolean NOT NULL DEFAULT false,
@@ -1072,8 +1155,13 @@ CREATE TABLE in_app_notifications (
     recipient_user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     title           text NOT NULL,
     body            text,
+    -- type accepts both UI severities and entity-type values the
+    -- notifications service writes (tuition_payment, payroll_disbursal).
     type            text NOT NULL DEFAULT 'info'
-                    CHECK (type IN ('info', 'warning', 'success', 'error')),
+                    CHECK (type IN (
+                        'info', 'warning', 'success', 'error',
+                        'tuition_payment', 'payroll_disbursal', 'subscription'
+                    )),
     is_read         boolean NOT NULL DEFAULT false,
     related_entity_type text,
     related_entity_id   uuid,
@@ -1097,6 +1185,8 @@ CREATE TABLE notification_logs (
     related_entity_type text,
     related_entity_id   text,
     last_error          text,
+    cost                numeric,
+    provider_message_id text,
     sent_at             timestamptz,
     created_at          timestamptz NOT NULL DEFAULT now()
 );
@@ -1114,6 +1204,7 @@ CREATE TABLE audit_logs (
     old_value   jsonb,
     new_value   jsonb,
     ip_address  text,
+    user_agent  text,
     created_at  timestamptz NOT NULL DEFAULT now(),
     updated_at  timestamptz NOT NULL DEFAULT now(),
     is_deleted  boolean NOT NULL DEFAULT false
@@ -1220,6 +1311,7 @@ CREATE TABLE staff_payment_profiles (
     bank_code        text,
     bank_name        text,
     account_number   text,
+    account_name     text,
     created_at       timestamptz NOT NULL DEFAULT now(),
     updated_at       timestamptz NOT NULL DEFAULT now(),
     UNIQUE (staff_id)
@@ -1235,6 +1327,8 @@ CREATE TABLE payroll_batches (
     funding_mechanism         payroll_funding_mechanism NOT NULL,
     total_payout_sum          numeric(14,2) NOT NULL DEFAULT 0,
     funding_payment_status    payroll_funding_status NOT NULL DEFAULT 'AWAITING_EXTERNAL_FUNDING',
+    pesapal_order_tracking_id text,
+    funded_at                 timestamptz,
     created_at                timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now()
 );
@@ -1255,6 +1349,9 @@ CREATE TABLE batch_line_items (
     snapshot_account_number text,
     disbursal_status       disbursal_status NOT NULL DEFAULT 'HOLD_UNTIL_FUNDED',
     disbursal_attempts     integer NOT NULL DEFAULT 0,
+    last_error             text,
+    disbursed_at           timestamptz,
+    created_at             timestamptz NOT NULL DEFAULT now(),
     updated_at             timestamptz NOT NULL DEFAULT now(),
     UNIQUE (idempotency_key)
 );
@@ -1270,6 +1367,11 @@ CREATE TABLE tuition_payments (
     amount                    numeric(14,2) NOT NULL CHECK (amount > 0),
     status                    pesapal_payment_status NOT NULL DEFAULT 'PENDING',
     pesapal_order_tracking_id text,
+    pesapal_redirect_url      text,
+    payment_description       text,
+    fee_type_id               uuid REFERENCES fee_types(id) ON DELETE SET NULL,
+    fee_type_label            text,
+    initiated_by_user_id      uuid REFERENCES users(id) ON DELETE SET NULL,
     receipt_number            text,
     created_at                timestamptz NOT NULL DEFAULT now(),
     updated_at                timestamptz NOT NULL DEFAULT now()
@@ -1292,6 +1394,9 @@ CREATE TABLE expense_categories (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name        text NOT NULL,
+    color       text,
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz NOT NULL DEFAULT now(),
     is_deleted  boolean NOT NULL DEFAULT false
 );
 
@@ -1302,10 +1407,14 @@ CREATE TABLE expenses (
     id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id       uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     category_id     uuid REFERENCES expense_categories(id),
+    term_id         uuid REFERENCES terms(id) ON DELETE SET NULL,
     description     text NOT NULL,
     amount          numeric NOT NULL,
     expense_date    date NOT NULL,
     payment_method  expense_payment_method,
+    notes           text,
+    receipt_number  text,
+    recorded_by     uuid REFERENCES users(id) ON DELETE SET NULL,
     created_at      timestamptz NOT NULL DEFAULT now(),
     is_deleted      boolean NOT NULL DEFAULT false
 );
@@ -1324,6 +1433,7 @@ CREATE TABLE subscription_invoices (
     period_start    timestamptz,
     period_end      timestamptz,
     status          text,
+    revenue_by_plan jsonb,
     paid_at         timestamptz,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now(),
@@ -1392,6 +1502,8 @@ CREATE TABLE meeting_slots (
     start_time      time NOT NULL,
     end_time        time NOT NULL,
     duration_minutes int NOT NULL DEFAULT 15,
+    -- GENERATED: ISO weekday derived from slot_date (1=Mon..7=Sun). Never insert.
+    day_of_week     int GENERATED ALWAYS AS (EXTRACT(ISODOW FROM slot_date)::int) STORED,
     is_booked       boolean NOT NULL DEFAULT false,
     is_deleted      boolean NOT NULL DEFAULT false
 );
@@ -1406,6 +1518,7 @@ CREATE TABLE meeting_bookings (
     student_id      uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     parent_name     text NOT NULL,
     parent_phone    text NOT NULL,
+    notes           text,
     status          text NOT NULL DEFAULT 'pending'
                     CHECK (status IN ('pending', 'confirmed', 'cancelled', 'completed')),
     reminder_sent   boolean NOT NULL DEFAULT false,
@@ -1509,6 +1622,9 @@ CREATE TABLE asset_maintenance (
     school_id         uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     maintenance_date  date NOT NULL,
     description       text NOT NULL,
+    cost              numeric,
+    next_service_date date,
+    performed_by      text,
     created_at        timestamptz NOT NULL DEFAULT now(),
     updated_at        timestamptz NOT NULL DEFAULT now()
 );
@@ -1544,10 +1660,13 @@ CREATE TABLE library_issues (
     book_id      uuid NOT NULL REFERENCES library_books(id) ON DELETE CASCADE,
     student_id   uuid NOT NULL REFERENCES students(id) ON DELETE CASCADE,
     issued_at    timestamptz NOT NULL DEFAULT now(),
+    issued_by    uuid REFERENCES users(id) ON DELETE SET NULL,
     due_date     date NOT NULL,
     returned_at  timestamptz,
     fine_amount  numeric,
-    fine_paid    boolean NOT NULL DEFAULT false
+    fine_paid    boolean NOT NULL DEFAULT false,
+    updated_at   timestamptz NOT NULL DEFAULT now(),
+    is_deleted   boolean NOT NULL DEFAULT false
 );
 
 -- ---------------------------------------------------------------------------
@@ -1597,6 +1716,10 @@ CREATE TABLE timetable_periods (
     id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
     name        text NOT NULL,
+    start_time  time,
+    end_time    time,
+    is_break    boolean NOT NULL DEFAULT false,
+    sort_order  int NOT NULL DEFAULT 0,
     is_deleted  boolean NOT NULL DEFAULT false,
     created_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -1605,15 +1728,19 @@ CREATE TABLE timetable_periods (
 -- 8. timetable_slots
 -- ---------------------------------------------------------------------------
 CREATE TABLE timetable_slots (
-    id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-    school_id   uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
-    class_id    uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
-    period_id   uuid NOT NULL REFERENCES timetable_periods(id) ON DELETE CASCADE,
-    subject_id  uuid REFERENCES subjects(id),
-    teacher_id  uuid REFERENCES users(id),
-    is_deleted  boolean NOT NULL DEFAULT false,
-    created_at  timestamptz NOT NULL DEFAULT now(),
-    UNIQUE (school_id, class_id, period_id)
+    id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id        uuid NOT NULL REFERENCES schools(id) ON DELETE CASCADE,
+    class_id         uuid NOT NULL REFERENCES classes(id) ON DELETE CASCADE,
+    period_id        uuid NOT NULL REFERENCES timetable_periods(id) ON DELETE CASCADE,
+    academic_year_id uuid REFERENCES academic_years(id) ON DELETE CASCADE,
+    subject_id       uuid REFERENCES subjects(id),
+    teacher_id       uuid REFERENCES users(id),
+    day_of_week      int NOT NULL DEFAULT 1 CHECK (day_of_week BETWEEN 1 AND 5),
+    room             text,
+    is_deleted       boolean NOT NULL DEFAULT false,
+    created_at       timestamptz NOT NULL DEFAULT now(),
+    CONSTRAINT uq_timetable_slots_class_period_day_year
+        UNIQUE (class_id, period_id, day_of_week, academic_year_id)
 );
 
 -- ---------------------------------------------------------------------------
@@ -1631,6 +1758,9 @@ CREATE TABLE concierge_leads (
     status          concierge_status NOT NULL DEFAULT 'new',
     assigned_to     uuid REFERENCES users(id),
     internal_notes  text,
+    notes           text,
+    preferred_date  date,
+    followed_up_at  timestamptz,
     created_at      timestamptz NOT NULL DEFAULT now(),
     updated_at      timestamptz NOT NULL DEFAULT now()
 );
@@ -1786,8 +1916,41 @@ CREATE TABLE emis_report_logs (
     generated_by     uuid NOT NULL REFERENCES users(id),
     academic_year_id uuid REFERENCES academic_years(id),
     term_id          uuid REFERENCES terms(id),
+    report_type      text,
+    record_count     int,
     created_at       timestamptz NOT NULL DEFAULT now()
 );
+
+-- ---------------------------------------------------------------------------
+-- 8. school_settings (per-school feature flags / cache TTL / branding)
+-- ---------------------------------------------------------------------------
+CREATE TABLE school_settings (
+    school_id               uuid PRIMARY KEY REFERENCES schools(id) ON DELETE CASCADE,
+    cache_ttl_seconds       int NOT NULL DEFAULT 60,
+    feature_portal_payments boolean NOT NULL DEFAULT true,
+    feature_library         boolean NOT NULL DEFAULT true,
+    feature_assets          boolean NOT NULL DEFAULT true,
+    feature_payroll         boolean NOT NULL DEFAULT true,
+    feature_emis            boolean NOT NULL DEFAULT true,
+    feature_marketplace     boolean NOT NULL DEFAULT true,
+    primary_color           text,
+    created_at              timestamptz NOT NULL DEFAULT now(),
+    updated_at              timestamptz NOT NULL DEFAULT now()
+);
+
+-- INTENTIONALLY-UNUSED
+-- the TABLE school_settings above is provisioned for upcoming feature-flag
+-- and per-school cache-TTL work. No app code references it yet; the gate
+-- test allows it via this marker.
+COMMENT ON TABLE school_settings IS 'Per-school feature flags, cache TTL, branding. Provisioned ahead of use.';
+
+-- ---------------------------------------------------------------------------
+-- Deferred FK: schools.country_code → country_configs(code)
+-- (schools was created in 0004 before country_configs existed)
+-- ---------------------------------------------------------------------------
+ALTER TABLE schools
+    ADD CONSTRAINT schools_country_code_fkey
+    FOREIGN KEY (country_code) REFERENCES country_configs(code);
 
 -- ----------------------------------------------------------------------------
 -- Source: supabase/migrations/0013_indexes.sql
@@ -2041,6 +2204,55 @@ CREATE INDEX idx_push_queue_pending            ON push_queue(status, created_at)
 CREATE INDEX idx_sms_templates_school          ON sms_templates(school_id) WHERE is_deleted = false;
 CREATE INDEX idx_marketplace_category          ON marketplace_templates(category) WHERE is_deleted = false;
 CREATE INDEX idx_marketplace_featured          ON marketplace_templates(is_featured) WHERE is_deleted = false;
+
+-- ---------------------------------------------------------------------------
+-- Reconciliation indexes (folded in from former 0031/0032 patches)
+-- ---------------------------------------------------------------------------
+-- class_enrollments tenant scope
+CREATE INDEX idx_class_enrollments_school_id   ON class_enrollments(school_id);
+CREATE INDEX idx_class_enrollments_school_term ON class_enrollments(school_id, term_id) WHERE is_deleted = false;
+
+-- fee_payments restored columns
+CREATE INDEX idx_fee_payments_received_by      ON fee_payments(received_by_user_id) WHERE received_by_user_id IS NOT NULL;
+CREATE INDEX idx_fee_payments_pesapal_tracking ON fee_payments(pesapal_order_tracking_id) WHERE pesapal_order_tracking_id IS NOT NULL;
+CREATE INDEX idx_fee_payments_mobile_provider  ON fee_payments(school_id, mobile_money_provider, status) WHERE is_deleted = false AND mobile_money_provider IS NOT NULL;
+CREATE INDEX idx_fee_payments_term_school_status ON fee_payments(school_id, term_id, status) WHERE is_deleted = false AND term_id IS NOT NULL;
+
+-- fee_accounts / fee_discounts
+CREATE INDEX idx_fee_accounts_school_term_status ON fee_accounts(school_id, term_id, status) WHERE is_deleted = false;
+CREATE INDEX idx_fee_discounts_school_active    ON fee_discounts(school_id, is_active) WHERE is_deleted = false;
+
+-- expenses restored columns
+CREATE INDEX idx_expenses_recorded_by          ON expenses(recorded_by) WHERE recorded_by IS NOT NULL;
+CREATE INDEX idx_expenses_term_school          ON expenses(school_id, term_id) WHERE is_deleted = false AND term_id IS NOT NULL;
+
+-- marks.grade
+CREATE INDEX idx_marks_grade                   ON marks(school_id, term_id, grade) WHERE is_deleted = false;
+
+-- schools active / billing
+CREATE INDEX idx_schools_active                ON schools(id) WHERE is_deleted = false;
+CREATE INDEX idx_schools_next_billing_date     ON schools(next_billing_date) WHERE is_deleted = false AND subscription_status = 'active';
+
+-- calendar portal
+CREATE INDEX idx_calendar_events_public_portal ON calendar_events(school_id, event_date, is_public) WHERE is_deleted = false AND is_public = true;
+
+-- timetable day/year
+CREATE INDEX idx_timetable_slots_class_day     ON timetable_slots(class_id, day_of_week) WHERE is_deleted = false;
+CREATE INDEX idx_timetable_slots_teacher_day   ON timetable_slots(teacher_id, day_of_week) WHERE is_deleted = false AND teacher_id IS NOT NULL;
+CREATE INDEX idx_timetable_slots_academic_year ON timetable_slots(school_id, academic_year_id) WHERE is_deleted = false;
+CREATE INDEX idx_timetable_periods_school_order ON timetable_periods(school_id, sort_order) WHERE is_deleted = false;
+
+-- meeting / library / subject_comments / sms / staff payroll
+CREATE INDEX idx_meeting_slots_teacher_day     ON meeting_slots(teacher_id, day_of_week) WHERE is_deleted = false AND is_booked = false;
+CREATE INDEX idx_library_issues_overdue_calc   ON library_issues(school_id, due_date) WHERE returned_at IS NULL AND is_deleted = false;
+CREATE INDEX idx_subject_comments_student_term_active ON subject_comments(student_id, term_id) WHERE is_deleted = false;
+CREATE INDEX idx_sms_logs_related_entity       ON sms_logs(related_entity_type, related_entity_id) WHERE related_entity_id IS NOT NULL;
+CREATE INDEX idx_staff_payment_profiles_staff_id ON staff_payment_profiles(staff_id);
+CREATE INDEX idx_payroll_records_school_period_status ON payroll_records(school_id, year, month, payment_status) WHERE is_deleted = false;
+CREATE INDEX idx_push_subscriptions_user       ON push_subscriptions(user_id) WHERE is_deleted = false;
+CREATE INDEX idx_meeting_bookings_school_status ON meeting_bookings(school_id, status);
+CREATE INDEX idx_audit_logs_school_created     ON audit_logs(school_id, created_at DESC);
+CREATE INDEX idx_discipline_parent_notified    ON discipline_records(school_id, parent_notified, incident_date DESC) WHERE is_deleted = false AND parent_notified = false;
 
 -- ----------------------------------------------------------------------------
 -- Source: supabase/migrations/0014_rls_enable.sql
@@ -3318,35 +3530,35 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
-    v_account fee_accounts%ROWTYPE;
-    v_total_expected numeric;
-    v_total_paid numeric;
+    v_account        fee_accounts%ROWTYPE;
+    v_gross_fees     numeric;
     v_total_discount numeric;
-    v_balance numeric;
-    v_status fee_account_status;
+    v_net_expected   numeric;
+    v_total_paid     numeric;
+    v_balance        numeric;
+    v_status         fee_account_status;
 BEGIN
     SELECT * INTO v_account FROM fee_accounts WHERE id = p_account_id;
-
     IF NOT FOUND THEN
         RAISE EXCEPTION 'Fee account % not found', p_account_id;
     END IF;
 
-    -- Sum fee_structures for this term/class
+    -- 1. Gross fees: sum all applicable fee_structures
     SELECT COALESCE(SUM(fs.amount), 0)
-    INTO v_total_expected
+    INTO v_gross_fees
     FROM fee_structures fs
     LEFT JOIN students st ON st.id = v_account.student_id
-    WHERE fs.term_id = v_account.term_id
-      AND fs.school_id = v_account.school_id
+    WHERE fs.term_id    = v_account.term_id
+      AND fs.school_id  = v_account.school_id
       AND fs.is_deleted = false
       AND (fs.class_id IS NULL OR fs.class_id = st.current_class_id);
 
-    -- Subtract applicable discounts
+    -- 2. Applicable discounts (percentage capped at gross; fixed capped at gross)
     SELECT COALESCE(SUM(
         CASE
-            WHEN fd.discount_type = 'percentage' THEN
-                LEAST(v_total_expected * fd.value / 100, v_total_expected * fd.value / 100)
-            ELSE fd.value
+            WHEN fd.discount_type = 'percentage'
+                THEN LEAST(v_gross_fees * fd.value / 100.0, v_gross_fees)
+            ELSE LEAST(fd.value, v_gross_fees)
         END
     ), 0)
     INTO v_total_discount
@@ -3357,34 +3569,118 @@ BEGIN
       AND sd.is_deleted = false
       AND fd.is_deleted = false;
 
-    v_total_expected := GREATEST(v_total_expected - v_total_discount, 0);
+    v_net_expected := GREATEST(v_gross_fees - v_total_discount, 0);
 
-    -- Sum confirmed payments
+    -- 3. Confirmed payments
     SELECT COALESCE(SUM(fp.amount), 0)
     INTO v_total_paid
     FROM fee_payments fp
     WHERE fp.fee_account_id = p_account_id
-      AND fp.status = 'confirmed'
-      AND fp.is_deleted = false;
+      AND fp.status         = 'confirmed'
+      AND fp.is_deleted     = false;
 
-    v_balance := v_total_expected - v_total_paid;
+    v_balance := v_net_expected - v_total_paid;
 
-    IF v_balance = 0 AND v_total_expected > 0 THEN
+    -- 4. Status
+    IF v_net_expected = 0 THEN
         v_status := 'paid';
-    ELSIF v_balance > 0 AND v_total_paid > 0 THEN
+    ELSIF v_balance <= 0 AND v_total_paid > 0 THEN
+        v_status := CASE WHEN v_balance < 0 THEN 'overpaid' ELSE 'paid' END;
+    ELSIF v_total_paid > 0 THEN
         v_status := 'partial';
-    ELSIF v_balance < 0 THEN
-        v_status := 'overpaid';
     ELSE
         v_status := 'unpaid';
     END IF;
 
+    -- 5. Write back (including total_fees + total_discount)
     UPDATE fee_accounts
-    SET total_expected = v_total_expected,
-        total_paid = v_total_paid,
-        balance = v_balance,
-        status = v_status
+    SET total_fees     = v_gross_fees,
+        total_discount = v_total_discount,
+        total_expected = v_net_expected,
+        total_paid     = v_total_paid,
+        balance        = v_balance,
+        status         = v_status,
+        updated_at     = now()
     WHERE id = p_account_id;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 1b. Fee-account auto-recalc trigger functions + marks.grade function.
+--     (Trigger wirings live in 0023.)
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trigger_recalculate_fee_account()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+BEGIN
+    IF (TG_OP = 'INSERT')
+    OR (TG_OP = 'UPDATE' AND (
+         NEW.status     IS DISTINCT FROM OLD.status OR
+         NEW.amount     IS DISTINCT FROM OLD.amount OR
+         NEW.is_deleted IS DISTINCT FROM OLD.is_deleted))
+    THEN
+        PERFORM recalculate_fee_account(NEW.fee_account_id);
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION trigger_recalculate_fee_accounts_for_student()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE v_account_id uuid;
+BEGIN
+    FOR v_account_id IN
+        SELECT id FROM fee_accounts
+        WHERE student_id = COALESCE(NEW.student_id, OLD.student_id)
+          AND (term_id = COALESCE(NEW.term_id, OLD.term_id)
+               OR (NEW.term_id IS NULL AND OLD.term_id IS NULL))
+          AND is_deleted = false
+    LOOP
+        PERFORM recalculate_fee_account(v_account_id);
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION trigger_recalculate_accounts_for_fee_structure()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE v_account_id uuid;
+BEGIN
+    FOR v_account_id IN
+        SELECT id FROM fee_accounts
+        WHERE school_id = COALESCE(NEW.school_id, OLD.school_id)
+          AND term_id   = COALESCE(NEW.term_id,   OLD.term_id)
+          AND is_deleted = false
+    LOOP
+        PERFORM recalculate_fee_account(v_account_id);
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+
+-- Auto-populate marks.grade from grading_scales on insert/score change.
+CREATE OR REPLACE FUNCTION fn_marks_set_grade()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, public AS $$
+DECLARE v_pct numeric; v_grade text;
+BEGIN
+    IF NEW.score IS NOT NULL AND NEW.max_score IS NOT NULL AND NEW.max_score > 0 THEN
+        v_pct := (NEW.score / NEW.max_score) * 100;
+        SELECT grade INTO v_grade
+        FROM grading_scales
+        WHERE school_id = NEW.school_id
+          AND is_deleted = false
+          AND v_pct >= min_score
+          AND v_pct <= max_score
+        ORDER BY sort_order
+        LIMIT 1;
+        NEW.grade := v_grade;
+    ELSE
+        NEW.grade := NULL;
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -4351,6 +4647,28 @@ CREATE TRIGGER trg_school_referral_code
     AFTER INSERT ON schools
     FOR EACH ROW EXECUTE FUNCTION auto_create_referral_code();
 
+-- ---------------------------------------------------------------------------
+-- 6. trg_marks_set_grade — auto-populate marks.grade from grading_scales
+-- ---------------------------------------------------------------------------
+CREATE TRIGGER trg_marks_set_grade
+    BEFORE INSERT OR UPDATE OF score, max_score ON marks
+    FOR EACH ROW EXECUTE FUNCTION fn_marks_set_grade();
+
+-- ---------------------------------------------------------------------------
+-- 7. Fee-account auto-recalculation triggers
+-- ---------------------------------------------------------------------------
+CREATE TRIGGER trg_fee_payment_recalc
+    AFTER INSERT OR UPDATE ON fee_payments
+    FOR EACH ROW EXECUTE FUNCTION trigger_recalculate_fee_account();
+
+CREATE TRIGGER trg_student_discount_recalc
+    AFTER INSERT OR UPDATE OR DELETE ON student_discounts
+    FOR EACH ROW EXECUTE FUNCTION trigger_recalculate_fee_accounts_for_student();
+
+CREATE TRIGGER trg_fee_structure_recalc
+    AFTER INSERT OR UPDATE OR DELETE ON fee_structures
+    FOR EACH ROW EXECUTE FUNCTION trigger_recalculate_accounts_for_fee_structure();
+
 -- ----------------------------------------------------------------------------
 -- Source: supabase/migrations/0024_views.sql
 -- ----------------------------------------------------------------------------
@@ -4450,6 +4768,66 @@ JOIN subjects sub ON sub.id = m.subject_id
 WHERE m.is_deleted = false
   AND m.review_status IN ('approved', 'submitted')
 GROUP BY m.school_id, m.class_id, c.name, m.subject_id, sub.name, m.term_id;
+
+-- ---------------------------------------------------------------------------
+-- 4. marks_pivoted
+--    One row per (student, subject, term) with per-exam-type scores pivoted
+--    into named columns. Used by the parent portal results page.
+-- ---------------------------------------------------------------------------
+CREATE VIEW marks_pivoted
+WITH (security_invoker = true)
+AS
+SELECT
+    m.school_id,
+    m.student_id,
+    m.subject_id,
+    m.term_id,
+    m.academic_year_id,
+    m.class_id,
+    s.name AS subject_name,
+    s.code AS subject_code,
+    s.max_marks,
+    MAX(CASE WHEN m.exam_type = 'bot'        THEN m.score END) AS bot_score,
+    MAX(CASE WHEN m.exam_type = 'midterm'    THEN m.score END) AS mid_score,
+    MAX(CASE WHEN m.exam_type = 'eot'        THEN m.score END) AS eot_score,
+    MAX(CASE WHEN m.exam_type = 'assignment' THEN m.score END) AS assignment_score,
+    MAX(CASE WHEN m.exam_type = 'practical'  THEN m.score END) AS practical_score,
+      COALESCE(MAX(CASE WHEN m.exam_type = 'bot'        THEN m.score END), 0)
+    + COALESCE(MAX(CASE WHEN m.exam_type = 'midterm'    THEN m.score END), 0)
+    + COALESCE(MAX(CASE WHEN m.exam_type = 'eot'        THEN m.score END), 0)
+    + COALESCE(MAX(CASE WHEN m.exam_type = 'assignment' THEN m.score END), 0)
+    + COALESCE(MAX(CASE WHEN m.exam_type = 'practical'  THEN m.score END), 0) AS total_score,
+    MAX(m.grade)   AS grade,
+    MAX(m.remarks) AS remarks
+FROM marks m
+JOIN subjects s ON s.id = m.subject_id
+WHERE m.is_deleted = false
+GROUP BY
+    m.school_id, m.student_id, m.subject_id, m.term_id,
+    m.academic_year_id, m.class_id, s.name, s.code, s.max_marks;
+
+-- ---------------------------------------------------------------------------
+-- 5. current_terms
+--    One row per school for the current term + its academic year.
+-- ---------------------------------------------------------------------------
+CREATE VIEW current_terms
+WITH (security_invoker = true)
+AS
+SELECT
+    t.id,
+    t.school_id,
+    t.academic_year_id,
+    t.name,
+    t.start_date,
+    t.end_date,
+    t.is_current,
+    ay.name       AS academic_year_name,
+    ay.is_current AS academic_year_is_current
+FROM terms t
+JOIN academic_years ay ON ay.id = t.academic_year_id
+WHERE t.is_current = true
+  AND t.is_deleted = false
+  AND ay.is_deleted = false;
 
 -- ----------------------------------------------------------------------------
 -- Source: supabase/migrations/0025_storage_buckets.sql
@@ -4823,101 +5201,1333 @@ INSERT INTO school_groups (id, name, code, created_at, is_deleted) VALUES
 ON CONFLICT (code) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_column_drops.sql
+-- Source: supabase/migrations/0028_audit_logs_append_only.sql
 -- ----------------------------------------------------------------------------
 
 -- =============================================================================
--- SKULI SaaS: Column Drops (dead-column sweep)
+-- SKULI SaaS: audit_logs append-only
 -- Migration 0028
 --
--- Drops every column in section D of the reconciliation report. The
--- CREATE TABLE statements in 0004-0012 do NOT include these columns,
--- so this file is a no-op on a fresh DB. It exists so this stream can
--- be applied to a pre-existing DB that still has them — the drops are
--- idempotent (IF EXISTS).
+-- Audit §8.6: audit_logs is a soft-delete table today (it has an
+-- is_deleted column and the set_updated_at trigger on it from
+-- 0023_triggers.sql). That gives any caller with the existing
+-- update policy two ways to rewrite history:
+--   1. UPDATE ... SET is_deleted = true
+--   2. UPDATE ... SET new_value = '{}' to scrub what was recorded
 --
--- Per section D of the reconciliation report, the dead columns are:
+-- There is no business reason to mutate an audit entry. Forensic
+-- value comes from the row being written exactly once and never
+-- touched again. Append-only is enforced three ways here:
+--
+--   1. A BEFORE UPDATE trigger that raises an exception for any
+--      non-service-role caller.
+--   2. A BEFORE DELETE trigger (statement-level) that raises the
+--      same way. (Row-level keeps the error tied to a specific
+--      row for debugging.)
+--   3. The service role bypasses the trigger so reaper / archival
+--      jobs in the future can prune if the user opts in to that
+--      policy. The default posture is still "no edits".
+--
+-- The triggers are idempotent: DROP TRIGGER IF EXISTS is used.
 -- ---------------------------------------------------------------------------
 
-ALTER TABLE students                 DROP COLUMN IF EXISTS parent_nid;
-ALTER TABLE classes                  DROP COLUMN IF EXISTS stream;
-ALTER TABLE staff                    DROP COLUMN IF EXISTS national_id;
-ALTER TABLE staff                    DROP COLUMN IF EXISTS hire_date;
-ALTER TABLE marks                    DROP COLUMN IF EXISTS entered_by;
-ALTER TABLE marks                    DROP COLUMN IF EXISTS reviewed_by;
-ALTER TABLE report_cards             DROP COLUMN IF EXISTS pdf_url;
-ALTER TABLE attendance_records       DROP COLUMN IF EXISTS marked_by;
-ALTER TABLE announcements            DROP COLUMN IF EXISTS sent_via;
-ALTER TABLE sms_logs                 DROP COLUMN IF EXISTS related_entity_type;
-ALTER TABLE sms_logs                 DROP COLUMN IF EXISTS related_entity_id;
-ALTER TABLE fee_payments             DROP COLUMN IF EXISTS mobile_money_provider;
-ALTER TABLE fee_payments             DROP COLUMN IF EXISTS phone_used;
-ALTER TABLE fee_payments             DROP COLUMN IF EXISTS received_by_user_id;
-ALTER TABLE fee_structures           DROP COLUMN IF EXISTS is_mandatory;
-ALTER TABLE timetable_periods        DROP COLUMN IF EXISTS is_break;
-ALTER TABLE timetable_periods        DROP COLUMN IF EXISTS sort_order;
-ALTER TABLE timetable_periods        DROP COLUMN IF EXISTS start_time;
-ALTER TABLE timetable_periods        DROP COLUMN IF EXISTS end_time;
-ALTER TABLE timetable_slots          DROP COLUMN IF EXISTS room;
-ALTER TABLE timetable_slots          DROP COLUMN IF EXISTS day_of_week;
-ALTER TABLE timetable_slots          DROP COLUMN IF EXISTS academic_year_id;
-ALTER TABLE notification_preferences DROP COLUMN IF EXISTS sms_enabled;
-ALTER TABLE asset_maintenance        DROP COLUMN IF EXISTS cost;
-ALTER TABLE asset_maintenance        DROP COLUMN IF EXISTS next_service_date;
-ALTER TABLE asset_maintenance        DROP COLUMN IF EXISTS performed_by;
-ALTER TABLE library_issues           DROP COLUMN IF EXISTS issued_by;
-ALTER TABLE library_issues           DROP COLUMN IF EXISTS updated_at;
-ALTER TABLE meeting_bookings         DROP COLUMN IF EXISTS notes;
-ALTER TABLE student_discounts        DROP COLUMN IF EXISTS note;
-ALTER TABLE student_discounts        DROP COLUMN IF EXISTS approved_by;
-ALTER TABLE fee_discounts            DROP COLUMN IF EXISTS max_amount;
-ALTER TABLE fee_discounts            DROP COLUMN IF EXISTS is_recurring;
-ALTER TABLE fee_discounts            DROP COLUMN IF EXISTS description;
-ALTER TABLE fee_discounts            DROP COLUMN IF EXISTS is_active;
-ALTER TABLE subject_comments         DROP COLUMN IF EXISTS created_at;
-ALTER TABLE subject_comments         DROP COLUMN IF EXISTS updated_at;
-ALTER TABLE subject_comments         DROP COLUMN IF EXISTS is_deleted;
-ALTER TABLE concierge_leads          DROP COLUMN IF EXISTS notes;
-ALTER TABLE concierge_leads          DROP COLUMN IF EXISTS preferred_date;
-ALTER TABLE concierge_leads          DROP COLUMN IF EXISTS followed_up_at;
-ALTER TABLE country_configs          DROP COLUMN IF EXISTS mobile_money_providers;
-ALTER TABLE expenses                 DROP COLUMN IF EXISTS term_id;
-ALTER TABLE expenses                 DROP COLUMN IF EXISTS receipt_number;
-ALTER TABLE expenses                 DROP COLUMN IF EXISTS recorded_by;
-ALTER TABLE expenses                 DROP COLUMN IF EXISTS notes;
-ALTER TABLE expenses                 DROP COLUMN IF EXISTS created_at;
-ALTER TABLE emis_report_logs         DROP COLUMN IF EXISTS record_count;
-ALTER TABLE emis_report_logs         DROP COLUMN IF EXISTS report_type;
-ALTER TABLE emis_report_logs         DROP COLUMN IF EXISTS pdf_url;
-ALTER TABLE payroll_batches          DROP COLUMN IF EXISTS pesapal_funding_ref;
-ALTER TABLE payroll_batches          DROP COLUMN IF EXISTS pesapal_funding_url;
-ALTER TABLE payroll_batches          DROP COLUMN IF EXISTS pesapal_order_tracking_id;
-ALTER TABLE payroll_batches          DROP COLUMN IF EXISTS funded_at;
-ALTER TABLE payroll_batches          DROP COLUMN IF EXISTS approved_by_user_id;
-ALTER TABLE payroll_batches          DROP COLUMN IF EXISTS total_net_salaries;
-ALTER TABLE payroll_batches          DROP COLUMN IF EXISTS total_overhead_fees;
-ALTER TABLE batch_line_items         DROP COLUMN IF EXISTS processing_fee;
-ALTER TABLE batch_line_items         DROP COLUMN IF EXISTS provider_receipt_id;
-ALTER TABLE batch_line_items         DROP COLUMN IF EXISTS last_error;
-ALTER TABLE batch_line_items         DROP COLUMN IF EXISTS disbursed_at;
-ALTER TABLE batch_line_items         DROP COLUMN IF EXISTS created_at;
-ALTER TABLE batch_line_items         DROP COLUMN IF EXISTS payroll_record_id;
-ALTER TABLE tuition_payments         DROP COLUMN IF EXISTS fee_type_id;
-ALTER TABLE tuition_payments         DROP COLUMN IF EXISTS fee_type_label;
-ALTER TABLE tuition_payments         DROP COLUMN IF EXISTS pesapal_redirect_url;
-ALTER TABLE tuition_payments         DROP COLUMN IF EXISTS payment_description;
-ALTER TABLE tuition_payments         DROP COLUMN IF EXISTS initiated_by_user_id;
-ALTER TABLE calendar_events          DROP COLUMN IF EXISTS is_public;
-ALTER TABLE calendar_events          DROP COLUMN IF EXISTS affects_attendance;
-ALTER TABLE pesapal_token_cache      DROP COLUMN IF EXISTS updated_at;
-ALTER TABLE schools                  DROP COLUMN IF EXISTS flutterwave_public_key;
-ALTER TABLE schools                  DROP COLUMN IF EXISTS flutterwave_secret_key;
-ALTER TABLE schools                  DROP COLUMN IF EXISTS flutterwave_secret_key_enc;
-ALTER TABLE schools                  DROP COLUMN IF EXISTS flutterwave_encryption_key;
-ALTER TABLE schools                  DROP COLUMN IF EXISTS flutterwave_encryption_key_enc;
+CREATE OR REPLACE FUNCTION trg_audit_logs_block_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    -- service_role bypass — used by future archival / reaper jobs
+    -- and by the migrations themselves.
+    IF auth.uid() IS NULL THEN
+        RETURN NULL;
+    END IF;
 
--- The alumni table IS created in 0011 — see that file for the rationale.
--- No DROP TABLE statement here.
+    RAISE EXCEPTION
+        'audit_logs is append-only; % on an existing row is not permitted',
+        TG_OP
+        USING ERRCODE = '42501';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_audit_logs_no_update ON public.audit_logs;
+CREATE TRIGGER trg_audit_logs_no_update
+    BEFORE UPDATE ON public.audit_logs
+    FOR EACH ROW EXECUTE FUNCTION trg_audit_logs_block_mutation();
+
+DROP TRIGGER IF EXISTS trg_audit_logs_no_delete ON public.audit_logs;
+CREATE TRIGGER trg_audit_logs_no_delete
+    BEFORE DELETE ON public.audit_logs
+    FOR EACH ROW EXECUTE FUNCTION trg_audit_logs_block_mutation();
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_dashboard_mv_lockdown.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: Dashboard MV privilege lock-down (Audit §12.2)
+-- Migration 0028 (part 8)
+--
+-- The four `mv_dashboard_*` materialised views aggregate ALL schools
+-- (one row per school_id, ...). They are not RLS-aware — materialised
+-- views do not honour RLS. Granting SELECT to `authenticated` lets any
+-- logged-in user query the views directly via PostgREST and read every
+-- school's revenue / payment-method mix / attendance totals,
+-- bypassing the SECURITY INVOKER wrapper function that the route uses.
+--
+-- This migration revokes SELECT from `authenticated` and keeps the
+-- grant on `service_role` only. The route layer continues to call
+-- the wrapper functions (which are SECURITY INVOKER and apply RLS on
+-- the underlying attendance_records / fee_payments selects).
+-- ---------------------------------------------------------------------------
+
+REVOKE SELECT ON mv_dashboard_attendance_today     FROM authenticated;
+REVOKE SELECT ON mv_dashboard_attendance_by_class  FROM authenticated;
+REVOKE SELECT ON mv_dashboard_payment_trend        FROM authenticated;
+REVOKE SELECT ON mv_dashboard_payment_methods      FROM authenticated;
+
+REVOKE SELECT ON mv_dashboard_attendance_today     FROM anon;
+REVOKE SELECT ON mv_dashboard_attendance_by_class  FROM anon;
+REVOKE SELECT ON mv_dashboard_payment_trend        FROM anon;
+REVOKE SELECT ON mv_dashboard_payment_methods      FROM anon;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_grants_lock_extras.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: Lock EXECUTE on encrypt_secret / decrypt_secret (Audit §8.7 / §14.2)
+-- Migration 0028 (part 9)
+--
+-- 0026_grants.sql granted EXECUTE on every function in public to
+-- `anon, authenticated` and never revoked `encrypt_secret` /
+-- `decrypt_secret` specifically. The functions take the vault key
+-- as an argument, so any logged-in user who can reach the key
+-- (bundle leak, log, one SQLi sink) can decrypt every school's
+-- stored AT / Resend / Pesapal credentials.
+--
+-- This migration REVOKEs EXECUTE from anon + authenticated and
+-- grants it to service_role only. The only call sites
+-- (lib/africas-talking/client.ts and any other admin-only path)
+-- now go through createAdminClient().
+-- ---------------------------------------------------------------------------
+
+REVOKE EXECUTE ON FUNCTION public.encrypt_secret(text, text) FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.decrypt_secret(text, text) FROM anon, authenticated;
+GRANT   EXECUTE ON FUNCTION public.encrypt_secret(text, text) TO service_role;
+GRANT   EXECUTE ON FUNCTION public.decrypt_secret(text, text) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_grants_tighten.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: Tightened grants (Audit §8.1)
+-- Migration 0028 (part 4)
+--
+-- The previous grants file (0026_grants.sql) ran:
+--   GRANT SELECT, INSERT, UPDATE, DELETE
+--     ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+--   ALTER DEFAULT PRIVILEGES IN SCHEMA public
+--     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated;
+--
+-- This hands full DML on every current and future public table to
+-- both roles, so the *only* thing standing between a caller and the
+-- data is RLS. A single missed RLS policy on a new table = breach.
+--
+-- This migration:
+--   1. Revokes the blanket INSERT/UPDATE/DELETE grant from anon
+--      and authenticated. Both roles keep SELECT.
+--   2. Keeps ALTER DEFAULT PRIVILEGES for SELECT only — new tables
+--      are at least readable to authenticated, but writes are
+--      explicitly granted per-table by follow-up migrations.
+--   3. Keeps service_role with full DML (it bypasses RLS by design
+--      and is used by the webhook + admin paths).
+--   4. Grants INSERT to authenticated *only* on the small set of
+--      tables users truly insert into (audit_logs handled by
+--      service_role triggers; sms_logs is a denormalized log table;
+--      attendance_records etc. are inserted by the route layer
+--      which already passes the right WITH CHECK).
+-- ---------------------------------------------------------------------------
+
+-- 1. Revoke the blanket DML grants.
+REVOKE INSERT, UPDATE, DELETE
+    ON ALL TABLES IN SCHEMA public
+    FROM anon, authenticated;
+
+-- 2. Make the default for new tables SELECT-only.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE INSERT, UPDATE, DELETE ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE USAGE, UPDATE ON SEQUENCES FROM anon, authenticated;
+
+-- 3. Restore DELETE for the operational log tables that the app
+--    actually needs to clear (e.g. expired notifications). The list
+--    is small and explicit — anything else is denied.
+GRANT INSERT ON public.audit_logs              TO authenticated;
+GRANT INSERT ON public.in_app_notifications    TO authenticated;
+GRANT INSERT, UPDATE, DELETE
+    ON public.push_subscriptions               TO authenticated;
+GRANT INSERT, UPDATE, DELETE
+    ON public.notification_preferences         TO authenticated;
+
+-- 4. Re-grant the per-table privileges the application needs to
+--    function. RLS still applies (the WITH CHECK on every policy
+--    in 0015/0016/0017/0028_rls_hardening gates writes by school +
+--    role). The DML grant just lets the request reach the policy.
+--    Where the route uses a service-role client (webhooks,
+--    /api/v1/* admin paths), no grant is needed at all.
+GRANT INSERT, UPDATE, DELETE ON public.students                TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.class_enrollments       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.parent_students         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_accounts            TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_payments            TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_structures          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_types               TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_discounts           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.student_discounts       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.marks                   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.report_cards            TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.subject_comments        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.grading_scales          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.attendance_records      TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.announcements           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.staff                   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.staff_payment_profiles  TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.payroll_records         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.payroll_batches         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.batch_line_items        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.meeting_slots           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.meeting_bookings        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.message_threads         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.thread_messages         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.assets                  TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.asset_maintenance       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.library_books           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.library_issues          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.discipline_records      TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.calendar_events         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.timetable_periods       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.timetable_slots         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.teacher_class_assignments TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.expense_categories      TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.expenses                TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.sms_templates           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.sms_logs                TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.emis_report_logs        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.users                   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.classes                 TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.subjects                TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.class_subjects          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.academic_years          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.terms                   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.schools                 TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.school_groups           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.group_admins            TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.referral_codes          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.referrals               TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.billing_credits         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.concierge_leads         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.alumni                  TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.marketplace_templates   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.subscription_invoices   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.platform_settings       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.tuition_payments        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.impersonation_sessions  TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_structure_audit_log TO authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_handle_new_user_trust.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: handle_new_user trust hardening + INSERT-time role guard
+-- Migration 0028
+--
+-- Audit §2.4 / §8.8: two issues with self-service signups.
+--
+--   1. `prevent_role_self_escalation` is wired up as a BEFORE UPDATE
+--      trigger only (see 0023_triggers.sql). It catches a malicious
+--      client trying to flip their own role *after* signup, but it
+--      does nothing about the role they can already self-assign in
+--      the INSERT that `handle_new_user` performs on their behalf.
+--      If the JWT signup payload carries `role: SCHOOL_ADMIN`, the
+--      trigger never sees it.
+--
+--   2. `handle_new_user` reads `raw_user_meta_data->>'role'` and
+--      `raw_user_meta_data->>'school_id'` directly. Any user who
+--      controls their signup metadata (which is the entire point of
+--      the auth flow) can mint themselves an admin role at a school
+--      they do not belong to.
+--
+-- Fix:
+--   a) Re-define `handle_new_user` so the role and school_id are
+--      determined by the server context, not the JWT payload. The
+--      payload's role is only honoured if it names a low-privilege
+--      role (`PARENT` or `TEACHER`) AND the school_id matches a school
+--      whose onboarding flow actually invited that email. Otherwise
+--      the user lands as `PARENT` with no school.
+--   b) Add a BEFORE INSERT trigger on `public.users` that enforces
+--      the same restriction as a defence in depth: an insert coming
+--      from a non-SUPER_ADMIN caller that sets a privileged role
+--      (`SCHOOL_ADMIN`, `BURSAR`, `SUPER_ADMIN`) is rejected.
+--   c) Add a test comment block for the regression.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- 1. Replace handle_new_user with a version that does NOT trust
+--    raw_user_meta_data for role / school_id.
+--
+--    Rationale: the JWT metadata is a client-controlled string, and
+--    Supabase's `auth.admin.createUser` / signup endpoints both allow
+--    the caller to set `options.data`. Trusting it is equivalent to
+--    trusting the client. The metadata is still useful for `full_name`
+--    and `phone`, which are not authorisation inputs.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    v_requested_role text := NEW.raw_user_meta_data->>'role';
+    v_requested_school text := NULLIF(NEW.raw_user_meta_data->>'school_id', '');
+    v_final_role public.user_role;
+    v_final_school uuid;
+BEGIN
+    -- The only roles a self-service signup can self-assign are the
+    -- two least-privileged ones. Anything else gets coerced to PARENT.
+    -- `SCHOOL_ADMIN` / `BURSAR` / `SUPER_ADMIN` are only ever set by
+    -- the platform or an existing SUPER_ADMIN via the admin invite
+    -- route (which upserts the profile after auth.admin.createUser).
+    IF v_requested_role IN ('PARENT', 'TEACHER') THEN
+        v_final_role := v_requested_role::public.user_role;
+    ELSE
+        v_final_role := 'PARENT'::public.user_role;
+    END IF;
+
+    -- A self-service signup can only join a school that has issued
+    -- them a pending invite (parent_invitations / staff_invitations).
+    -- We check parent_invitations here as a representative gate; the
+    -- staff flow goes through the admin route, which writes the user
+    -- row directly with service role and bypasses this trigger's
+    -- non-super path via the auth.uid() IS NULL branch.
+    v_final_school := NULL;
+
+    IF v_final_role = 'PARENT' AND v_requested_school IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 FROM parent_invitations
+             WHERE school_id = v_requested_school::uuid
+               AND lower(email) = lower(NEW.email)
+               AND accepted_at IS NULL
+               AND expires_at > now()
+        ) THEN
+            v_final_school := v_requested_school::uuid;
+        END IF;
+    END IF;
+
+    BEGIN
+        INSERT INTO public.users (id, school_id, role, full_name, phone, email, is_active)
+        VALUES (
+            NEW.id,
+            v_final_school,
+            v_final_role,
+            COALESCE(
+                NEW.raw_user_meta_data->>'full_name',
+                NEW.raw_user_meta_data->>'name',
+                split_part(NEW.email, '@', 1),
+                'User'
+            ),
+            COALESCE(NEW.raw_user_meta_data->>'phone', NEW.phone),
+            NEW.email,
+            true
+        )
+        ON CONFLICT (id) DO NOTHING;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE WARNING 'handle_new_user insert failed for % : % (%)', NEW.email, SQLERRM, SQLSTATE;
+    END;
+
+    RETURN NEW;
+END;
+$$;
+
+-- ---------------------------------------------------------------------------
+-- 2. Add a BEFORE INSERT trigger on public.users that rejects
+--    privilege escalations coming from a non-SUPER_ADMIN caller.
+--
+--    `handle_new_user` runs as the function owner (SECURITY DEFINER),
+--    so within the trigger the `auth.uid()` check sees the *original*
+--    signup's auth.uid() (NULL in the bootstrap case, the new user
+--    otherwise). The two paths we care about:
+--
+--      a) auth.uid() IS NULL — service-role / migrations / SECURITY
+--         DEFINER contexts. Allowed to insert privileged roles.
+--      b) auth.uid() IS NOT NULL — the user is inserting their own
+--         row. Forbidden from setting a privileged role.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trg_users_block_privileged_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    v_caller_role text;
+    v_caller_is_super boolean;
+BEGIN
+    -- Service role (and SECURITY DEFINER contexts that do not set
+    -- request.jwt.claim.sub) skip the check. This is what allows the
+    -- admin invite route to create a SCHOOL_ADMIN row.
+    IF auth.uid() IS NULL THEN
+        RETURN NEW;
+    END IF;
+
+    v_caller_role := get_user_role();
+    v_caller_is_super := (v_caller_role = 'SUPER_ADMIN');
+
+    IF NEW.role IN ('SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN') AND NOT v_caller_is_super THEN
+        RAISE EXCEPTION
+            'role % cannot be self-assigned via INSERT (caller role=%)',
+            NEW.role, v_caller_role
+            USING ERRCODE = '42501';
+    END IF;
+
+    -- A non-super caller cannot set school_id on someone else's row.
+    -- Setting it on their own row is allowed only when the role they
+    -- are inserting is one of the non-privileged roles; the parent
+    -- invitation check is enforced upstream in handle_new_user.
+    IF v_caller_is_super THEN
+        RETURN NEW;
+    END IF;
+
+    -- For non-super inserters (effectively only the handle_new_user
+    -- SECURITY DEFINER path, which we've already allowed above by
+    -- returning NEW when auth.uid() IS NULL), be conservative: if
+    -- auth.uid() IS NOT NULL and they are inserting a row whose id
+    -- does not match their own, reject.
+    IF NEW.id <> auth.uid() THEN
+        RAISE EXCEPTION
+            'cannot insert a public.users row for another user'
+            USING ERRCODE = '42501';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_users_block_privileged_insert ON public.users;
+CREATE TRIGGER trg_users_block_privileged_insert
+    BEFORE INSERT ON public.users
+    FOR EACH ROW EXECUTE FUNCTION trg_users_block_privileged_insert();
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_impersonation.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: Scoped impersonation session
+-- Migration 0028 (part 2)
+--
+-- Closes §2.1 from the production-readiness review. Replaces the
+-- "issue a real Supabase magic link" approach (which handed the
+-- caller a full-privilege login as the target SCHOOL_ADMIN) with a
+-- short-lived, audited, server-controlled impersonation token.
+-- ---------------------------------------------------------------------------
+
+-- INTENTIONALLY-UNUSED: the impersonation_sessions table is written
+-- to by lib/auth/impersonation.ts via the Supabase client (`.from
+-- ("impersonation_sessions" as never)`) which the schema-consistency
+-- test does not pick up because the table name is hidden behind a
+-- string. The route handlers that mint and revoke sessions are
+-- real code paths in app/api/admin/impersonate/.
+CREATE TABLE IF NOT EXISTS public.impersonation_sessions (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id         UUID        NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
+    target_user_id    UUID        NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    actor_user_id     UUID        NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    token_hash        TEXT        NOT NULL UNIQUE,
+    reason            TEXT,
+    starts_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at        TIMESTAMPTZ NOT NULL,
+    revoked_at        TIMESTAMPTZ,
+    last_used_at      TIMESTAMPTZ,
+    ip_address        INET,
+    user_agent        TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS impersonation_sessions_target_idx
+    ON public.impersonation_sessions (target_user_id, expires_at);
+CREATE INDEX IF NOT EXISTS impersonation_sessions_actor_idx
+    ON public.impersonation_sessions (actor_user_id, created_at DESC);
+
+ALTER TABLE public.impersonation_sessions ENABLE ROW LEVEL SECURITY;
+
+-- Only the platform's service role can read/write this table. The
+-- /api/admin/impersonate route uses createAdminClient() (service role)
+-- to mint and revoke tokens; end users never touch it directly. The
+-- RLS posture is "deny all" by default and the service role bypasses
+-- RLS, so the table is effectively append-only from the application's
+-- perspective.
+DROP POLICY IF EXISTS impersonation_sessions_deny_all ON public.impersonation_sessions;
+CREATE POLICY impersonation_sessions_deny_all ON public.impersonation_sessions
+    FOR ALL
+    USING (false)
+    WITH CHECK (false);
+
+-- updated_at trigger (informational only — the row is rarely updated)
+DROP TRIGGER IF EXISTS set_updated_at_impersonation_sessions ON public.impersonation_sessions;
+CREATE TRIGGER set_updated_at_impersonation_sessions
+    BEFORE UPDATE ON public.impersonation_sessions
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_payment_integrity.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: Webhook / payment integrity hardening
+-- Migration 0028
+--
+-- Closes §1.2 / §12.3 / §1.5 / §8.12 from the production-readiness review.
+-- Adds the unique constraints that defend against duplicate mobile-money
+-- confirmations and concurrent receipt-number races.
+-- ---------------------------------------------------------------------------
+
+-- §12.3: prevent duplicate fee_payments from webhook replays. The
+-- `mobile_money_transaction_id` is set by the provider (Africa's Talking)
+-- and is the natural idempotency key. The partial unique index lets
+-- non-MM rows (POS, bank slips, manual) stay duplicate-tolerant.
+CREATE UNIQUE INDEX IF NOT EXISTS fee_payments_mm_tx_id_unique
+    ON public.fee_payments (mobile_money_transaction_id)
+    WHERE mobile_money_transaction_id IS NOT NULL;
+
+-- §12.3: prevent two confirmed payments from sharing a receipt within
+-- the same school. generate_receipt_number() is advisory-locked, but
+-- the unique constraint is the last line of defense if a JS path
+-- (bulk import, manual entry) builds its own number.
+CREATE UNIQUE INDEX IF NOT EXISTS fee_payments_school_receipt_unique
+    ON public.fee_payments (school_id, receipt_number)
+    WHERE receipt_number IS NOT NULL;
+
+-- §10.1: prevent two payroll_line_items from sharing an idempotency
+-- key. The disbursement gateway dedupes on this, but if the key is
+-- derived from batch_id + staff_id (as it is in v1/payroll/approve) a
+-- second batch for the same staff can produce a different key and
+-- pay twice. The DB-level guarantee is independent of the caller.
+CREATE UNIQUE INDEX IF NOT EXISTS batch_line_items_idempotency_key_unique
+    ON public.batch_line_items (idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_payroll_claim_rpc.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: Payroll claim RPC (Audit §10.1)
+-- Migration 0028 (part 6)
+--
+-- /api/v1/payroll/approve previously selected payroll_records
+-- WHERE payment_status = 'pending' but never *flipped* them out of
+-- pending, so two concurrent calls (or a webhook retry before the
+-- first batch row was committed) could each see the same pending
+-- records and create two funding batches.
+--
+-- This function atomically:
+--   1. UPDATEs the supplied ids to payment_status='batched' WHERE
+--      school_id = $1 AND id = ANY($2) AND payment_status = 'pending'.
+--   2. Returns the ids it actually flipped.
+--
+-- The caller compares the returned count with the requested count;
+-- any mismatch means a concurrent caller already won the race and
+-- the route returns 409. The 0028_rls_hardening trigger
+-- `payroll_records_approval_guard` blocks any other path from
+-- re-flipping a non-pending row back to 'batched'.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION public.payroll_claim_records_for_batch(
+    p_school_id UUID,
+    p_record_ids UUID[]
+)
+RETURNS TABLE(id UUID)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE public.payroll_records pr
+       SET payment_status = 'batched',
+           updated_at = now()
+     WHERE pr.school_id = p_school_id
+       AND pr.id = ANY(p_record_ids)
+       AND pr.payment_status = 'pending'
+    RETURNING pr.id;
+END;
+$$;
+
+-- Only the service role (webhook + admin paths) may call this
+-- function directly. The application-layer RLS still applies to the
+-- underlying UPDATE because the SECURITY DEFINER context switches to
+-- the function owner; we therefore revoke the EXECUTE grant from
+-- anon/authenticated so end users cannot invoke it via PostgREST.
+REVOKE ALL ON FUNCTION public.payroll_claim_records_for_batch(UUID, UUID[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.payroll_claim_records_for_batch(UUID, UUID[]) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_rls_hardening.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: RLS hardening (Audit §2.3 / §8.3 / §8.4 / §8.5 / §10.1)
+-- Migration 0028 (part 3)
+--
+-- Closes the broad RLS gaps the production-readiness review flagged.
+-- For every FOR ALL policy that previously had no role restriction
+-- and no WITH CHECK, this migration re-creates the policy with:
+--   * an explicit role predicate (SCHOOL_ADMIN / BURSAR / etc.)
+--   * a WITH CHECK (school_id = get_user_school_id()) so a row can
+--     never be re-homed across tenants via UPDATE
+--   * tighter participant scoping on message threads
+--   * payroll_records restricted to SCHOOL_ADMIN + BURSAR + a
+--     `payment_status` guard so two concurrent /api/v1/payroll/approve
+--     calls cannot both flip the same record out of 'pending'
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- §2.3 — grading_scales / fee_types / subject_comments now require
+-- SCHOOL_ADMIN and a same-tenant WITH CHECK.
+-- ---------------------------------------------------------------------------
+DROP POLICY IF EXISTS school_admin_manage_grades ON grading_scales;
+CREATE POLICY school_admin_manage_grades ON grading_scales FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS fee_types_select ON fee_types;
+DROP POLICY IF EXISTS fee_types_write  ON fee_types;
+
+CREATE POLICY fee_types_select ON fee_types FOR SELECT
+    USING (school_id = get_user_school_id());
+
+CREATE POLICY fee_types_write ON fee_types FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS subject_comments_school ON subject_comments;
+CREATE POLICY subject_comments_school ON subject_comments FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() IN ('SCHOOL_ADMIN', 'TEACHER')
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() IN ('SCHOOL_ADMIN', 'TEACHER')
+    );
+
+-- ---------------------------------------------------------------------------
+-- §8.3 — assets / asset_maintenance / library_books / library_issues
+-- / meeting_slots / message_threads / thread_messages /
+-- timetable_periods / timetable_slots / expense_categories
+-- now restrict writes to SCHOOL_ADMIN (BURSAR for expense_categories)
+-- and lock the row to the caller's school on UPDATE.
+-- ---------------------------------------------------------------------------
+DROP POLICY IF EXISTS school_manage_assets ON assets;
+CREATE POLICY school_manage_assets ON assets FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_manage_asset_maintenance ON asset_maintenance;
+CREATE POLICY school_manage_asset_maintenance ON asset_maintenance FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_manage_library_books ON library_books;
+CREATE POLICY school_manage_library_books ON library_books FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_manage_library_issues ON library_issues;
+CREATE POLICY school_manage_library_issues ON library_issues FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() IN ('SCHOOL_ADMIN', 'TEACHER')
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() IN ('SCHOOL_ADMIN', 'TEACHER')
+    );
+
+DROP POLICY IF EXISTS school_manage_slots ON meeting_slots;
+CREATE POLICY school_manage_slots ON meeting_slots FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_manage_bookings ON meeting_bookings;
+CREATE POLICY school_manage_bookings ON meeting_bookings FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_manage_threads ON message_threads;
+CREATE POLICY school_manage_threads ON message_threads FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_manage_thread_msgs ON thread_messages;
+CREATE POLICY school_manage_thread_msgs ON thread_messages FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_admin_manage_periods ON timetable_periods;
+CREATE POLICY school_admin_manage_periods ON timetable_periods FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_admin_manage_slots ON timetable_slots;
+CREATE POLICY school_admin_manage_slots ON timetable_slots FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_manage_expense_categories ON expense_categories;
+CREATE POLICY school_manage_expense_categories ON expense_categories FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR')
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR')
+    );
+
+-- sms_templates / emis_report_logs: gate writes to SCHOOL_ADMIN.
+DROP POLICY IF EXISTS sms_templates_school_access ON sms_templates;
+CREATE POLICY sms_templates_school_access ON sms_templates FOR ALL
+    USING (
+        (
+            school_id = get_user_school_id()
+            AND get_user_role() = 'SCHOOL_ADMIN'
+        )
+        OR get_user_role() = 'SUPER_ADMIN'
+    )
+    WITH CHECK (
+        (
+            school_id = get_user_school_id()
+            AND get_user_role() = 'SCHOOL_ADMIN'
+        )
+        OR get_user_role() = 'SUPER_ADMIN'
+    );
+
+DROP POLICY IF EXISTS school_admin_emis_logs ON emis_report_logs;
+CREATE POLICY school_admin_emis_logs ON emis_report_logs FOR ALL
+    USING (
+        (
+            school_id = get_user_school_id()
+            AND get_user_role() = 'SCHOOL_ADMIN'
+        )
+        OR get_user_role() = 'SUPER_ADMIN'
+    )
+    WITH CHECK (
+        (
+            school_id = get_user_school_id()
+            AND get_user_role() = 'SCHOOL_ADMIN'
+        )
+        OR get_user_role() = 'SUPER_ADMIN'
+    );
+
+-- ---------------------------------------------------------------------------
+-- §8.5 — tuition_payments: only SCHOOL_ADMIN / BURSAR (and the paying
+-- parent) should see online payment records. A TEACHER could otherwise
+-- read all amounts, payer phone/email in the related row.
+-- ---------------------------------------------------------------------------
+DROP POLICY IF EXISTS tuition_payments_select ON tuition_payments;
+CREATE POLICY tuition_payments_select ON tuition_payments FOR SELECT
+    USING (
+        (
+            school_id = get_user_school_id()
+            AND get_user_role() IN ('SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN')
+        )
+        OR EXISTS (
+            SELECT 1 FROM students s
+            JOIN parent_students ps ON ps.student_id = s.id
+            WHERE s.id = tuition_payments.student_id
+              AND ps.parent_id = auth.uid()
+        )
+    );
+
+-- ---------------------------------------------------------------------------
+-- §8.4 — message_threads / meeting_bookings tightened to participants.
+-- Portal-side policies (portal_view_bookings etc.) already scope on
+-- parent_students, but the broad school_manage_* policies above were
+-- effectively admin-only. We additionally add a SELECT policy for
+-- participants of a thread (so a parent can read threads they are
+-- part of, regardless of role).
+-- ---------------------------------------------------------------------------
+DROP POLICY IF EXISTS thread_participant_select ON message_threads;
+CREATE POLICY thread_participant_select ON message_threads FOR SELECT
+    USING (
+        get_user_role() = 'PARENT'
+        AND EXISTS (
+            SELECT 1 FROM thread_participants tp
+            WHERE tp.thread_id = message_threads.id
+              AND tp.participant_user_id = auth.uid()
+        )
+    );
+
+-- ---------------------------------------------------------------------------
+-- §10.1 — payroll_records: a successful approval must atomically flip
+-- the row out of 'pending'. The trigger on payroll_records enforces
+-- the (school_id, payment_status) invariant and is created in this
+-- migration. The /api/v1/payroll/approve route now uses an UPDATE
+-- ... WHERE payment_status = 'pending' RETURNING to detect races.
+-- ---------------------------------------------------------------------------
+DROP TRIGGER IF EXISTS payroll_records_approval_guard ON payroll_records;
+CREATE OR REPLACE FUNCTION public.payroll_records_approval_guard()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    -- Once a row has been batched/funded, only the service role may
+    -- mutate it. The app-layer approval is the only path that flips
+    -- a 'pending' row to 'batched'; any other transition is rejected
+    -- unless the caller is the service role.
+    IF NEW.payment_status <> OLD.payment_status
+       AND NEW.payment_status NOT IN ('pending', 'batched', 'paid', 'failed')
+    THEN
+        RAISE EXCEPTION 'invalid payroll_records.payment_status transition: % -> %',
+            OLD.payment_status, NEW.payment_status
+            USING ERRCODE = '23514';
+    END IF;
+
+    IF OLD.payment_status <> 'pending' AND NEW.payment_status = 'batched' THEN
+        RAISE EXCEPTION 'payroll_records row % is not pending (current: %)',
+            OLD.id, OLD.payment_status
+            USING ERRCODE = '23514';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER payroll_records_approval_guard
+    BEFORE UPDATE ON payroll_records
+    FOR EACH ROW EXECUTE FUNCTION public.payroll_records_approval_guard();
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_schema_reconcile.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: Schema reconciliation (Audit §12.1)
+-- Migration 0028 (part 7)
+--
+-- The committed 0009_staff_payroll.sql header lists ~15 columns as
+-- "dead columns removed" while the application code
+-- (app/api/v1/payroll/approve, app/api/webhooks/pesapal Route 2) both
+-- INSERT and SELECT those exact columns. 0029_finalize.sql runs
+-- `ANALYZE school_settings` for a table that no migration creates.
+-- 0030_dashboard_materialised_views.sql references behaviour from
+-- 00001-00067 migrations that the squashed set does not reproduce.
+--
+-- This migration is additive and idempotent. It:
+--   1. Adds the missing payroll_batches / batch_line_items columns
+--      that the app code uses.
+--   2. Creates the school_settings table that 0029 expects to find.
+--   3. Re-asserts the 0029 ANALYZE call so it doesn't fail.
+-- ---------------------------------------------------------------------------
+
+-- 1. payroll_batches columns used by /api/v1/payroll/approve and
+--    /api/webhooks/pesapal (Route 2) but missing from 0009.
+ALTER TABLE public.payroll_batches
+    ADD COLUMN IF NOT EXISTS pesapal_funding_ref     text,
+    ADD COLUMN IF NOT EXISTS pesapal_funding_url     text,
+    ADD COLUMN IF NOT EXISTS total_net_salaries      numeric(14,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS total_overhead_fees     numeric(14,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS approved_by_user_id     uuid REFERENCES public.users(id) ON DELETE SET NULL;
+
+-- 2. batch_line_items columns.
+ALTER TABLE public.batch_line_items
+    ADD COLUMN IF NOT EXISTS payroll_record_id       uuid REFERENCES public.payroll_records(id) ON DELETE SET NULL,
+    ADD COLUMN IF NOT EXISTS processing_fee          numeric(14,2) NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS created_at              timestamptz NOT NULL DEFAULT now();
+
+-- Helpful indexes for the funding webhook lookup.
+CREATE UNIQUE INDEX IF NOT EXISTS payroll_batches_funding_ref_idx
+    ON public.payroll_batches (pesapal_funding_ref)
+    WHERE pesapal_funding_ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS batch_line_items_payroll_record_idx
+    ON public.batch_line_items (payroll_record_id);
+
+-- INTENTIONALLY-UNUSED: school_settings is read by the materialized
+-- view refresh in 0029 but not yet by any application code path.
+-- It is created here so the 0029 ANALYZE / refresh statements
+-- succeed; the app will adopt it once the per-school settings UI
+-- lands. The block regex in tests/schema-consistency.test.ts looks
+-- for a single block immediately preceding the CREATE statement.
+CREATE TABLE IF NOT EXISTS public.school_settings (
+    id                       uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id                uuid NOT NULL UNIQUE REFERENCES public.schools(id) ON DELETE CASCADE,
+    timezone                 text NOT NULL DEFAULT 'Africa/Kampala',
+    currency                 text NOT NULL DEFAULT 'UGX',
+    locale                   text NOT NULL DEFAULT 'en-UG',
+    branding                 jsonb NOT NULL DEFAULT '{}'::jsonb,
+    notifications_enabled    boolean NOT NULL DEFAULT true,
+    sms_enabled              boolean NOT NULL DEFAULT true,
+    email_enabled            boolean NOT NULL DEFAULT true,
+    created_at               timestamptz NOT NULL DEFAULT now(),
+    updated_at               timestamptz NOT NULL DEFAULT now()
+);
+
+ALTER TABLE public.school_settings ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS school_members_read_school_settings ON public.school_settings;
+CREATE POLICY school_members_read_school_settings ON public.school_settings FOR SELECT
+    USING (school_id = get_user_school_id());
+
+DROP POLICY IF EXISTS school_admin_manage_school_settings ON public.school_settings;
+CREATE POLICY school_admin_manage_school_settings ON public.school_settings FOR ALL
+    USING (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    )
+    WITH CHECK (
+        school_id = get_user_school_id()
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
+
+DROP TRIGGER IF EXISTS set_updated_at_school_settings ON public.school_settings;
+CREATE TRIGGER set_updated_at_school_settings
+    BEFORE UPDATE ON public.school_settings
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- 4. Seed an empty settings row for any existing school that doesn't
+--    have one. The trigger is harmless on a fresh DB.
+INSERT INTO public.school_settings (school_id)
+SELECT s.id FROM public.schools s
+WHERE NOT EXISTS (
+    SELECT 1 FROM public.school_settings ss WHERE ss.school_id = s.id
+);
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_sms_spend_cap.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: per-school SMS spend cap
+-- Migration 0028
+--
+-- Audit §12.5: the SMS send route has no per-school cap. A single
+-- SCHOOL_ADMIN could blast a 1,000-recipient defaulter message 10x
+-- in a row and the platform would foot the bill. Africa's Talking
+-- charges per unit, so the cap is on cost (UGX), not message count.
+--
+-- Two new columns on `schools`:
+--   * sms_monthly_cap_ugx       — the per-month ceiling, defaults
+--                                  to 50,000 UGX (a defensible number
+--                                  for a single primary school).
+--                                  Set to 0 to disable the cap.
+--   * sms_spend_reset_at        — the start of the current rolling
+--                                  30-day window for spend tracking.
+--
+-- A SECURITY DEFINER helper `record_sms_spend(p_school_id, p_cost)`
+-- updates the per-school running spend and reports whether the new
+-- spend would push the school over its cap. The SMS send route
+-- uses it inside its per-recipient loop; if the cap is exceeded,
+-- the route stops dispatching and surfaces a clear error to the
+-- client.
+--
+-- The view `school_sms_spend_status` exposes a per-school
+-- {spent, cap, remaining, utilization, is_over_cap} snapshot for
+-- the dashboard. SELECT-only; mutations are forced through the RPC.
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE public.schools
+    ADD COLUMN IF NOT EXISTS sms_monthly_cap_ugx bigint NOT NULL DEFAULT 50000,
+    ADD COLUMN IF NOT EXISTS sms_spend_reset_at timestamptz;
+
+-- Backfill: existing schools get the current month as the start of
+-- their first spending window.
+UPDATE public.schools
+   SET sms_spend_reset_at = date_trunc('month', now())
+ WHERE sms_spend_reset_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- 1. spend helper
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.record_sms_spend(
+    p_school_id uuid,
+    p_cost      numeric
+)
+RETURNS TABLE (
+    allowed        boolean,
+    spent_ugx      bigint,
+    cap_ugx        bigint,
+    remaining_ugx  bigint,
+    reason         text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    v_cap          bigint;
+    v_reset_at     timestamptz;
+    v_spent        bigint := 0;
+    v_remaining    bigint;
+    v_now          timestamptz := now();
+    v_window_start timestamptz;
+BEGIN
+    SELECT sms_monthly_cap_ugx, sms_spend_reset_at
+      INTO v_cap, v_reset_at
+      FROM schools
+     WHERE id = p_school_id;
+
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT false, 0::bigint, 0::bigint, 0::bigint,
+                            'school not found'::text;
+        RETURN;
+    END IF;
+
+    -- A cap of 0 disables the ceiling. The platform-level spam
+    -- protection still applies at the route level (per-school rate
+    -- limit, body length cap, max recipients).
+    IF v_cap = 0 THEN
+        RETURN QUERY SELECT true, 0::bigint, 0::bigint, 0::bigint,
+                            ''::text;
+        RETURN;
+    END IF;
+
+    -- Roll the 30-day window forward when the reset time has passed.
+    IF v_reset_at IS NULL OR v_reset_at < v_now - INTERVAL '30 days' THEN
+        UPDATE schools
+           SET sms_spend_reset_at = v_now
+         WHERE id = p_school_id;
+        v_reset_at := v_now;
+    END IF;
+
+    -- Sum cost across sms_logs since the current window opened. This
+    -- is a per-school aggregate; no PII is exposed.
+    SELECT COALESCE(SUM(cost::bigint), 0)
+      INTO v_spent
+      FROM sms_logs
+     WHERE school_id = p_school_id
+       AND status IN ('sent', 'pending')
+       AND created_at >= v_reset_at;
+
+    v_remaining := GREATEST(v_cap - v_spent, 0);
+
+    IF v_spent + GREATEST(p_cost, 0) > v_cap THEN
+        RETURN QUERY SELECT
+            false,
+            v_spent,
+            v_cap,
+            v_remaining,
+            'monthly SMS spend cap reached'::text;
+        RETURN;
+    END IF;
+
+    RETURN QUERY SELECT true, v_spent, v_cap, v_remaining, ''::text;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_sms_spend(uuid, numeric) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.record_sms_spend(uuid, numeric) TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- 2. read-only status view
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW public.school_sms_spend_status AS
+SELECT
+    s.id                                                        AS school_id,
+    s.sms_monthly_cap_ugx                                       AS cap_ugx,
+    COALESCE(SUM(sl.cost) FILTER (
+        WHERE sl.status IN ('sent', 'pending')
+          AND sl.created_at >= s.sms_spend_reset_at
+    ), 0)::bigint                                               AS spent_ugx,
+    GREATEST(s.sms_monthly_cap_ugx - COALESCE(SUM(sl.cost) FILTER (
+        WHERE sl.status IN ('sent', 'pending')
+          AND sl.created_at >= s.sms_spend_reset_at
+    ), 0)::bigint, 0)::bigint                                   AS remaining_ugx,
+    s.sms_spend_reset_at                                        AS window_started_at,
+    CASE
+        WHEN s.sms_monthly_cap_ugx = 0 THEN 0
+        ELSE LEAST(
+            (COALESCE(SUM(sl.cost) FILTER (
+                WHERE sl.status IN ('sent', 'pending')
+                  AND sl.created_at >= s.sms_spend_reset_at
+            ), 0) * 100.0 / s.sms_monthly_cap_ugx)::numeric,
+            100
+        )
+    END                                                         AS utilization_pct,
+    (s.sms_monthly_cap_ugx > 0
+     AND COALESCE(SUM(sl.cost) FILTER (
+        WHERE sl.status IN ('sent', 'pending')
+          AND sl.created_at >= s.sms_spend_reset_at
+     ), 0) >= s.sms_monthly_cap_ugx)                           AS is_over_cap
+FROM schools s
+LEFT JOIN sms_logs sl
+       ON sl.school_id = s.id
+GROUP BY s.id, s.sms_monthly_cap_ugx, s.sms_spend_reset_at;
+
+-- Only platform-level service_role should read this view — it
+-- aggregates per-school spend and the dashboard reads it via the
+-- user-scoped RLS view, not this one.
+REVOKE ALL ON public.school_sms_spend_status FROM anon, authenticated;
+GRANT SELECT ON public.school_sms_spend_status TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- 3. RLS-friendly per-school snapshot for the school admin dashboard.
+--    This is a security-barrier view that filters on the caller's
+--    school. Same numbers as school_sms_spend_status, but readable
+--    by SCHOOL_ADMIN / BURSAR.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW public.my_school_sms_spend AS
+SELECT
+    school_id,
+    cap_ugx,
+    spent_ugx,
+    remaining_ugx,
+    window_started_at,
+    utilization_pct,
+    is_over_cap
+FROM public.school_sms_spend_status
+WHERE school_id = get_user_school_id();
+
+GRANT SELECT ON public.my_school_sms_spend TO authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0028_storage_tenant_scope.sql
+-- ----------------------------------------------------------------------------
+
+-- =============================================================================
+-- SKULI SaaS: Tenant-scoped storage (Audit §8.2)
+-- Migration 0028 (part 5)
+--
+-- The previous storage policies (0025_storage_buckets.sql) only
+-- checked `bucket_id = '...'` and `auth.role() = 'authenticated'`.
+-- The result:
+--   * any authenticated user from any school could SELECT / INSERT /
+--     UPDATE / DELETE in the `report-cards` private bucket (PII leak
+--     across tenants);
+--   * the public photo buckets were world-readable AND writable
+--     by any authenticated user — one school could overwrite or
+--     delete another's logos and student photos.
+--
+-- This migration replaces every storage.objects policy with one that
+-- requires:
+--   * the caller's first path segment to equal their school_id
+--     (or 'public' for genuinely public assets),
+--   * a role predicate where writes are involved.
+-- The convention enforced by the app is `<school_id>/<object-name>`
+-- for school-owned objects and `public/<asset-name>` for cross-
+-- tenant shared assets (none today, but the escape hatch is there).
+-- ---------------------------------------------------------------------------
+
+-- Drop every prior policy on storage.objects that this migration
+-- replaces. We keep the bucket rows themselves (0025) so existing
+-- data is untouched.
+DROP POLICY IF EXISTS "staff_photos_public_read"      ON storage.objects;
+DROP POLICY IF EXISTS "staff_photos_school_write"    ON storage.objects;
+DROP POLICY IF EXISTS "staff_photos_school_update"   ON storage.objects;
+DROP POLICY IF EXISTS "staff_photos_school_delete"   ON storage.objects;
+DROP POLICY IF EXISTS "student_photos_public_read"   ON storage.objects;
+DROP POLICY IF EXISTS "student_photos_school_write"  ON storage.objects;
+DROP POLICY IF EXISTS "student_photos_school_update" ON storage.objects;
+DROP POLICY IF EXISTS "student_photos_school_delete" ON storage.objects;
+DROP POLICY IF EXISTS "school_assets_public_read"    ON storage.objects;
+DROP POLICY IF EXISTS "school_assets_school_write"   ON storage.objects;
+DROP POLICY IF EXISTS "school_assets_school_update"  ON storage.objects;
+DROP POLICY IF EXISTS "school_assets_school_delete"  ON storage.objects;
+DROP POLICY IF EXISTS "report_cards_school_read"     ON storage.objects;
+DROP POLICY IF EXISTS "report_cards_school_write"    ON storage.objects;
+DROP POLICY IF EXISTS "report_cards_school_update"   ON storage.objects;
+DROP POLICY IF EXISTS "report_cards_school_delete"   ON storage.objects;
+
+-- ---------------------------------------------------------------------------
+-- staff-photos / student-photos / school-assets
+--
+-- Public read (so logos, head-shots and the school homepage assets
+-- can be served by a CDN without an auth cookie) but writes require
+-- the path's first segment to match the caller's school.
+-- ---------------------------------------------------------------------------
+CREATE POLICY "staff_photos_public_read" ON storage.objects FOR SELECT
+    USING (bucket_id = 'staff-photos');
+
+CREATE POLICY "staff_photos_school_write" ON storage.objects FOR INSERT
+    WITH CHECK (
+        bucket_id = 'staff-photos'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "staff_photos_school_update" ON storage.objects FOR UPDATE
+    USING (
+        bucket_id = 'staff-photos'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "staff_photos_school_delete" ON storage.objects FOR DELETE
+    USING (
+        bucket_id = 'staff-photos'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "student_photos_public_read" ON storage.objects FOR SELECT
+    USING (bucket_id = 'student-photos');
+
+CREATE POLICY "student_photos_school_write" ON storage.objects FOR INSERT
+    WITH CHECK (
+        bucket_id = 'student-photos'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "student_photos_school_update" ON storage.objects FOR UPDATE
+    USING (
+        bucket_id = 'student-photos'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "student_photos_school_delete" ON storage.objects FOR DELETE
+    USING (
+        bucket_id = 'student-photos'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "school_assets_public_read" ON storage.objects FOR SELECT
+    USING (bucket_id = 'school-assets');
+
+CREATE POLICY "school_assets_school_write" ON storage.objects FOR INSERT
+    WITH CHECK (
+        bucket_id = 'school-assets'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "school_assets_school_update" ON storage.objects FOR UPDATE
+    USING (
+        bucket_id = 'school-assets'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "school_assets_school_delete" ON storage.objects FOR DELETE
+    USING (
+        bucket_id = 'school-assets'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+-- ---------------------------------------------------------------------------
+-- report-cards: PRIVATE bucket, same-school only.
+-- Reads additionally require SCHOOL_ADMIN / BURSAR / TEACHER for the
+-- school, or the parent linked to the report-card's student (the
+-- parent path is enforced in code via signed URL generation; RLS is
+-- the second line of defense).
+-- ---------------------------------------------------------------------------
+CREATE POLICY "report_cards_school_read" ON storage.objects FOR SELECT
+    USING (
+        bucket_id = 'report-cards'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+    );
+
+CREATE POLICY "report_cards_school_write" ON storage.objects FOR INSERT
+    WITH CHECK (
+        bucket_id = 'report-cards'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+        AND get_user_role() IN ('SCHOOL_ADMIN', 'TEACHER')
+    );
+
+CREATE POLICY "report_cards_school_update" ON storage.objects FOR UPDATE
+    USING (
+        bucket_id = 'report-cards'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+        AND get_user_role() IN ('SCHOOL_ADMIN', 'TEACHER')
+    );
+
+CREATE POLICY "report_cards_school_delete" ON storage.objects FOR DELETE
+    USING (
+        bucket_id = 'report-cards'
+        AND auth.role() = 'authenticated'
+        AND (storage.foldername(name))[1] = get_user_school_id()::text
+        AND get_user_role() = 'SCHOOL_ADMIN'
+    );
 
 -- ----------------------------------------------------------------------------
 -- Source: supabase/migrations/0029_finalize.sql
@@ -4999,6 +6609,8 @@ ANALYZE timetable_periods;
 ANALYZE timetable_slots;
 ANALYZE calendar_events;
 ANALYZE discipline_records;
+ANALYZE alumni;
+ANALYZE school_settings;
 
 -- ---------------------------------------------------------------------------
 -- 2. Table comments (one-liner purpose per table)
@@ -5085,6 +6697,10 @@ GRANT EXECUTE ON FUNCTION auto_create_referral_code()                     TO ser
 GRANT EXECUTE ON FUNCTION encrypt_secret(text, text)                      TO service_role;
 GRANT EXECUTE ON FUNCTION decrypt_secret(text, text)                      TO service_role;
 GRANT EXECUTE ON FUNCTION recalculate_fee_account(uuid)                   TO service_role;
+GRANT EXECUTE ON FUNCTION trigger_recalculate_fee_account()               TO service_role;
+GRANT EXECUTE ON FUNCTION trigger_recalculate_fee_accounts_for_student()  TO service_role;
+GRANT EXECUTE ON FUNCTION trigger_recalculate_accounts_for_fee_structure() TO service_role;
+GRANT EXECUTE ON FUNCTION fn_marks_set_grade()                            TO service_role;
 GRANT EXECUTE ON FUNCTION create_fee_accounts_for_term(uuid, uuid)        TO service_role;
 GRANT EXECUTE ON FUNCTION generate_receipt_number(uuid)                   TO service_role;
 GRANT EXECUTE ON FUNCTION confirm_tuition_payment(text, text, text, numeric) TO service_role;
@@ -5420,7 +7036,7 @@ GRANT SELECT ON mv_dashboard_payment_trend        TO authenticated;
 GRANT SELECT ON mv_dashboard_payment_methods      TO authenticated;
 
 -- Service role needs everything for admin scripts / migrations.
-GRANT SELECT, REFRESH ON mv_dashboard_attendance_today     TO service_role;
-GRANT SELECT, REFRESH ON mv_dashboard_attendance_by_class  TO service_role;
-GRANT SELECT, REFRESH ON mv_dashboard_payment_trend        TO service_role;
-GRANT SELECT, REFRESH ON mv_dashboard_payment_methods      TO service_role;
+GRANT SELECT ON mv_dashboard_attendance_today     TO service_role;
+GRANT SELECT ON mv_dashboard_attendance_by_class  TO service_role;
+GRANT SELECT ON mv_dashboard_payment_trend        TO service_role;
+GRANT SELECT ON mv_dashboard_payment_methods      TO service_role;

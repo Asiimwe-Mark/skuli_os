@@ -82,14 +82,16 @@ vi.mock("@/lib/api-helpers", async () => {
   };
 });
 
-// Reset the cache between tests so the underlying DB function is
-// actually called and eqCalls is populated. Without this, the second
-// test gets a cache hit from the first test and eqCalls stays empty.
+import { NextRequest } from "next/server";
 import { __resetCacheForTests } from "@/lib/api-cache";
 import { GET } from "@/app/api/fees/accounts/route";
 
 function fakeGet(url: string) {
-  return new Request(url, { method: "GET" });
+  // The new `route()` wrapper reads `req.nextUrl.pathname` on every
+  // error path. A bare `new Request(...)` cast does not populate
+  // `nextUrl`, so error-path tests would crash inside the wrapper.
+  // Build a real NextRequest from a real URL instead.
+  return new NextRequest(new Request(url, { method: "GET" }));
 }
 
 function setProfile(role = "SCHOOL_ADMIN", school_id: string | null = "s1") {
@@ -163,7 +165,7 @@ describe("GET /api/fees/accounts — class filter via SQL JOIN (audit 9.1)", () 
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.success).toBe(true);
-    expect(json.data.accounts).toEqual([{ id: "fa1" }]);
+    expect(json.data.items).toEqual([{ id: "fa1" }]);
     expect(json.data.total).toBe(42);
     expect(json.data.page).toBe(1);
     expect(json.data.limit).toBe(50);

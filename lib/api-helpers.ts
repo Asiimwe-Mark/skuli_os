@@ -88,28 +88,44 @@ export function requireRole(ctx: AuthContext, allowedRoles: string[]): void {
 }
 
 /**
- * Standard JSON success response.
- *
- * Cache-Control: private, max-age=30, stale-while-revalidate=60
+ * The single source of truth for the browser-cacheable Cache-Control
+ * value. Ordered HTTP(30) < Redis(60) < React Query(120) so the
+ * freshest layer always wins.
  *   - private: browser may cache; CDN must not (auth-scoped data)
  *   - max-age=30: serve from browser cache for 30 s
  *   - stale-while-revalidate=60: after 30 s, serve stale while
  *     revalidating in the background for up to 60 s
- *
- * This matches the server-side Redis cache revalidateSeconds (60 s) and
- * the React Query staleTime (2 min). The three layers form a coherent
- * caching stack: browser HTTP cache → server Redis → Postgres.
- *
- * Write endpoints (POST / PATCH / DELETE) return their own Response
- * and never call successResponse, so this header never reaches them.
  */
-export function successResponse<T>(data: T, status = 200) {
+export const CACHEABLE_CACHE_CONTROL =
+  "private, max-age=30, stale-while-revalidate=60";
+
+/**
+ * Standard JSON success response.
+ *
+ * SECURITY (Audit B2): defaults to `no-store`. Previously this helper
+ * unconditionally sent a cacheable header on *every* 200, so any GET
+ * that forgot to call setCacheHeader after withSchoolCache still let
+ * the browser cache auth-scoped data for 30 s with no Redis entry and
+ * no invalidation path — the browser and Redis layers could disagree.
+ *
+ * Callers that genuinely went through withSchoolCache and want the
+ * shared browser-cache window should pass `{ cacheable: true }`
+ * (or call setCacheHeader on the response). All other responses are
+ * not cached by the browser.
+ */
+export function successResponse<T>(
+  data: T,
+  status = 200,
+  opts?: { cacheable?: boolean },
+) {
   return Response.json(
     { success: true, data },
     {
       status,
       headers: {
-        "Cache-Control": "private, max-age=30, stale-while-revalidate=60",
+        "Cache-Control": opts?.cacheable
+          ? CACHEABLE_CACHE_CONTROL
+          : "no-store",
       },
     }
   );
@@ -241,4 +257,58 @@ function statusFromPgCode(code: string): number | undefined {
     case "42501":    return 403;
     default:         return undefined;
   }
+}
+
+/**
+ * Centralized route error handler (Audit §3.1 / §8.10).
+ *
+ * Routes that previously ended with:
+ *
+ *     const message = err instanceof Error ? err.message : "Internal server error";
+ *     return errorResponse(message, getErrorStatus(err));
+ *
+ * leaked the raw exception text to the client. That included internal
+ * PostgREST messages, stack fragments surfaced by the SDK, and any
+ * `details`/`hint` Supabase included. Attackers used this surface to
+ * fingerprint schema (e.g. "duplicate key value violates unique
+ * constraint fee_payments_mm_tx_id_unique") and to confirm
+ * cross-tenant write attempts.
+ *
+ * This helper:
+ *   - logs the full error server-side (with a route tag for filtering),
+ *   - sends it to Sentry with the same context,
+ *   - resolves the HTTP status from PostgREST codes via getErrorStatus,
+ *   - returns a *generic* message to the client. Callers that need to
+ *     opt into a custom client message can pass it as the second
+ *     argument; otherwise "Internal server error" is used.
+ */
+export function handleRouteError(
+  err: unknown,
+  route: string,
+  ctx?: {
+    school_id?: string | null;
+    user_id?: string | null;
+  },
+  clientMessage = "Internal server error",
+): Response {
+  const status = getErrorStatus(err);
+  const detail =
+    err instanceof Error
+      ? `${err.name}: ${err.message}`
+      : typeof err === "string"
+        ? err
+        : "unknown error";
+  console.error(`[${route}] ${detail}`);
+  captureException(err, {
+    level: "error",
+    tags: { route },
+    extra: {
+      detail,
+      status,
+    },
+    school_id: ctx?.school_id ?? null,
+    user_id: ctx?.user_id ?? null,
+    route,
+  });
+  return Response.json({ success: false, error: clientMessage }, { status });
 }

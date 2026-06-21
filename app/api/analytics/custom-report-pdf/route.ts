@@ -1,12 +1,5 @@
-import { NextRequest } from "next/server";
 import React from "react";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  errorResponse,
-  dbError,
-  getErrorStatus } from "@/lib/api-helpers";
+import { route, errorResponse, dbError } from "@/lib/http";
 import { renderToBuffer } from "@react-pdf/renderer";
 import { CustomReportPDF } from "@/lib/pdf/custom-report";
 
@@ -55,21 +48,27 @@ const SOURCE_FIELDS: Record<string, FieldDef[]> = {
     { key: "payment_date", label: "Date", select: "payment_date", type: "date" },
     { key: "receipt_number", label: "Receipt #", select: "receipt_number", type: "string" },
     { key: "status", label: "Status", select: "status", type: "string" },
-  ] };
+  ],
+};
 
 const SOURCE_TABLE: Record<string, { table: string; select: string }> = {
   "students-fees": {
     table: "fee_accounts",
-    select: "total_expected, total_paid, balance, status, students(full_name, admission_number, gender, parent_phone, current_class:classes(name))" },
+    select: "total_expected, total_paid, balance, status, students(full_name, admission_number, gender, parent_phone, current_class:classes(name))",
+  },
   academics: {
     table: "marks",
-    select: "exam_type, score, max_score, students(full_name), classes(name), subjects(name)" },
+    select: "exam_type, score, max_score, students(full_name), classes(name), subjects(name)",
+  },
   attendance: {
     table: "attendance_records",
-    select: "date, status, notes, students(full_name, admission_number), classes(name)" },
+    select: "date, status, notes, students(full_name, admission_number), classes(name)",
+  },
   payments: {
     table: "fee_payments",
-    select: "amount, payment_method, payment_date, receipt_number, status, students(full_name, admission_number)" } };
+    select: "amount, payment_method, payment_date, receipt_number, status, students(full_name, admission_number)",
+  },
+};
 
 interface ReportConfig {
   source: string;
@@ -81,12 +80,13 @@ interface ReportConfig {
   sort_dir?: "asc" | "desc";
 }
 
-function validateConfig(config: any): config is ReportConfig {
+function validateConfig(config: unknown): config is ReportConfig {
   if (!config || typeof config !== "object") return false;
-  if (!SOURCE_FIELDS[config.source]) return false;
-  if (!Array.isArray(config.columns) || config.columns.length === 0) return false;
-  const allowedKeys = SOURCE_FIELDS[config.source].map((f) => f.key);
-  for (const col of config.columns) {
+  const c = config as Partial<ReportConfig>;
+  if (!c.source || !SOURCE_FIELDS[c.source]) return false;
+  if (!Array.isArray(c.columns) || c.columns.length === 0) return false;
+  const allowedKeys = SOURCE_FIELDS[c.source].map((f) => f.key);
+  for (const col of c.columns) {
     if (!allowedKeys.includes(col)) return false;
   }
   return true;
@@ -94,11 +94,10 @@ function validateConfig(config: any): config is ReportConfig {
 
 // --- Handler -----------------------------------------------------------------
 
-export async function GET(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+export const GET = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  handler: async (ctx, request) => {
+    const schoolId = ctx.profile.school_id!;
 
     const { searchParams } = new URL(request.url);
     const configParam = searchParams.get("config");
@@ -189,16 +188,17 @@ export async function GET(request: NextRequest) {
         dateFrom: config.date_from,
         dateTo: config.date_to,
         data: data || [],
-        fieldDefs }))
+        fieldDefs,
+      }))
     );
 
+    // Migration guide §7.3: PDF routes return a binary Response that
+    // the wrapper passes through unchanged.
     return new Response(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="report-${config.source}-${new Date().toISOString().split("T")[0]}.pdf"` } });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status = getErrorStatus(err);
-    return errorResponse(message, status);
-  }
-}
+        "Content-Disposition": `attachment; filename="report-${config.source}-${new Date().toISOString().split("T")[0]}.pdf"`,
+      },
+    });
+  },
+});

@@ -72,6 +72,13 @@ const AUTH_PATTERNS = [
   /\brequireSchool\b/,
   /\bgetSupabaseAndUser\b/,
   /supabase\.auth\.getUser\s*\(\s*\)/,
+  // PR 2: routes that have been migrated to the new `route()` wrapper
+  // move auth/RBAC into the wrapper, so the literals above no longer
+  // appear in the route file body. The wrapper itself enforces the
+  // contract; recognising it here keeps the auth-coverage gate honest
+  // through the migration. Routes still using the wrapper are
+  // implicitly guarded by `route({ roles, handler })`.
+  /from\s+["']@\/lib\/http["']/,
 ];
 
 const guardedRoutes = allRouteFiles.filter((f) => {

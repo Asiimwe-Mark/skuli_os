@@ -2,35 +2,67 @@
 // Accepts optional phone from body (falls back to student.parent_phone).
 // Looks up fee_account_id for the payment record.
 // See also: /api/payments/stk-push for the parent-portal variant.
-import { NextRequest } from "next/server";
+import { z } from "zod";
 import type { Database } from "@/types/database";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-} from "@/lib/api-helpers";
+import { route, errorResponse } from "@/lib/http";
 import { getSchoolCredentials } from "@/lib/africas-talking/client";
 import { requestMobileMoneyPayment } from "@/lib/africas-talking/mobile-money";
-import { detectMobileMoneyProvider } from "@/lib/utils/phone";
+import { detectMobileMoneyProvider, sanitizePhoneForPayment } from "@/lib/utils/phone";
+import { checkRateLimitAsync } from "@/lib/utils/rate-limit";
+import { generateReceiptNumber } from "@/lib/utils/receipt-number";
 
-export async function POST(request: NextRequest) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"]);
+// Audit §1.3: hard ceiling on a single STK-push. Caps blast radius if
+// the route is ever hit with a tampered body. Matches the existing
+// cap used by /api/v1/payments/initiate.
+const MAX_STK_PUSH_AMOUNT_UGX = 50_000_000;
 
-    const body = await request.json();
-    const { student_id, fee_account_id, amount, phone } = body;
+const stkPushSchema = z.object({
+  student_id: z.string().uuid(),
+  fee_account_id: z.string().uuid(),
+  amount: z
+    .number({ message: "amount must be a number" })
+    .positive("amount must be greater than zero")
+    .max(
+      MAX_STK_PUSH_AMOUNT_UGX,
+      `amount exceeds the per-transaction cap of ${MAX_STK_PUSH_AMOUNT_UGX} UGX`,
+    )
+    .finite(),
+  phone: z.string().min(7).max(20),
+});
 
-    if (!student_id || !amount || amount <= 0 || !phone || !fee_account_id) {
-      return errorResponse("student_id, phone, fee_account_id, and a positive amount are required", 400);
+export const POST = route({
+  roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
+  schema: stkPushSchema,
+  handler: async (ctx, body) => {
+    const schoolId = ctx.profile.school_id!;
+
+    // Audit §5.2: rate-limit financial endpoints. Same fail-closed
+    // posture as v1/payments/initiate.
+    const rl = await checkRateLimitAsync(
+      `stk-push:${schoolId}`,
+      30,
+      10 * 60 * 1000,
+    );
+    if (!rl.success) {
+      return errorResponse(
+        "Too many STK-push requests in a short window. Please wait.",
+        429,
+      );
     }
 
+    const { student_id, fee_account_id, amount, phone } = body;
     const supabase = ctx.supabase;
 
-    // Verify student belongs to this school
+    // Validate the phone number format before we send anything.
+    let normalizedPhone: string;
+    try {
+      normalizedPhone = sanitizePhoneForPayment(phone);
+    } catch {
+      return errorResponse("Invalid phone number", 400);
+    }
+
+    // §1.3: verify student belongs to this school AND the
+    // fee_account_id belongs to the student.
     const { data: student, error: studentError } = await supabase
       .from("students")
       .select("id, full_name, parent_phone")
@@ -41,6 +73,22 @@ export async function POST(request: NextRequest) {
 
     if (studentError || !student) {
       return errorResponse("Student not found in this school", 404);
+    }
+
+    const { data: feeAccount, error: feeAccountError } = await supabase
+      .from("fee_accounts")
+      .select("id, student_id, school_id")
+      .eq("id", fee_account_id)
+      .maybeSingle();
+
+    if (feeAccountError || !feeAccount) {
+      return errorResponse("Fee account not found", 404);
+    }
+    if (feeAccount.student_id !== student_id) {
+      return errorResponse("Fee account does not belong to the student", 400);
+    }
+    if (feeAccount.school_id !== schoolId) {
+      return errorResponse("Fee account does not belong to this school", 400);
     }
 
     // Get school's Africa's Talking credentials
@@ -63,8 +111,8 @@ export async function POST(request: NextRequest) {
     // Initiate STK push
     const result = await requestMobileMoneyPayment(
       {
-        phoneNumber: phone,
-        amount: Number(amount),
+        phoneNumber: normalizedPhone,
+        amount,
         currencyCode: "UGX",
         metadata: {
           student_id,
@@ -86,18 +134,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // §1.5 / §8.12: mint the receipt number from the DB function so
+    // we share one scheme with the webhook and the rest of the app.
+    const receiptNumber = await generateReceiptNumber(supabase, schoolId);
+
     // Create a pending payment record
     await supabase.from("fee_payments").insert({
       school_id: schoolId,
       student_id,
       fee_account_id,
-      amount: Number(amount),
+      amount,
       payment_method: "mobile_money",
-      mobile_money_provider: detectMobileMoneyProvider(phone),
-      phone_used: phone,
+      mobile_money_provider: detectMobileMoneyProvider(normalizedPhone),
+      phone_used: normalizedPhone,
       status: "pending",
       mobile_money_transaction_id: result.transactionId || null,
       received_by_user_id: ctx.user.id,
+      receipt_number: receiptNumber,
     } as unknown as Database["public"]["Tables"]["fee_payments"]["Insert"]);
 
     // Audit log
@@ -112,24 +165,17 @@ export async function POST(request: NextRequest) {
       new_value: {
         student_id,
         fee_account_id,
-        amount: Number(amount),
-        phone,
+        amount,
+        phone: normalizedPhone,
         transaction_id: result.transactionId,
       },
     } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
 
-    return successResponse({
+    return {
       transactionId: result.transactionId,
       status: result.status,
       description: result.description,
       message: "STK push sent. Waiting for payment confirmation.",
-    });
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    const status =
-      err instanceof Error && "status" in err
-        ? (err as { status: number }).status
-        : 500;
-    return errorResponse(message, status);
-  }
-}
+    };
+  },
+});

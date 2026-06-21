@@ -1,34 +1,35 @@
-import { NextRequest } from "next/server";
-import {
-  getSupabaseAndUser,
-  requireSchool,
-  requireRole,
-  successResponse,
-  errorResponse,
-  dbError,
-  AuthError,
-} from "@/lib/api-helpers";
 import type { Database } from "@/types/database";
+import { route, AuthError, dbError } from "@/lib/http";
 
-export async function PATCH(
-  req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
-) {
-  try {
-    const ctx = await getSupabaseAndUser();
-    const schoolId = requireSchool(ctx);
-    requireRole(ctx, ["SCHOOL_ADMIN", "TEACHER", "BURSAR"]);
+const patchSchema = {
+  status: ["pending", "confirmed", "cancelled", "completed"] as const,
+  notify_via: ["in_app", "sms"] as const,
+};
 
-    const { id } = await params;
-    const body = await req.json();
-    const { status, notify_via = "in_app" } = body;
+export const PATCH = route({
+  roles: ["SCHOOL_ADMIN", "TEACHER", "BURSAR"],
+  handler: async (ctx, request, params) => {
+    const schoolId = ctx.profile.school_id!;
+    const { id } = (params ?? {}) as { id: string };
+    const body = (await request.json().catch(() => ({}))) as {
+      status?: string;
+      notify_via?: string;
+    };
+    const status = body.status;
+    const notify_via = body.notify_via ?? "in_app";
 
-    if (!["pending", "confirmed", "cancelled", "completed"].includes(status)) {
-      return errorResponse("status must be confirmed, cancelled, or completed", 400);
+    if (
+      !status ||
+      !(patchSchema.status as readonly string[]).includes(status)
+    ) {
+      throw new AuthError(
+        "status must be confirmed, cancelled, or completed",
+        400,
+      );
     }
 
-    if (!["in_app", "sms"].includes(notify_via)) {
-      return errorResponse("notify_via must be in_app or sms", 400);
+    if (!(patchSchema.notify_via as readonly string[]).includes(notify_via)) {
+      throw new AuthError("notify_via must be in_app or sms", 400);
     }
 
     const { data: booking, error: bookErr } = await ctx.supabase
@@ -39,7 +40,7 @@ export async function PATCH(
       .maybeSingle();
 
     if (bookErr) return dbError(bookErr, "Failed to load booking");
-    if (!booking) return errorResponse("Booking not found", 404);
+    if (!booking) throw new AuthError("Booking not found", 404);
 
     const { data, error } = await ctx.supabase
       .from("meeting_bookings")
@@ -64,13 +65,13 @@ export async function PATCH(
       .maybeSingle();
 
     const teacherName = slot
-      ? (slot.teacher as unknown as { full_name?: string } | null)?.full_name ?? "your teacher"
+      ? (slot.teacher as unknown as { full_name?: string } | null)
+          ?.full_name ?? "your teacher"
       : "your teacher";
     const slotDate = slot?.slot_date ?? "the scheduled date";
     const slotTime = slot?.start_time ?? "";
     const schoolName = school?.name ?? "";
 
-    // Look up parent user_id for in-app notifications
     let parentUserId: string | null = null;
     if (notify_via === "in_app" && booking.student_id) {
       const { data: parentLink } = await ctx.supabase
@@ -93,7 +94,7 @@ export async function PATCH(
           is_read: false,
           related_entity_type: "meeting_booking",
           related_entity_id: id,
-        } as Database['public']['Tables']['in_app_notifications']['Insert']);
+        } as Database["public"]["Tables"]["in_app_notifications"]["Insert"]);
       } else {
         await ctx.supabase.from("sms_logs").insert({
           school_id: booking.school_id,
@@ -106,7 +107,7 @@ export async function PATCH(
           sent_at: null,
           africa_talking_message_id: null,
           cost: null,
-        } as Database['public']['Tables']['sms_logs']['Insert']);
+        } as Database["public"]["Tables"]["sms_logs"]["Insert"]);
       }
     }
 
@@ -126,7 +127,7 @@ export async function PATCH(
           is_read: false,
           related_entity_type: "meeting_booking",
           related_entity_id: id,
-        } as Database['public']['Tables']['in_app_notifications']['Insert']);
+        } as Database["public"]["Tables"]["in_app_notifications"]["Insert"]);
       } else {
         await ctx.supabase.from("sms_logs").insert({
           school_id: booking.school_id,
@@ -139,14 +140,10 @@ export async function PATCH(
           sent_at: null,
           africa_talking_message_id: null,
           cost: null,
-        } as Database['public']['Tables']['sms_logs']['Insert']);
+        } as Database["public"]["Tables"]["sms_logs"]["Insert"]);
       }
     }
 
-    return successResponse(data);
-  } catch (e) {
-    if (e instanceof AuthError) return errorResponse(e.message, e.status);
-    console.error("PATCH /api/meetings/bookings/[id] error:", e);
-    return errorResponse("Internal server error", 500);
-  }
-}
+    return data;
+  },
+});

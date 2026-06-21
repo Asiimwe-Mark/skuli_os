@@ -115,9 +115,13 @@ vi.mock("@/lib/api-helpers", async () => {
 });
 
 import { GET as studentsGET } from "@/app/api/students/route";
+import { NextRequest } from "next/server";
 
 function fakeRequest(url = "http://test.local/") {
-  return new Request(url, { method: "GET" });
+  // The new `route()` wrapper reads `req.nextUrl.pathname` on every
+  // error path. A bare `new Request(...)` cast does not populate
+  // `nextUrl`, so error-path tests would crash inside the wrapper.
+  return new NextRequest(new Request(url, { method: "GET" }));
 }
 
 function setProfile(role: string, school_id: string | null = "s1") {
@@ -140,7 +144,7 @@ describe("GET /api/students — TEACHER role guard (audit 3.4, 4.8)", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     // Teacher with no classes → empty list, total 0
-    expect(json.data.students).toEqual([]);
+    expect(json.data.items).toEqual([]);
     expect(json.data.total).toBe(0);
   });
 
