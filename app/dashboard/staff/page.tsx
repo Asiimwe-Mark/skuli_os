@@ -95,7 +95,8 @@ export default function StaffDirectoryPage() {
         .eq("is_deleted", false)
         .order("full_name");
       if (error) throw error;
-      return (data || []) as Staff[];
+      // Supabase returns a generic row type; cast via unknown to satisfy TypeScript
+      return (data || []) as unknown as Staff[];
     },
     enabled: !!school?.id,
   });

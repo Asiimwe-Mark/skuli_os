@@ -2,6 +2,7 @@ import type { Database } from "@/types/database";
 import { generateReportCardsSchema } from "@/lib/validations/marks";
 import "@/lib/utils/grades";
 import { route, errorResponse, dbError } from "@/lib/http";
+import { invalidateSchoolAsync } from "@/lib/api-cache";
 
 type StudentRow = Database["public"]["Tables"]["students"]["Row"];
 type MarkRow = Database["public"]["Tables"]["marks"]["Row"];
@@ -22,7 +23,6 @@ export const POST = route({
   roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
   schema: generateReportCardsSchema,
   handler: async (ctx, body) => {
-    const schoolId = ctx.profile.school_id!;
     const { class_id, term_id, academic_year_id } = body;
 
     // Verify class belongs to this school
@@ -30,7 +30,7 @@ export const POST = route({
       .from("classes")
       .select("id, name")
       .eq("id", class_id)
-      .eq("school_id", schoolId)
+      .eq("school_id", ctx.schoolId)
       .single() as unknown as { data: Pick<ClassRow, "id" | "name"> | null };
 
     if (!cls) {
@@ -54,7 +54,7 @@ export const POST = route({
     const { data: allMarks } = await ctx.supabase
       .from("marks")
       .select("student_id, subject_id, score, max_score, exam_type")
-      .eq("school_id", schoolId)
+      .eq("school_id", ctx.schoolId)
       .eq("class_id", class_id)
       .eq("term_id", term_id)
       .in("student_id", studentIds)
@@ -88,7 +88,7 @@ export const POST = route({
     await ctx.supabase
       .from("grading_scales")
       .select("grade, min_score, max_score, label")
-      .eq("school_id", schoolId)
+      .eq("school_id", ctx.schoolId)
       .eq("is_deleted", false)
       .order("sort_order");
 
@@ -170,7 +170,7 @@ export const POST = route({
 
     // Upsert report cards with grading scale-aware averages
     const reportCardRecords = studentResults.map((sr, index) => ({
-      school_id: schoolId,
+      school_id: ctx.schoolId,
       student_id: sr.studentId,
       term_id,
       academic_year_id,
@@ -190,7 +190,7 @@ export const POST = route({
 
     // Audit log
     await ctx.supabase.from("audit_logs").insert({
-      school_id: schoolId,
+      school_id: ctx.schoolId,
       user_id: ctx.user.id,
       action: "report_cards_generated",
       entity_type: "report_card",
@@ -202,8 +202,9 @@ export const POST = route({
         class_name: cls.name,
         students_processed: classSize,
       },
-      ip_address: null,
-    });
+    } as never);
+
+    void invalidateSchoolAsync(ctx.schoolId);
 
     return {
       report_cards: reportCards ?? [],

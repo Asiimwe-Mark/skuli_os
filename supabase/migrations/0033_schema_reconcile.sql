@@ -1,6 +1,6 @@
 -- =============================================================================
--- SKULI SaaS: Schema reconciliation (Audit §12.1)
--- Migration 0028 (part 7)
+-- SKULI SaaS: Schema reconciliation (Audit Â§12.1)
+-- Migration 0033 (originally 0028 part 7)
 --
 -- The committed 0009_staff_payroll.sql header lists ~15 columns as
 -- "dead columns removed" while the application code
@@ -79,7 +79,7 @@ CREATE POLICY school_admin_manage_school_settings ON public.school_settings FOR 
 DROP TRIGGER IF EXISTS set_updated_at_school_settings ON public.school_settings;
 CREATE TRIGGER set_updated_at_school_settings
     BEFORE UPDATE ON public.school_settings
-    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
 
 -- 4. Seed an empty settings row for any existing school that doesn't
 --    have one. The trigger is harmless on a fresh DB.

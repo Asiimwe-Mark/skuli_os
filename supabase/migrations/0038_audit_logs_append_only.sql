@@ -1,8 +1,8 @@
 -- =============================================================================
 -- SKULI SaaS: audit_logs append-only
--- Migration 0028
+-- Migration 0038 (originally 0028)
 --
--- Audit §8.6: audit_logs is a soft-delete table today (it has an
+-- Audit Â§8.6: audit_logs is a soft-delete table today (it has an
 -- is_deleted column and the set_updated_at trigger on it from
 -- 0023_triggers.sql). That gives any caller with the existing
 -- update policy two ways to rewrite history:
@@ -32,7 +32,7 @@ SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 BEGIN
-    -- service_role bypass — used by future archival / reaper jobs
+    -- service_role bypass â€” used by future archival / reaper jobs
     -- and by the migrations themselves.
     IF auth.uid() IS NULL THEN
         RETURN NULL;

@@ -1,6 +1,6 @@
 -- =============================================================================
--- SKULI SaaS: Lock EXECUTE on encrypt_secret / decrypt_secret (Audit §8.7 / §14.2)
--- Migration 0028 (part 9)
+-- SKULI SaaS: Lock EXECUTE on encrypt_secret / decrypt_secret (Audit Â§8.7 / Â§14.2)
+-- Migration 0043 (originally 0028 part 9)
 --
 -- 0026_grants.sql granted EXECUTE on every function in public to
 -- `anon, authenticated` and never revoked `encrypt_secret` /

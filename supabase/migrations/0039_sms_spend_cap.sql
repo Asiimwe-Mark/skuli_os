@@ -1,18 +1,18 @@
 -- =============================================================================
 -- SKULI SaaS: per-school SMS spend cap
--- Migration 0028
+-- Migration 0039 (originally 0028)
 --
--- Audit §12.5: the SMS send route has no per-school cap. A single
+-- Audit Â§12.5: the SMS send route has no per-school cap. A single
 -- SCHOOL_ADMIN could blast a 1,000-recipient defaulter message 10x
 -- in a row and the platform would foot the bill. Africa's Talking
 -- charges per unit, so the cap is on cost (UGX), not message count.
 --
 -- Two new columns on `schools`:
---   * sms_monthly_cap_ugx       — the per-month ceiling, defaults
+--   * sms_monthly_cap_ugx       â€” the per-month ceiling, defaults
 --                                  to 50,000 UGX (a defensible number
 --                                  for a single primary school).
 --                                  Set to 0 to disable the cap.
---   * sms_spend_reset_at        — the start of the current rolling
+--   * sms_spend_reset_at        â€” the start of the current rolling
 --                                  30-day window for spend tracking.
 --
 -- A SECURITY DEFINER helper `record_sms_spend(p_school_id, p_cost)`
@@ -155,7 +155,7 @@ LEFT JOIN sms_logs sl
        ON sl.school_id = s.id
 GROUP BY s.id, s.sms_monthly_cap_ugx, s.sms_spend_reset_at;
 
--- Only platform-level service_role should read this view — it
+-- Only platform-level service_role should read this view â€” it
 -- aggregates per-school spend and the dashboard reads it via the
 -- user-scoped RLS view, not this one.
 REVOKE ALL ON public.school_sms_spend_status FROM anon, authenticated;

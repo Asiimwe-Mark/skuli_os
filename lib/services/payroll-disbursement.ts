@@ -108,7 +108,7 @@ export async function queueDisbursementBatch(batchId: string): Promise<void> {
       if (result.success) {
         const successUpdate: BatchLineItemUpdate = {
           disbursal_status: 'SUCCESS' as DisbursalStatus,
-          provider_receipt_id: result.trackingId ?? null,
+          ...(result.trackingId && { provider_receipt_id: result.trackingId }),
           disbursed_at: new Date().toISOString(),
           disbursal_attempts: item.disbursal_attempts + 1,
           last_error: null,

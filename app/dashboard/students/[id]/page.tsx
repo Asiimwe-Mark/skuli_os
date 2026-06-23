@@ -9,7 +9,11 @@ import { useSupabaseBrowser } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils/cn";
 import { formatDate } from "@/lib/utils/dates";
 import { formatUGX } from "@/lib/utils/currency";
-import { normalizePhone, isValidUgandaPhone, formatPhoneDisplay } from "@/lib/utils/phone";
+import {
+  normalizePhone,
+  isValidUgandaPhone,
+  formatPhoneDisplay,
+} from "@/lib/utils/phone";
 import { usePermissions } from "@/lib/hooks/usePermissions";
 import { DayPicker } from "react-day-picker";
 import "react-day-picker/dist/style.css";
@@ -83,7 +87,11 @@ const fadeInUp = {
   animate: { opacity: 1, y: 0 },
 };
 
-function AttendanceCalendar({ attendance }: { attendance: AttendanceRecord[] }) {
+function AttendanceCalendar({
+  attendance,
+}: {
+  attendance: AttendanceRecord[];
+}) {
   // Build map: date string -> status
   const attendanceMap = useMemo(() => {
     const map = new Map<string, AttendanceStatus>();
@@ -151,7 +159,7 @@ function AttendanceCalendar({ attendance }: { attendance: AttendanceRecord[] }) 
               <div
                 className={cn(
                   "rdp-day flex items-center justify-center",
-                  getDayClass(date)
+                  getDayClass(date),
                 )}
                 style={{ width: 40, height: 40 }}
               >
@@ -189,7 +197,9 @@ export default function StudentProfilePage() {
   const [payments, setPayments] = useState<FeePayment[]>([]);
   const [marks, setMarks] = useState<(Mark & { subject?: Subject })[]>([]);
   const [attendance, setAttendance] = useState<AttendanceRecord[]>([]);
-  const [terms, setTerms] = useState<(Term & { academic_years?: AcademicYear })[]>([]);
+  const [terms, setTerms] = useState<
+    (Term & { academic_years?: AcademicYear })[]
+  >([]);
   const [selectedTermId, setSelectedTermId] = useState<string>("");
 
   // Payment modal
@@ -204,7 +214,9 @@ export default function StudentProfilePage() {
   // Discount dialog
   const [discountOpen, setDiscountOpen] = useState(false);
   const [studentDiscounts, setStudentDiscounts] = useState<
-    (Tables<"student_discounts"> & { discount: Tables<"fee_discounts"> | null })[]
+    (Tables<"student_discounts"> & {
+      discount: Tables<"fee_discounts"> | null;
+    })[]
   >([]);
 
   // Edit form
@@ -229,7 +241,7 @@ export default function StudentProfilePage() {
 
     const { data, error } = await supabase
       .from("students")
-      .select("*, current_class:classes(id, name)")
+      .select("*, current_class:classes(*)")
       .eq("id", studentId)
       .single();
 
@@ -274,7 +286,9 @@ export default function StudentProfilePage() {
     if (!school) return;
     const { data } = await supabase
       .from("terms")
-      .select("id, name, start_date, end_date, is_current, school_id, academic_year_id, academic_years(id, name)")
+      .select(
+        "id, name, start_date, end_date, is_current, school_id, academic_year_id, academic_years(id, name)",
+      )
       .eq("school_id", school.id)
       .order("start_date", { ascending: false });
 
@@ -293,7 +307,9 @@ export default function StudentProfilePage() {
 
     const { data: account } = await supabase
       .from("fee_accounts")
-      .select("id, student_id, term_id, total_expected, total_paid, balance, status, created_at")
+      .select(
+        "id, student_id, term_id, total_expected, total_paid, balance, status, created_at",
+      )
       .eq("student_id", studentId)
       .eq("term_id", selectedTermId)
       .single();
@@ -303,7 +319,9 @@ export default function StudentProfilePage() {
     if (account) {
       const { data: paymentData } = await supabase
         .from("fee_payments")
-        .select("id, fee_account_id, amount, payment_date, payment_method, receipt_number, notes, created_at")
+        .select(
+          "id, fee_account_id, amount, payment_date, payment_method, receipt_number, notes, created_at",
+        )
         .eq("fee_account_id", account.id)
         .order("payment_date", { ascending: false });
 
@@ -315,10 +333,12 @@ export default function StudentProfilePage() {
     // Fetch student discounts
     const { data: discountsData } = await supabase
       .from("student_discounts")
-      .select(`
+      .select(
+        `
         *,
         discount:fee_discounts(*)
-      `)
+      `,
+      )
       .eq("student_id", studentId)
       .eq("is_deleted", false)
       .or(`term_id.eq.${selectedTermId},term_id.is.null`);
@@ -354,7 +374,7 @@ export default function StudentProfilePage() {
     } else {
       query = query.gte(
         "date",
-        new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0]
+        new Date(Date.now() - 90 * 86400000).toISOString().split("T")[0],
       );
     }
 
@@ -415,7 +435,11 @@ export default function StudentProfilePage() {
 
     try {
       if (!student.parent_phone) {
-        toast({ title: "No parent phone", description: "This student has no parent phone on file.", variant: "destructive" });
+        toast({
+          title: "No parent phone",
+          description: "This student has no parent phone on file.",
+          variant: "destructive",
+        });
         return;
       }
 
@@ -439,7 +463,11 @@ export default function StudentProfilePage() {
         throw new Error(err.error || "Failed to send SMS");
       }
 
-      toast({ title: "SMS Sent", description: `Report card link shared with ${parentName}.`, variant: "success" });
+      toast({
+        title: "SMS Sent",
+        description: `Report card link shared with ${parentName}.`,
+        variant: "success",
+      });
     } catch (err) {
       toast({
         title: "SMS Failed",
@@ -457,7 +485,8 @@ export default function StudentProfilePage() {
 
     try {
       const amount = parseFloat(paymentAmount);
-      if (isNaN(amount) || amount <= 0) throw new Error("Enter a valid amount.");
+      if (isNaN(amount) || amount <= 0)
+        throw new Error("Enter a valid amount.");
 
       const receiptNum = `RCP-${Date.now().toString(36).toUpperCase()}`;
 
@@ -523,10 +552,7 @@ export default function StudentProfilePage() {
 
     try {
       if (!editForm.full_name.trim()) throw new Error("Name is required.");
-      if (
-        editForm.parent_phone &&
-        !isValidUgandaPhone(editForm.parent_phone)
-      ) {
+      if (editForm.parent_phone && !isValidUgandaPhone(editForm.parent_phone)) {
         throw new Error("Invalid Uganda phone number.");
       }
 
@@ -542,7 +568,10 @@ export default function StudentProfilePage() {
           parent_email: editForm.parent_email.trim() || undefined,
           current_class_id: editForm.current_class_id || undefined,
           status: editForm.status,
-          exit_date: (editForm.status === "left" || editForm.status === "graduated") ? (editForm.exit_date || null) : null,
+          exit_date:
+            editForm.status === "left" || editForm.status === "graduated"
+              ? editForm.exit_date || null
+              : null,
         }),
       });
       const result = await res.json();
@@ -667,8 +696,8 @@ export default function StudentProfilePage() {
                       student.status === "active"
                         ? "success"
                         : student.status === "graduated"
-                        ? "default"
-                        : "secondary"
+                          ? "default"
+                          : "secondary"
                     }
                   >
                     {student.status}
@@ -696,9 +725,7 @@ export default function StudentProfilePage() {
             <TabsTrigger value="academic">Academic</TabsTrigger>
             <TabsTrigger value="attendance">Attendance</TabsTrigger>
             <TabsTrigger value="discipline">Discipline</TabsTrigger>
-            {canEditStudents && (
-              <TabsTrigger value="edit">Edit</TabsTrigger>
-            )}
+            {canEditStudents && <TabsTrigger value="edit">Edit</TabsTrigger>}
           </TabsList>
 
           {/* ===== TAB: OVERVIEW ===== */}
@@ -713,13 +740,9 @@ export default function StudentProfilePage() {
                         <Wallet className="w-5 h-5 text-warning-700" />
                       </div>
                       <div>
-                        <p className="text-xs text-heading">
-                          Current Balance
-                        </p>
+                        <p className="text-xs text-heading">Current Balance</p>
                         <p className="text-lg font-bold">
-                          {feeAccount
-                            ? formatUGX(feeAccount.balance)
-                            : "---"}
+                          {feeAccount ? formatUGX(feeAccount.balance) : "---"}
                         </p>
                       </div>
                     </div>
@@ -728,9 +751,7 @@ export default function StudentProfilePage() {
                         <CreditCard className="w-5 h-5 text-success-700" />
                       </div>
                       <div>
-                        <p className="text-xs text-heading">
-                          Last Payment
-                        </p>
+                        <p className="text-xs text-heading">Last Payment</p>
                         <p className="text-lg font-bold">
                           {payments.length > 0
                             ? formatUGX(payments[0].amount)
@@ -748,13 +769,9 @@ export default function StudentProfilePage() {
                         <TrendingUp className="w-5 h-5 text-info-700" />
                       </div>
                       <div>
-                        <p className="text-xs text-heading">
-                          Attendance Rate
-                        </p>
+                        <p className="text-xs text-heading">Attendance Rate</p>
                         <p className="text-lg font-bold">{attStats.pct}%</p>
-                        <p className="text-xs text-heading">
-                          Last 90 days
-                        </p>
+                        <p className="text-xs text-heading">Last 90 days</p>
                       </div>
                     </div>
                   </CardContent>
@@ -856,7 +873,7 @@ export default function StudentProfilePage() {
                       "text-xl font-bold",
                       feeAccount && feeAccount.balance > 0
                         ? "text-secondary"
-                        : "text-secondary"
+                        : "text-secondary",
                     )}
                   >
                     {feeAccount ? formatUGX(feeAccount.balance) : "---"}
@@ -879,26 +896,37 @@ export default function StudentProfilePage() {
                   Apply Discount
                 </Button>
               )}
-              <Button variant="outline" onClick={async () => {
-                if (!feeAccount || !school) return;
-                try {
-                  const res = await fetch('/api/fees/statements', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ student_id: studentId, term_id: selectedTermId }),
-                  });
-                  if (!res.ok) throw new Error('Failed to generate statement');
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href = url;
-                  a.download = `fee-statement-${student.admission_number}.pdf`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                } catch {
-                  toast({ title: 'Error', description: 'Failed to generate statement.', variant: 'destructive' });
-                }
-              }}>
+              <Button
+                variant="outline"
+                onClick={async () => {
+                  if (!feeAccount || !school) return;
+                  try {
+                    const res = await fetch("/api/fees/statements", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({
+                        student_id: studentId,
+                        term_id: selectedTermId,
+                      }),
+                    });
+                    if (!res.ok)
+                      throw new Error("Failed to generate statement");
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `fee-statement-${student.admission_number}.pdf`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch {
+                    toast({
+                      title: "Error",
+                      description: "Failed to generate statement.",
+                      variant: "destructive",
+                    });
+                  }
+                }}
+              >
                 <Download className="w-4 h-4 mr-2" />
                 Generate Statement
               </Button>
@@ -907,10 +935,15 @@ export default function StudentProfilePage() {
             {/* Discounts section */}
             {studentDiscounts.length > 0 && (
               <div className="mb-6">
-                <h4 className="text-sm font-medium text-muted mb-2">Applied Discounts</h4>
+                <h4 className="text-sm font-medium text-muted mb-2">
+                  Applied Discounts
+                </h4>
                 <div className="space-y-2">
                   {studentDiscounts.map((sd) => (
-                    <div key={sd.id} className="flex items-center justify-between bg-bg-tertiary rounded-lg px-4 py-2">
+                    <div
+                      key={sd.id}
+                      className="flex items-center justify-between bg-bg-tertiary rounded-lg px-4 py-2"
+                    >
                       <div>
                         <span className="font-medium">{sd.discount?.name}</span>
                         <span className="text-muted ml-2 text-sm">
@@ -920,7 +953,9 @@ export default function StudentProfilePage() {
                         </span>
                         {sd.term_id && (
                           <span className="text-muted ml-2 text-sm">
-                            -- {terms?.find((t) => t.id === sd.term_id)?.name || "Specific Term"}
+                            --{" "}
+                            {terms?.find((t) => t.id === sd.term_id)?.name ||
+                              "Specific Term"}
                           </span>
                         )}
                       </div>
@@ -929,7 +964,10 @@ export default function StudentProfilePage() {
                         size="sm"
                         className="text-danger-600 hover:text-danger-600"
                         onClick={async () => {
-                          await fetch(`/api/fees/student-discounts?id=${sd.id}`, { method: "DELETE" });
+                          await fetch(
+                            `/api/fees/student-discounts?id=${sd.id}`,
+                            { method: "DELETE" },
+                          );
                           loadFeeData();
                         }}
                       >
@@ -1002,16 +1040,31 @@ export default function StudentProfilePage() {
                     {/* Mobile Cards */}
                     <div className="sm:hidden space-y-2">
                       {payments.map((p) => (
-                        <div key={p.id} className="bg-bg-tertiary rounded-lg p-3 border border-border">
+                        <div
+                          key={p.id}
+                          className="bg-bg-tertiary rounded-lg p-3 border border-border"
+                        >
                           <div className="flex items-center justify-between mb-1">
-                            <span className="text-sm font-medium text-secondary">{formatUGX(p.amount)}</span>
-                            <span className="text-xs text-heading">{formatDate(p.payment_date)}</span>
+                            <span className="text-sm font-medium text-secondary">
+                              {formatUGX(p.amount)}
+                            </span>
+                            <span className="text-xs text-heading">
+                              {formatDate(p.payment_date)}
+                            </span>
                           </div>
                           <div className="flex items-center gap-2 text-xs text-heading">
-                            <span className="capitalize">{p.payment_method.replace("_", " ")}</span>
-                            <span className="text-secondary font-mono">{p.receipt_number}</span>
+                            <span className="capitalize">
+                              {p.payment_method.replace("_", " ")}
+                            </span>
+                            <span className="text-secondary font-mono">
+                              {p.receipt_number}
+                            </span>
                           </div>
-                          {p.notes && <p className="text-xs text-heading mt-1">{p.notes}</p>}
+                          {p.notes && (
+                            <p className="text-xs text-heading mt-1">
+                              {p.notes}
+                            </p>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1046,9 +1099,7 @@ export default function StudentProfilePage() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                 <Card className="bg-card">
                   <CardContent className="p-4 text-center">
-                    <p className="text-xs text-heading mb-1">
-                      Total Marks
-                    </p>
+                    <p className="text-xs text-heading mb-1">Total Marks</p>
                     <p className="text-xl font-bold">
                       {marks.reduce((s, m) => s + (m.score ?? 0), 0)} /{" "}
                       {marks.reduce((s, m) => s + (m.max_score ?? 0), 0)}
@@ -1062,7 +1113,10 @@ export default function StudentProfilePage() {
                       {marks.length > 0
                         ? (
                             (marks.reduce((s, m) => s + (m.score ?? 0), 0) /
-                              marks.reduce((s, m) => s + (m.max_score ?? 0), 0)) *
+                              marks.reduce(
+                                (s, m) => s + (m.max_score ?? 0),
+                                0,
+                              )) *
                             100
                           ).toFixed(1)
                         : 0}
@@ -1084,25 +1138,40 @@ export default function StudentProfilePage() {
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-lg">Marks</CardTitle>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={async () => {
-                    try {
-                      const res = await fetch('/api/academics/report-cards/generate', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ student_id: studentId, term_id: selectedTermId }),
-                      });
-                      if (!res.ok) throw new Error('Failed to generate report card');
-                      const blob = await res.blob();
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
-                      a.download = `report-card-${student.admission_number}.pdf`;
-                      a.click();
-                      URL.revokeObjectURL(url);
-                    } catch {
-                      toast({ title: 'Error', description: 'Failed to generate report card.', variant: 'destructive' });
-                    }
-                  }}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(
+                          "/api/academics/report-cards/generate",
+                          {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              student_id: studentId,
+                              term_id: selectedTermId,
+                            }),
+                          },
+                        );
+                        if (!res.ok)
+                          throw new Error("Failed to generate report card");
+                        const blob = await res.blob();
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = url;
+                        a.download = `report-card-${student.admission_number}.pdf`;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                      } catch {
+                        toast({
+                          title: "Error",
+                          description: "Failed to generate report card.",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  >
                     <Download className="w-4 h-4 mr-2" />
                     Download Report Card
                   </Button>
@@ -1173,13 +1242,22 @@ export default function StudentProfilePage() {
                     {/* Mobile Cards */}
                     <div className="sm:hidden space-y-2">
                       {marks.map((m) => (
-                        <div key={m.id} className="bg-bg-tertiary rounded-lg p-3 border border-border flex items-center justify-between">
+                        <div
+                          key={m.id}
+                          className="bg-bg-tertiary rounded-lg p-3 border border-border flex items-center justify-between"
+                        >
                           <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium truncate">{m.subject?.name || "Subject"}</p>
-                            <p className="text-xs text-heading capitalize">{m.exam_type.replace("_", " ")}</p>
+                            <p className="text-sm font-medium truncate">
+                              {m.subject?.name || "Subject"}
+                            </p>
+                            <p className="text-xs text-heading capitalize">
+                              {m.exam_type.replace("_", " ")}
+                            </p>
                           </div>
                           <div className="flex items-center gap-3 ml-3">
-                            <span className="text-sm font-medium">{m.score}/{m.max_score}</span>
+                            <span className="text-sm font-medium">
+                              {m.score}/{m.max_score}
+                            </span>
                             <Badge variant="default" className="text-xs">
                               {getGrade(m.score ?? 0, m.max_score)}
                             </Badge>
@@ -1230,7 +1308,16 @@ export default function StudentProfilePage() {
               <Card className="bg-card">
                 <CardContent className="p-4 text-center">
                   <p className="text-xs text-heading mb-1">Attendance Rate</p>
-                  <p className={cn("text-xl font-bold", attStats.pct >= 80 ? "text-secondary" : attStats.pct >= 50 ? "text-secondary" : "text-secondary")}>
+                  <p
+                    className={cn(
+                      "text-xl font-bold",
+                      attStats.pct >= 80
+                        ? "text-secondary"
+                        : attStats.pct >= 50
+                          ? "text-secondary"
+                          : "text-secondary",
+                    )}
+                  >
                     {attStats.pct}%
                   </p>
                 </CardContent>
@@ -1248,11 +1335,14 @@ export default function StudentProfilePage() {
                     onClick={async () => {
                       setDownloadingCert(true);
                       try {
-                        const termParam = selectedTermId ? `&term_id=${selectedTermId}` : "";
+                        const termParam = selectedTermId
+                          ? `&term_id=${selectedTermId}`
+                          : "";
                         const res = await fetch(
-                          `/api/attendance/certificate-pdf?student_id=${studentId}${termParam}`
+                          `/api/attendance/certificate-pdf?student_id=${studentId}${termParam}`,
                         );
-                        if (!res.ok) throw new Error("Failed to generate certificate");
+                        if (!res.ok)
+                          throw new Error("Failed to generate certificate");
                         const blob = await res.blob();
                         const url = URL.createObjectURL(blob);
                         const a = document.createElement("a");
@@ -1261,7 +1351,11 @@ export default function StudentProfilePage() {
                         a.click();
                         URL.revokeObjectURL(url);
                       } catch {
-                        toast({ title: "Error", description: "Failed to generate certificate.", variant: "destructive" });
+                        toast({
+                          title: "Error",
+                          description: "Failed to generate certificate.",
+                          variant: "destructive",
+                        });
                       } finally {
                         setDownloadingCert(false);
                       }
@@ -1283,8 +1377,8 @@ export default function StudentProfilePage() {
                       attStats.pct >= 80
                         ? "bg-bg-tertiary"
                         : attStats.pct >= 50
-                        ? "bg-bg-tertiary"
-                        : "bg-bg-tertiary"
+                          ? "bg-bg-tertiary"
+                          : "bg-bg-tertiary",
                     )}
                     style={{ width: `${attStats.pct}%` }}
                   />
@@ -1315,9 +1409,16 @@ export default function StudentProfilePage() {
                         { color: "bg-bg-tertiary", label: "Excused" },
                         { color: "bg-bg-tertiary", label: "No Record" },
                       ].map((item) => (
-                        <div key={item.label} className="flex items-center gap-2">
-                          <div className={cn("w-3 h-3 rounded-sm", item.color)} />
-                          <span className="text-xs text-heading">{item.label}</span>
+                        <div
+                          key={item.label}
+                          className="flex items-center gap-2"
+                        >
+                          <div
+                            className={cn("w-3 h-3 rounded-sm", item.color)}
+                          />
+                          <span className="text-xs text-heading">
+                            {item.label}
+                          </span>
                         </div>
                       ))}
                     </div>
@@ -1468,18 +1569,25 @@ export default function StudentProfilePage() {
                       </div>
                     </div>
 
-                    {(editForm.status === "left" || editForm.status === "graduated") && (
+                    {(editForm.status === "left" ||
+                      editForm.status === "graduated") && (
                       <div className="space-y-2">
                         <Label>Exit Date</Label>
                         <Input
                           type="date"
                           value={editForm.exit_date}
                           onChange={(e) =>
-                            setEditForm((f) => ({ ...f, exit_date: e.target.value }))
+                            setEditForm((f) => ({
+                              ...f,
+                              exit_date: e.target.value,
+                            }))
                           }
                         />
                         <p className="text-xs text-heading">
-                          Date the student {editForm.status === "graduated" ? "graduated" : "left the school"}
+                          Date the student{" "}
+                          {editForm.status === "graduated"
+                            ? "graduated"
+                            : "left the school"}
                         </p>
                       </div>
                     )}

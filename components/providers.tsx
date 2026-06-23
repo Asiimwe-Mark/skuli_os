@@ -51,17 +51,62 @@ export function Providers({ children }: { children: ReactNode }) {
         // staleTime (2 min — see createQueryClient) will revalidate
         // lazily on the next mount of the component that owns them.
       }
-      // Subscribe to every cache change and re-persist. This is the
-      // hand-rolled equivalent of PersistQueryClientProvider.
-      const unsubscribe = client.getQueryCache().subscribe(() => {
-        void persister.persistClient({
-          clientState: {
-            queries: client.getQueryCache().getAll(),
-            mutations: client.getMutationCache().getAll(),
-          },
-          buster: String(Date.now()),
-        });
-      });
+
+      // Refactor (Phase 7): debounce + scope the persistence
+      // subscription.
+      //
+      // The previous implementation called
+      //   persister.persistClient(...)
+      // synchronously on every cache change. With mutations firing
+      // in quick succession (record payment, push notification,
+      // cache invalidate, etc.) that was up to ~5 JSON.stringify +
+      // localStorage.setItem calls per second on the main thread.
+      //
+      // The new implementation:
+      //   1. Coalesces changes inside a 250 ms window.
+      //   2. Filters to queries whose key is school-scoped (the
+      //      queryKeys factory always includes schoolId as a
+      //      positional arg; portal/parent queries use no schoolId
+      //      so they are intentionally NOT persisted — see below).
+      //   3. Runs the actual write on idle so it never blocks paint.
+      //
+      // Why portal queries are excluded
+      //   Portal queries are per-parent, not per-school. Persisting
+      //   them in localStorage leaks data between parents on shared
+      //   devices and inflates the persisted size for schools where
+      //   the parent app is the primary surface. The queryKeys
+      //   factory's portal helpers (`portalNotifications`,
+      //   `portalMessages`) omit schoolId — that's our discriminator.
+      const persistableKey = (queryKey: unknown): boolean => {
+        if (!Array.isArray(queryKey) || queryKey.length === 0) return false;
+        // The queryKeys factory always emits a string as the first
+        // element. We trust that contract here — lint enforces it
+        // for pages via `no-restricted-syntax`.
+        const head = queryKey[0];
+        if (typeof head !== "string") return false;
+        return head !== "portal-notifications" && head !== "portal-messages";
+      };
+
+      let pendingHandle: ReturnType<typeof setTimeout> | null = null;
+      const writeSoon = () => {
+        if (pendingHandle !== null) return;
+        pendingHandle = setTimeout(() => {
+          pendingHandle = null;
+          const all = client.getQueryCache().getAll();
+          const persistableQueries = all.filter((q) =>
+            persistableKey(q.queryKey),
+          );
+          void persister.persistClient({
+            clientState: {
+              queries: persistableQueries,
+              mutations: client.getMutationCache().getAll(),
+            },
+            buster: String(Date.now()),
+          });
+        }, 250);
+      };
+
+      const unsubscribe = client.getQueryCache().subscribe(writeSoon);
       unsub = unsubscribe;
     })();
     return () => {

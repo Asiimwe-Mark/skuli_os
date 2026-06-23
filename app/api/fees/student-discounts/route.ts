@@ -1,12 +1,11 @@
-import type { Database } from "@/types/database";
 import { applyDiscountSchema } from "@/lib/validations/fees";
 import { route, errorResponse, dbError } from "@/lib/http";
+import { writeAuditLog } from "@/lib/audit-log";
+import { invalidateSchoolAsync } from "@/lib/api-cache";
 
 export const GET = route({
   roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
   handler: async (ctx, request) => {
-    const schoolId = ctx.profile.school_id!;
-
     const { searchParams } = new URL(request.url);
     const studentId = searchParams.get("student_id");
     const discountId = searchParams.get("discount_id");
@@ -18,7 +17,7 @@ export const GET = route({
         discount:fee_discounts(*),
         student:students(full_name, current_class_id, classes(name))
       `)
-      .eq("school_id", schoolId)
+      .eq("school_id", ctx.schoolId)
       .eq("is_deleted", false)
       .order("created_at", { ascending: false });
 
@@ -29,15 +28,14 @@ export const GET = route({
 
     if (error) return dbError(error, "Database error");
 
-    // Pre-existing inline `: any` casts on data joins; migration guide
-    // §7.6 puts these out of scope for the wrapper refactor.
-    /* eslint-disable @typescript-eslint/no-explicit-any */
-    const result = (data || []).map((sd: any) => ({
-      ...sd,
-      student_name: sd.student?.full_name,
-      student_class: sd.student?.classes?.name,
-    }));
-    /* eslint-enable @typescript-eslint/no-explicit-any */
+    const result = (data || []).map((sd) => {
+      const student = Array.isArray(sd.student) ? sd.student[0] : sd.student;
+      return {
+        ...sd,
+        student_name: student?.full_name,
+        student_class: (Array.isArray(student?.classes) ? student?.classes[0] : student?.classes)?.name,
+      };
+    });
 
     return result;
   },
@@ -47,15 +45,11 @@ export const POST = route({
   roles: ["SCHOOL_ADMIN", "BURSAR"],
   schema: applyDiscountSchema,
   handler: async (ctx, body) => {
-    const schoolId = ctx.profile.school_id!;
-
-    // Both FKs must belong to this school. Discounts feed recalculate_fee_account,
-    // so an unscoped student_id/discount_id would be a cross-tenant financial gap.
     const { data: discStudent } = await ctx.supabase
       .from("students")
       .select("id")
       .eq("id", body.student_id)
-      .eq("school_id", schoolId)
+      .eq("school_id", ctx.schoolId)
       .eq("is_deleted", false)
       .maybeSingle();
     if (!discStudent) return errorResponse("Student not found in this school", 404);
@@ -64,14 +58,10 @@ export const POST = route({
       .from("fee_discounts")
       .select("id")
       .eq("id", body.discount_id)
-      .eq("school_id", schoolId)
+      .eq("school_id", ctx.schoolId)
       .maybeSingle();
     if (!discount) return errorResponse("Discount not found in this school", 404);
 
-    // Check for duplicate (student + discount + term). term_id is
-    // nullable, so a discount applied across all terms is a row
-    // with term_id IS NULL — not term_id = ''. PostgREST's .is()
-    // is the correct filter for null comparisons.
     let existingQuery = ctx.supabase
       .from("student_discounts")
       .select("id")
@@ -90,21 +80,18 @@ export const POST = route({
     const { data, error } = await ctx.supabase
       .from("student_discounts")
       .insert({
-        school_id: schoolId,
+        school_id: ctx.schoolId,
         student_id: body.student_id,
         discount_id: body.discount_id,
         term_id: body.term_id ?? null,
-        approved_by: ctx.user.id,
         note: body.note ?? null,
-      } as unknown as Database["public"]["Tables"]["student_discounts"]["Insert"])
+      } as never)
       .select()
       .single();
 
     if (error) return dbError(error, "Database error");
 
-    // Recalculate fee accounts for affected terms
     if (body.term_id) {
-      // Specific term - recalculate that account
       const { data: account } = await ctx.supabase
         .from("fee_accounts")
         .select("id")
@@ -119,7 +106,6 @@ export const POST = route({
         });
       }
     } else {
-      // All terms - recalculate all accounts for this student
       const { data: accounts } = await ctx.supabase
         .from("fee_accounts")
         .select("id")
@@ -135,15 +121,16 @@ export const POST = route({
       }
     }
 
-    // Audit log
-    await ctx.supabase.from("audit_logs").insert({
-      school_id: schoolId,
+    await writeAuditLog(ctx.supabase, {
+      school_id: ctx.schoolId,
       user_id: ctx.user.id,
       action: "discount_applied",
       entity_type: "student_discount",
-      entity_id: data.id,
-      new_value: body,
-    } as unknown as Database["public"]["Tables"]["audit_logs"]["Insert"]);
+      entity_id: data?.id ?? null,
+      new_value: body as Record<string, unknown>,
+    });
+
+    void invalidateSchoolAsync(ctx.schoolId);
 
     return data;
   },
@@ -152,31 +139,28 @@ export const POST = route({
 export const DELETE = route({
   roles: ["SCHOOL_ADMIN", "BURSAR"],
   handler: async (ctx, request) => {
-    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
     if (!id) return errorResponse("Student discount ID is required", 400);
 
-    // Get the discount before deleting (for recalculation)
     const { data: studentDiscount } = await ctx.supabase
       .from("student_discounts")
       .select("student_id, term_id")
       .eq("id", id)
-      .eq("school_id", schoolId)
+      .eq("school_id", ctx.schoolId)
       .single();
 
     if (!studentDiscount) return errorResponse("Discount not found", 404);
 
     const { error } = await ctx.supabase
       .from("student_discounts")
-      .update({ is_deleted: true } as unknown as Database["public"]["Tables"]["student_discounts"]["Update"])
+      .update({ is_deleted: true } as never)
       .eq("id", id)
-      .eq("school_id", schoolId);
+      .eq("school_id", ctx.schoolId);
 
     if (error) return dbError(error, "Database error");
 
-    // Recalculate affected fee accounts
     if (studentDiscount.term_id) {
       const { data: account } = await ctx.supabase
         .from("fee_accounts")
@@ -207,6 +191,7 @@ export const DELETE = route({
       }
     }
 
+    void invalidateSchoolAsync(ctx.schoolId);
     return { deleted: true };
   },
 });

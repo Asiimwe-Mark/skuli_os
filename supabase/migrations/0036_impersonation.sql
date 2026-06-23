@@ -1,8 +1,8 @@
 -- =============================================================================
 -- SKULI SaaS: Scoped impersonation session
--- Migration 0028 (part 2)
+-- Migration 0036 (originally 0028 part 2)
 --
--- Closes §2.1 from the production-readiness review. Replaces the
+-- Closes Â§2.1 from the production-readiness review. Replaces the
 -- "issue a real Supabase magic link" approach (which handed the
 -- caller a full-privilege login as the target SCHOOL_ADMIN) with a
 -- short-lived, audited, server-controlled impersonation token.
@@ -50,8 +50,8 @@ CREATE POLICY impersonation_sessions_deny_all ON public.impersonation_sessions
     USING (false)
     WITH CHECK (false);
 
--- updated_at trigger (informational only — the row is rarely updated)
+-- updated_at trigger (informational only â€” the row is rarely updated)
 DROP TRIGGER IF EXISTS set_updated_at_impersonation_sessions ON public.impersonation_sessions;
 CREATE TRIGGER set_updated_at_impersonation_sessions
     BEFORE UPDATE ON public.impersonation_sessions
-    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+    FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();

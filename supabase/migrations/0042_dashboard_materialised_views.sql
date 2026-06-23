@@ -1,10 +1,10 @@
 -- =============================================================================
 -- SKULI SaaS: Dashboard Materialised Views
--- Migration 0030
+-- Migration 0042 (originally 0030)
 --
 -- The four `dashboard_*` functions (0021) recompute on every dashboard
 -- render. The dashboard page (app/dashboard/page.tsx) fires all four in
--- parallel — that's four full table scans of attendance_records and
+-- parallel â€” that's four full table scans of attendance_records and
 -- fee_payments per dashboard load, repeated 50-200x per day per school
 -- admin. For a school with 5,000 students and 100 daily fee payments
 -- that's ~200,000 row-reads per day per school.
@@ -23,7 +23,7 @@
 -- VIEW CONCURRENTLY is issued. CONCURRENTLY requires a unique index
 -- on each view; we add one.
 --
--- CONCURRENTLY means reads are NOT blocked during refresh — the old
+-- CONCURRENTLY means reads are NOT blocked during refresh â€” the old
 -- snapshot stays visible until the new snapshot commits. The trade-off
 -- is a brief window where the dashboard shows data up to 5 minutes
 -- old. For a school-management dashboard this is acceptable (and the
@@ -31,10 +31,10 @@
 --
 -- What the dashboard looks like
 -- -----------------------------
--- The dashboard_attendance_today view materialises ALL schools × ALL
+-- The dashboard_attendance_today view materialises ALL schools Ã— ALL
 -- dates that have at least one attendance_records row. The wrapper
 -- function filters on the caller's (p_school_id, p_date) inputs. This
--- keeps the view small in practice — only days with attendance taken
+-- keeps the view small in practice â€” only days with attendance taken
 -- appear, scoped to actual schools.
 -- =============================================================================
 
@@ -243,7 +243,7 @@ $$;
 --
 --    If pg_cron is not installed in the target environment, the DO
 --    block falls through without error. The application will still
---    work — the dashboard just shows the original (function-based)
+--    work â€” the dashboard just shows the original (function-based)
 --    aggregates for that school until pg_cron is available. The
 --    materialised views are still populated on first CREATE.
 -- ---------------------------------------------------------------------------
@@ -298,21 +298,25 @@ BEGIN
     );
 END $$;
 
--- ---------------------------------------------------------------------------
--- 6. Grants
---    The view itself is not directly accessible via PostgREST (it is
---    queried through the wrapper functions). The wrapper functions
---    are SECURITY INVOKER, so the caller's role applies — but the
---    underlying views are accessed by the caller's role, not the
---    function owner's. The caller's role must have SELECT on the
---    view; the authenticated role needs that grant.
--- ---------------------------------------------------------------------------
-GRANT SELECT ON mv_dashboard_attendance_today     TO authenticated;
-GRANT SELECT ON mv_dashboard_attendance_by_class  TO authenticated;
-GRANT SELECT ON mv_dashboard_payment_trend        TO authenticated;
-GRANT SELECT ON mv_dashboard_payment_methods      TO authenticated;
 
--- Service role needs everything for admin scripts / migrations.
+-- ---------------------------------------------------------------------------
+-- 6. Grants (Audit §12.2 — mv_dashboard_* are not RLS-aware)
+--    These views aggregate ALL schools. Granting SELECT to `authenticated`
+--    lets any logged-in user bypass the wrapper functions and read every
+--    school's data directly via PostgREST. Revoke from authenticated/anon;
+--    grant to service_role only. All app access goes through the wrapper
+--    functions which enforce school scoping.
+-- ---------------------------------------------------------------------------
+REVOKE SELECT ON mv_dashboard_attendance_today     FROM authenticated;
+REVOKE SELECT ON mv_dashboard_attendance_by_class  FROM authenticated;
+REVOKE SELECT ON mv_dashboard_payment_trend        FROM authenticated;
+REVOKE SELECT ON mv_dashboard_payment_methods      FROM authenticated;
+
+REVOKE SELECT ON mv_dashboard_attendance_today     FROM anon;
+REVOKE SELECT ON mv_dashboard_attendance_by_class  FROM anon;
+REVOKE SELECT ON mv_dashboard_payment_trend        FROM anon;
+REVOKE SELECT ON mv_dashboard_payment_methods      FROM anon;
+
 GRANT SELECT ON mv_dashboard_attendance_today     TO service_role;
 GRANT SELECT ON mv_dashboard_attendance_by_class  TO service_role;
 GRANT SELECT ON mv_dashboard_payment_trend        TO service_role;

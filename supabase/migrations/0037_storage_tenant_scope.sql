@@ -1,6 +1,6 @@
 -- =============================================================================
--- SKULI SaaS: Tenant-scoped storage (Audit §8.2)
--- Migration 0028 (part 5)
+-- SKULI SaaS: Tenant-scoped storage (Audit Â§8.2)
+-- Migration 0037 (originally 0028 part 5)
 --
 -- The previous storage policies (0025_storage_buckets.sql) only
 -- checked `bucket_id = '...'` and `auth.role() = 'authenticated'`.
@@ -9,7 +9,7 @@
 --     UPDATE / DELETE in the `report-cards` private bucket (PII leak
 --     across tenants);
 --   * the public photo buckets were world-readable AND writable
---     by any authenticated user — one school could overwrite or
+--     by any authenticated user â€” one school could overwrite or
 --     delete another's logos and student photos.
 --
 -- This migration replaces every storage.objects policy with one that

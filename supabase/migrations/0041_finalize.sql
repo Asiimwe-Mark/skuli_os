@@ -1,6 +1,6 @@
 -- =============================================================================
 -- SKULI SaaS: Finalize
--- Migration 0029
+-- Migration 0041 (originally 0029)
 --
 -- ANALYZE every public table, comment every public table, and
 -- GRANT EXECUTE on every function to service_role. Per 00066 final

@@ -107,10 +107,14 @@ export default function PromotePage() {
   const [mappings, setMappings] = useState<PromotionMapping[]>([]);
 
   // AP-1 fix: useQuery replaces useEffect+supabase.from('academic_years')
-  const { data: academicYears = [] } = useQuery<{ id: string; name: string; is_current: boolean }[]>({
+  const { data: academicYears = [] } = useQuery<
+    { id: string; name: string; is_current: boolean }[]
+  >({
     queryKey: ["academic-years"],
     queryFn: async () => {
-      const res = await fetch("/api/academic-years", { credentials: "same-origin" });
+      const res = await fetch("/api/academic-years", {
+        credentials: "same-origin",
+      });
       if (!res.ok) throw new Error("Failed to load academic years");
       const json = await res.json();
       return json.data ?? [];
@@ -135,7 +139,7 @@ export default function PromotePage() {
 
         const suggestedName = suggestNextClassName(cls.name);
         const destClass = classes.find(
-          (c) => c.name.toLowerCase() === (suggestedName || "").toLowerCase()
+          (c) => c.name.toLowerCase() === (suggestedName || "").toLowerCase(),
         );
 
         newMappings.push({
@@ -156,8 +160,8 @@ export default function PromotePage() {
   function updateDestClass(sourceId: string, destId: string) {
     setMappings((prev) =>
       prev.map((m) =>
-        m.source_class_id === sourceId ? { ...m, dest_class_id: destId } : m
-      )
+        m.source_class_id === sourceId ? { ...m, dest_class_id: destId } : m,
+      ),
     );
   }
 
@@ -173,7 +177,7 @@ export default function PromotePage() {
 
     if (step === 1) {
       const valid = mappings.filter(
-        (m) => m.student_count > 0 && m.dest_class_id
+        (m) => m.student_count > 0 && m.dest_class_id,
       );
       if (valid.length === 0) {
         toast({
@@ -222,7 +226,12 @@ export default function PromotePage() {
       let totalPromoted = 0;
 
       for (const mapping of mappings) {
-        if (!mapping.dest_class_id || mapping.dest_class_id === "skip" || mapping.student_count === 0) continue;
+        if (
+          !mapping.dest_class_id ||
+          mapping.dest_class_id === "skip" ||
+          mapping.student_count === 0
+        )
+          continue;
 
         // Get all students enrolled in this class for the selected year
         const { data: enrollments } = await supabase
@@ -233,7 +242,9 @@ export default function PromotePage() {
 
         if (!enrollments || enrollments.length === 0) continue;
 
-        const studentIds = enrollments.map((e: { student_id: string }) => e.student_id);
+        const studentIds = enrollments.map(
+          (e: { student_id: string }) => e.student_id,
+        );
 
         // Update students' current class
         await supabase
@@ -247,6 +258,7 @@ export default function PromotePage() {
           class_id: mapping.dest_class_id,
           term_id: currentTerm.data.id,
           academic_year_id: currentAcademicYear.id,
+          school_id: school.id,
         }));
 
         await supabase.from("class_enrollments").insert(newEnrollments);
@@ -336,7 +348,8 @@ export default function PromotePage() {
               </div>
               <h2 className="text-2xl font-bold mb-2">Promotion Complete</h2>
               <p className="text-heading mb-6">
-                {promotedCount} students have been promoted to their new classes.
+                {promotedCount} students have been promoted to their new
+                classes.
               </p>
               <div className="flex flex-col sm:flex-row gap-3">
                 <Button
@@ -383,7 +396,10 @@ export default function PromotePage() {
             const isCompleted = i < step;
 
             return (
-              <div key={s.label} className="flex items-center flex-1 last:flex-none">
+              <div
+                key={s.label}
+                className="flex items-center flex-1 last:flex-none"
+              >
                 <div className="flex flex-col items-center">
                   <div
                     className={cn(
@@ -391,8 +407,8 @@ export default function PromotePage() {
                       isActive
                         ? "border-warning-500 bg-warning-100 text-warning-700"
                         : isCompleted
-                        ? "border-success-500 bg-success-100 text-success-700"
-                        : "border-border bg-bg-tertiary text-text-muted"
+                          ? "border-success-500 bg-success-100 text-success-700"
+                          : "border-border bg-bg-tertiary text-text-muted",
                     )}
                   >
                     {isCompleted ? (
@@ -404,7 +420,7 @@ export default function PromotePage() {
                   <span
                     className={cn(
                       "text-[10px] mt-1.5 text-center hidden sm:block",
-                      isActive ? "text-secondary font-medium" : "text-heading"
+                      isActive ? "text-secondary font-medium" : "text-heading",
                     )}
                   >
                     {s.label}
@@ -414,7 +430,7 @@ export default function PromotePage() {
                   <div
                     className={cn(
                       "flex-1 h-0.5 mx-2 rounded-full transition-all",
-                      i < step ? "bg-bg-tertiary" : "bg-bg-tertiary"
+                      i < step ? "bg-bg-tertiary" : "bg-bg-tertiary",
                     )}
                   />
                 )}
@@ -525,7 +541,7 @@ export default function PromotePage() {
                             "grid grid-cols-1 sm:grid-cols-12 gap-3 items-center p-3 rounded-lg border",
                             m.student_count > 0
                               ? "bg-bg-tertiary border-border"
-                              : "bg-bg-tertiary border-border opacity-60"
+                              : "bg-bg-tertiary border-border opacity-60",
                           )}
                         >
                           <div className="sm:col-span-4">
@@ -549,7 +565,9 @@ export default function PromotePage() {
                                 <SelectValue placeholder="Select destination" />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="skip">Skip (No promotion)</SelectItem>
+                                <SelectItem value="skip">
+                                  Skip (No promotion)
+                                </SelectItem>
                                 {classes
                                   .filter((c) => c.id !== m.source_class_id)
                                   .map((c) => (
@@ -566,11 +584,16 @@ export default function PromotePage() {
                             <span className="font-medium">
                               {m.student_count}
                             </span>
-                            {m.student_count > 0 && (!m.dest_class_id || m.dest_class_id === "skip") && (
-                              <Badge variant="warning" className="text-[10px]">
-                                No dest.
-                              </Badge>
-                            )}
+                            {m.student_count > 0 &&
+                              (!m.dest_class_id ||
+                                m.dest_class_id === "skip") && (
+                                <Badge
+                                  variant="warning"
+                                  className="text-[10px]"
+                                >
+                                  No dest.
+                                </Badge>
+                              )}
                           </div>
                         </div>
                       ))}
@@ -612,14 +635,17 @@ export default function PromotePage() {
                             (m) =>
                               m.student_count > 0 &&
                               m.dest_class_id &&
-                              m.dest_class_id !== "skip"
+                              m.dest_class_id !== "skip",
                           )
                           .map((m) => {
                             const destName =
                               classes.find((c) => c.id === m.dest_class_id)
                                 ?.name || "Unknown";
                             return (
-                              <tr key={m.source_class_id} className="bg-bg-tertiary">
+                              <tr
+                                key={m.source_class_id}
+                                className="bg-bg-tertiary"
+                              >
                                 <td className="px-4 py-2 text-sm">
                                   {m.source_class_name}
                                 </td>
@@ -654,7 +680,7 @@ export default function PromotePage() {
                                 (m) =>
                                   m.student_count > 0 &&
                                   m.dest_class_id &&
-                                  m.dest_class_id !== "skip"
+                                  m.dest_class_id !== "skip",
                               )
                               .reduce((s, m) => s + m.student_count, 0)}
                           </strong>{" "}
@@ -677,11 +703,7 @@ export default function PromotePage() {
         transition={{ delay: 0.15 }}
         className="flex items-center justify-between mt-6"
       >
-        <Button
-          variant="ghost"
-          onClick={prevStep}
-          disabled={step === 0}
-        >
+        <Button variant="ghost" onClick={prevStep} disabled={step === 0}>
           <ChevronLeft className="w-4 h-4 mr-2" />
           Back
         </Button>

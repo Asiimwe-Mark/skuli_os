@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/types/database";
+import type { AuthContext } from "@/lib/http";
 
 type AuditLogInsert = Database["public"]["Tables"]["audit_logs"]["Insert"];
 
@@ -52,5 +53,60 @@ export async function writeAuditLog(
   } catch (err) {
     // Never throw out of an audit write.
     console.error("[audit-log] unexpected error", { action: entry.action, err });
+  }
+}
+
+/**
+ * Higher-order helper that wraps a business operation in audit
+ * logging. The wrapped function runs first; on success we record
+ * the action, on failure we record `<action>_failed` with the
+ * error message and re-throw.
+ *
+ * Use this when the audit must reflect both the successful state
+ * AND any partial failure (e.g. a fee payment that recorded but
+ * then failed to send a push notification). For single-step
+ * mutations a plain `writeAuditLog(...)` is enough.
+ *
+ * The audit write itself is best-effort (same as `writeAuditLog`),
+ * so an audit failure cannot abort the business operation.
+ */
+export async function withAudit<T>(
+  ctx: AuthContext,
+  args: {
+    action: string;
+    entityType: string;
+    entityId: string | null;
+    oldValue?: Record<string, unknown> | null;
+    newValue?: Record<string, unknown> | null;
+  },
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    const result = await fn();
+    await writeAuditLog(ctx.supabase, {
+      school_id: ctx.schoolId,
+      user_id: ctx.user.id,
+      action: args.action,
+      entity_type: args.entityType,
+      entity_id: args.entityId,
+      old_value: args.oldValue ?? null,
+      new_value: args.newValue ?? null,
+    });
+    return result;
+  } catch (err) {
+    // Audit on failure too, but never swallow the original error.
+    await writeAuditLog(ctx.supabase, {
+      school_id: ctx.schoolId,
+      user_id: ctx.user.id,
+      action: `${args.action}_failed`,
+      entity_type: args.entityType,
+      entity_id: args.entityId,
+      old_value: args.oldValue ?? null,
+      new_value: {
+        ...(args.newValue ?? {}),
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+    throw err;
   }
 }

@@ -57,7 +57,32 @@ import {
   getSupabaseAndUser,
   handleRouteError,
 } from "@/lib/api-helpers";
-import type { AuthContext } from "@/lib/api-helpers";
+import type { AuthContext as BaseAuthContext } from "@/lib/api-helpers";
+
+/**
+ * The route handler context.
+ *
+ * Adds a typed, non-null `schoolId` on top of the base `AuthContext`
+ * so handlers stop writing `const schoolId = ctx.profile.school_id!`
+ * at the top of every file. The wrapper guarantees:
+ *
+ *   • non-SUPER_ADMIN: schoolId === profile.school_id (non-null,
+ *     the wrapper already 400'd before the handler runs).
+ *   • SUPER_ADMIN:    schoolId === "__super_admin__" sentinel;
+ *     cross-tenant handlers MUST override by reading `?school_id=`
+ *     and using `crossTenantQuery(ctx, table, schoolId)`.
+ */
+export interface AuthContext extends BaseAuthContext {
+  readonly schoolId: string;
+}
+
+/**
+ * Sentinel schoolId for SUPER_ADMIN handlers that intentionally
+ * cross tenant boundaries. Handlers must NOT use `ctx.schoolId`
+ * when this is the value; they must read the explicit schoolId
+ * from the request body or query string.
+ */
+export const SUPER_ADMIN_SENTINEL = "__super_admin__";
 
 // ─── Role definition ─────────────────────────────────────────────────────────
 
@@ -119,19 +144,29 @@ export function route(opts: {
     routeCtx?: { params: Promise<Record<string, string>> },
   ): Promise<NextResponse> => {
     try {
-      const ctx = await getSupabaseAndUser();
+      const baseCtx = await getSupabaseAndUser();
       // School-scoped roles must belong to a school. SUPER_ADMIN is the
       // only platform role that crosses schools (audit §1.2 topology).
       // noSchoolRequired is for endpoints like /api/admin/* that
       // intentionally don't need one for callers of any role.
       const requiresSchool =
-        !opts.noSchoolRequired && ctx.profile.role !== "SUPER_ADMIN";
-      if (requiresSchool && !ctx.profile.school_id) {
+        !opts.noSchoolRequired && baseCtx.profile.role !== "SUPER_ADMIN";
+      if (requiresSchool && !baseCtx.profile.school_id) {
         throw new AuthError("No school associated with this account", 400);
       }
-      if (opts.roles.length > 0 && !opts.roles.includes(ctx.profile.role as Role)) {
+      if (opts.roles.length > 0 && !opts.roles.includes(baseCtx.profile.role as Role)) {
         throw new AuthError("Insufficient permissions", 403);
       }
+      // Augment the base context with a typed `schoolId`. For
+      // non-SUPER_ADMIN this is the user's school; for SUPER_ADMIN
+      // it is the sentinel that signals "you must read an explicit
+      // schoolId from the request". Either way the handler sees a
+      // non-null string, so the `!` assertion in `ctx.profile.school_id!`
+      // disappears for good.
+      const ctx: AuthContext = {
+        ...baseCtx,
+        schoolId: baseCtx.profile.school_id ?? SUPER_ADMIN_SENTINEL,
+      };
       // Dynamic-route params (e.g. `[id]`, `[payment_id]`) resolved
       // lazily by Next.js. We await them once here so handlers don't
       // have to. Handlers receive the resolved record as the fourth

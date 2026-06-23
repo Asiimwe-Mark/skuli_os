@@ -48,8 +48,14 @@ export interface ReadCacheResult<T> {
   /**
    * Attach `x-skuli-cache: <hit>` to the response in one call.
    * Returns the same response for chaining.
+   *
+   * The `response` argument is typed loosely as `Response | T` so
+   * callers can pass either a pre-built `Response` (the wrapper
+   * passes it through unchanged) or a plain serialisable value
+   * (the wrapper falls back to `respond.cacheable(value)` so the
+   * Cache-Control header is still attached).
    */
-  applyTo: (response: Response) => Response;
+  applyTo: (response: Response | T) => Response;
 }
 
 /**
@@ -68,6 +74,20 @@ export async function withSchoolReadCache<T>(
   return {
     value,
     hit,
-    applyTo: (response: Response) => setCacheHeader(response, hit),
+    applyTo: (response: Response | T) => {
+      // If the caller hands us a plain value (the common case for
+      // list endpoints), wrap it in the cacheable envelope and
+      // stamp the header in one go.
+      if (!(response instanceof Response)) {
+        return setCacheHeader(
+          new Response(JSON.stringify({ success: true, data: response }), {
+            status: 200,
+            headers: { "Content-Type": "application/json", "Cache-Control": "private, max-age=30, stale-while-revalidate=60" },
+          }),
+          hit,
+        );
+      }
+      return setCacheHeader(response, hit);
+    },
   };
 }

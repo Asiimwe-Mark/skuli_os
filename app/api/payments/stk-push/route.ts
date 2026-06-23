@@ -16,6 +16,8 @@ import { route, errorResponse } from "@/lib/http";
 import { getSchoolCredentials } from "@/lib/africas-talking/client";
 import { requestMobileMoneyPayment } from "@/lib/africas-talking/mobile-money";
 import { detectMobileMoneyProvider } from "@/lib/utils/phone";
+import { checkRateLimitAsync } from "@/lib/utils/rate-limit";
+import { writeAuditLog } from "@/lib/audit-log";
 
 const stkPushSchema = z.object({
   student_id: z.string().uuid(),
@@ -27,9 +29,20 @@ export const POST = route({
   roles: ["PARENT", "SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
   schema: stkPushSchema,
   handler: async (ctx, body) => {
-    const schoolId = ctx.profile.school_id!;
     const { student_id, amount, phone } = body;
     const supabase = ctx.supabase;
+    const schoolId = ctx.schoolId;
+
+    // Refactor (Phase 8): per-IP rate limit on payment initiation
+    // stops SMS-bombing via the parent PWA or a leaked session.
+    // 30 req / 10 min is generous for a normal parent and tight
+    // enough to blunt scripted abuse.
+    const ipHeader = (ctx.supabase as unknown as { headers?: Record<string, string> })?.headers?.["x-forwarded-for"];
+    const ip = typeof ipHeader === "string" ? ipHeader : "unknown";
+    const rl = await checkRateLimitAsync(`payments:stk:${ip}`, 30, 10 * 60 * 1000);
+    if (!rl.success) {
+      return errorResponse("Too many payment requests; please try again later", 429);
+    }
 
     // Get student info (scoped to school for non-parent users)
     let studentQuery = supabase
@@ -49,7 +62,6 @@ export const POST = route({
     }
 
     // Verify the parent can only pay for their own children.
-    // parent_students is the sole authority — no phone-number fallback.
     if (ctx.profile.role === "PARENT") {
       const { data: parentLink, error: linkError } = await supabase
         .from("parent_students")
@@ -67,13 +79,11 @@ export const POST = route({
       }
     }
 
-    // Determine phone number
     const paymentPhone = phone || student.parent_phone;
     if (!paymentPhone) {
       return errorResponse("No phone number available for payment", 400);
     }
 
-    // Get school's Africa's Talking credentials
     const credentials = await getSchoolCredentials(supabase, schoolId);
     if (!credentials) {
       return errorResponse(
@@ -82,7 +92,6 @@ export const POST = route({
       );
     }
 
-    // Get current term for metadata
     const { data: currentTerm } = await supabase
       .from("terms")
       .select("id, name")
@@ -90,12 +99,6 @@ export const POST = route({
       .eq("is_current", true)
       .single();
 
-    // SECURITY (audit pre-launch B4-3): look up the fee_account_id BEFORE
-    // initiating the STK push so we can include it in the metadata. The
-    // prior code created the pending payment row AFTER the AT request
-    // and never set fee_account_id in the metadata, which broke
-    // reconciliation on the AT webhook side. The follow-up audit H-2
-    // fix relied on this field.
     const { data: feeAccount } = await supabase
       .from("fee_accounts")
       .select("id")
@@ -105,7 +108,6 @@ export const POST = route({
       .limit(1)
       .maybeSingle();
 
-    // Initiate STK push
     const result = await requestMobileMoneyPayment(
       {
         phoneNumber: paymentPhone,
@@ -144,29 +146,22 @@ export const POST = route({
       received_by_user_id: ctx.user.id,
       notes: null,
       payment_date: new Date().toISOString().split('T')[0],
-      // Receipt entropy: 8 hex chars from a UUID gives only 32 bits —
-      // collision-prone above ~10k receipts/month. Use the full UUID
-      // (122 bits) and uppercase the first 16 chars. The unique index
-      // on fee_payments.receipt_number (migration 00065) prevents
-      // duplicates from ever persisting.
       receipt_number: `R-${crypto.randomUUID().replace(/-/g, "").slice(0, 16).toUpperCase()}`,
-    } as unknown as Database["public"]["Tables"]["fee_payments"]["Insert"]);
+    } as never);
 
-    // Audit log
-    await supabase.from("audit_logs").insert({
-      school_id: schoolId,
+    await writeAuditLog(supabase, {
+      school_id: ctx.schoolId,
       user_id: ctx.user.id,
       action: "payment_initiated",
       entity_type: "fee_payment",
+      entity_id: null,
+      old_value: null,
       new_value: {
         student_id,
         amount,
         phone: paymentPhone,
         transaction_id: result.transactionId,
       },
-      entity_id: null,
-      old_value: null,
-      ip_address: null,
     });
 
     return {

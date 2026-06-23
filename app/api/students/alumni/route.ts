@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { route, errorResponse, dbError, paginatedResponse, respond } from "@/lib/http";
+import { route, errorResponse, dbError, respond } from "@/lib/http";
+import { writeAuditLog } from "@/lib/audit-log";
+import { invalidateSchoolAsync } from "@/lib/api-cache";
+import { scopedQuery, paginated } from "@/lib/http/scoped";
 
 const createAlumniSchema = z.object({
   first_name: z.string().min(1, "First name is required"),
@@ -32,21 +35,14 @@ const updateAlumniSchema = z.object({
 export const GET = route({
   roles: ["SCHOOL_ADMIN", "BURSAR", "TEACHER", "SUPER_ADMIN"],
   handler: async (ctx, request) => {
-    const schoolId = ctx.profile.school_id!;
+    const url = new URL(request.url);
+    const q = url.searchParams.get("q");
+    const year = url.searchParams.get("year");
+    const className = url.searchParams.get("class");
+    const { page, limit, from, to } = paginated.parse(request);
 
-    const { searchParams } = new URL(request.url);
-    const q = searchParams.get("q");
-    const year = searchParams.get("year");
-    const className = searchParams.get("class");
-    const page = parseInt(searchParams.get("page") || "1", 10);
-    const limit = Math.min(parseInt(searchParams.get("limit") || "50", 10), 200);
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-
-    let query = ctx.supabase
-      .from("alumni")
+    let query = scopedQuery(ctx, "alumni")
       .select("*", { count: "exact" })
-      .eq("school_id", schoolId)
       .eq("is_deleted", false);
 
     if (q) {
@@ -57,14 +53,14 @@ export const GET = route({
     if (year) query = query.eq("graduation_year", parseInt(year, 10));
     if (className) query = query.eq("last_class", className);
 
-    const { data, error, count } = await query
+    const { data, count, error } = await query
       .order("graduation_year", { ascending: false })
       .order("last_name", { ascending: true })
       .range(from, to);
 
     if (error) return dbError(error, "Database error");
 
-    return paginatedResponse(data ?? [], count ?? 0, page, limit);
+    return paginated.envelope(data ?? [], count ?? 0, page, limit);
   },
 });
 
@@ -72,12 +68,8 @@ export const POST = route({
   roles: ["SCHOOL_ADMIN"],
   schema: createAlumniSchema,
   handler: async (ctx, body) => {
-    const schoolId = ctx.profile.school_id!;
-
-    const { data, error } = await ctx.supabase
-      .from("alumni")
+    const { data, error } = await scopedQuery(ctx, "alumni")
       .insert({
-        school_id: schoolId,
         first_name: body.first_name,
         last_name: body.last_name,
         graduation_year: body.graduation_year,
@@ -89,23 +81,23 @@ export const POST = route({
         profession: body.profession || null,
         notes: body.notes || null,
         student_id: body.student_id || null,
-      })
+      } as never)
       .select()
       .single();
 
     if (error) return dbError(error, "Database error");
 
-    await ctx.supabase.from("audit_logs").insert({
-      school_id: schoolId,
+    await writeAuditLog(ctx.supabase, {
+      school_id: ctx.schoolId,
       user_id: ctx.user.id,
       action: "alumni_create",
       entity_type: "alumni",
-      entity_id: data.id,
+      entity_id: data?.id ?? null,
       old_value: null,
-      new_value: { first_name: data.first_name, last_name: data.last_name },
-      ip_address: null,
+      new_value: { first_name: data?.first_name, last_name: data?.last_name },
     });
 
+    void invalidateSchoolAsync(ctx.schoolId);
     return respond.status(201, data);
   },
 });
@@ -114,40 +106,35 @@ export const PATCH = route({
   roles: ["SCHOOL_ADMIN"],
   schema: updateAlumniSchema,
   handler: async (ctx, body) => {
-    const schoolId = ctx.profile.school_id!;
     const { id, ...updates } = body;
 
-    // Verify ownership
-    const { data: existing } = await ctx.supabase
-      .from("alumni")
+    const { data: existing } = await scopedQuery(ctx, "alumni")
       .select("id")
       .eq("id", id)
-      .eq("school_id", schoolId)
       .eq("is_deleted", false)
-      .single();
+      .maybeSingle();
 
     if (!existing) return errorResponse("Alumni record not found", 404);
 
-    const { data, error } = await ctx.supabase
-      .from("alumni")
-      .update(updates)
+    const { data, error } = await scopedQuery(ctx, "alumni")
+      .update(updates as never)
       .eq("id", id)
       .select()
       .single();
 
     if (error) return dbError(error, "Database error");
 
-    await ctx.supabase.from("audit_logs").insert({
-      school_id: schoolId,
+    await writeAuditLog(ctx.supabase, {
+      school_id: ctx.schoolId,
       user_id: ctx.user.id,
       action: "alumni_update",
       entity_type: "alumni",
       entity_id: id,
       old_value: null,
-      new_value: updates,
-      ip_address: null,
+      new_value: updates as Record<string, unknown>,
     });
 
+    void invalidateSchoolAsync(ctx.schoolId);
     return data;
   },
 });
@@ -155,40 +142,35 @@ export const PATCH = route({
 export const DELETE = route({
   roles: ["SCHOOL_ADMIN"],
   handler: async (ctx, request) => {
-    const schoolId = ctx.profile.school_id!;
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
     if (!id) return errorResponse("Missing id parameter", 400);
 
-    // Verify ownership
-    const { data: existing } = await ctx.supabase
-      .from("alumni")
+    const { data: existing } = await scopedQuery(ctx, "alumni")
       .select("id")
       .eq("id", id)
-      .eq("school_id", schoolId)
       .eq("is_deleted", false)
-      .single();
+      .maybeSingle();
 
     if (!existing) return errorResponse("Alumni record not found", 404);
 
-    const { error } = await ctx.supabase
-      .from("alumni")
-      .update({ is_deleted: true })
+    const { error } = await scopedQuery(ctx, "alumni")
+      .update({ is_deleted: true } as never)
       .eq("id", id);
 
     if (error) return dbError(error, "Database error");
 
-    await ctx.supabase.from("audit_logs").insert({
-      school_id: schoolId,
+    await writeAuditLog(ctx.supabase, {
+      school_id: ctx.schoolId,
       user_id: ctx.user.id,
       action: "alumni_delete",
       entity_type: "alumni",
       entity_id: id,
       old_value: null,
       new_value: null,
-      ip_address: null,
     });
 
+    void invalidateSchoolAsync(ctx.schoolId);
     return { deleted: true };
   },
 });

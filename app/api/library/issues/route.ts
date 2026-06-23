@@ -105,7 +105,7 @@ export const PATCH = route({
       {
         p_school_id: schoolId,
         p_issue_id: body.issue_id,
-        p_fine_amount: fineAmount > 0 ? fineAmount : null,
+        p_fine_amount: fineAmount > 0 ? fineAmount : undefined,
         p_fine_paid: body.fine_paid && fineAmount > 0,
       },
     );

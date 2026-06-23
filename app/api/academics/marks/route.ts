@@ -1,39 +1,33 @@
 import type { Database } from "@/types/database";
 import { submitMarksSchema } from "@/lib/validations/marks";
 import { route, errorResponse, dbError, respond } from "@/lib/http";
-
-type TermRow = Database["public"]["Tables"]["terms"]["Row"];
+import { writeAuditLog } from "@/lib/audit-log";
+import { invalidateSchoolAsync } from "@/lib/api-cache";
+import { paginated, scopedQuery } from "@/lib/http/scoped";
 
 export const GET = route({
   roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
   handler: async (ctx, request) => {
-    const schoolId = ctx.profile.school_id!;
+    const url = new URL(request.url);
+    const classId = url.searchParams.get("class_id");
+    const subjectId = url.searchParams.get("subject_id");
+    const termId = url.searchParams.get("term_id");
+    const examType = url.searchParams.get("exam_type");
+    const { page, limit, from, to } = paginated.parse(request);
 
-    const { searchParams } = new URL(request.url);
-    const classId = searchParams.get("class_id");
-    const subjectId = searchParams.get("subject_id");
-    const termId = searchParams.get("term_id");
-    const examType = searchParams.get("exam_type");
-    const page = parseInt(searchParams.get("page") || "1", 10);
-    const limit = Math.min(parseInt(searchParams.get("limit") || "100", 10), 500);
-    const from = (page - 1) * limit;
-    const to = from + limit - 1;
-
-    let query = ctx.supabase
-      .from("marks")
+    let query = scopedQuery(ctx, "marks")
       .select(`
         *,
         student:students(full_name, admission_number),
         subject:subjects(name, code)
-      `, { count: "exact" })
-      .eq("school_id", schoolId);
+      `, { count: "exact" });
 
     if (classId) query = query.eq("class_id", classId);
     if (subjectId) query = query.eq("subject_id", subjectId);
     if (termId) query = query.eq("term_id", termId);
     if (examType) query = query.eq("exam_type", examType as Database["public"]["Enums"]["exam_type"]);
 
-    const { data, error, count } = await query
+    const { data, count, error } = await query
       .order("created_at", { ascending: false })
       .range(from, to);
 
@@ -53,22 +47,14 @@ export const POST = route({
   roles: ["SCHOOL_ADMIN", "TEACHER", "SUPER_ADMIN"],
   schema: submitMarksSchema,
   handler: async (ctx, body) => {
-    const schoolId = ctx.profile.school_id!;
-
-    // Resolve academic_year_id from term if not provided.
-    // `submitMarksSchema` does not include academic_year_id directly —
-    // the route accepts it as an extra passthrough field so callers
-    // can save a DB round-trip when they already know the year.
     type SubmitMarksWithYear = Omit<typeof body, never> & { academic_year_id?: string };
     const extendedBody = body as SubmitMarksWithYear;
     let academicYearId: string | undefined = extendedBody.academic_year_id;
     if (!academicYearId) {
-      const { data: term } = await ctx.supabase
-        .from("terms")
+      const { data: term } = await scopedQuery(ctx, "terms")
         .select("academic_year_id")
         .eq("id", body.term_id)
-        .eq("school_id", schoolId)
-        .single() as unknown as { data: Pick<TermRow, "academic_year_id"> | null };
+        .maybeSingle();
       academicYearId = term?.academic_year_id;
     }
 
@@ -76,20 +62,17 @@ export const POST = route({
       return errorResponse("Could not determine academic year", 400);
     }
 
-    // Verify class belongs to school
-    const { data: cls } = await ctx.supabase
-      .from("classes")
+    const { data: cls } = await scopedQuery(ctx, "classes")
       .select("id")
       .eq("id", body.class_id)
-      .eq("school_id", schoolId)
-      .single();
+      .maybeSingle();
 
     if (!cls) {
       return errorResponse("Invalid class for this school", 400);
     }
 
     const records = body.marks.map((m) => ({
-      school_id: schoolId,
+      school_id: ctx.schoolId,
       student_id: m.student_id,
       subject_id: body.subject_id,
       class_id: body.class_id,
@@ -100,25 +83,18 @@ export const POST = route({
       max_score: m.max_score || 100,
       entered_by: ctx.user.id,
       remarks: m.remarks || null,
-      // Audit 10.x: the marks review page groups by review_status and
-      // surfaces "Approve" / "Reject" actions only on submitted rows.
-      // When the teacher clicks "Submit for Review" we set the status
-      // here so the reviewer sees the new "Awaiting Review" group
-      // immediately on the next list refresh. Draft saves leave the
-      // status as "draft" (or whatever the row was before).
       review_status: body.submit_final ? "submitted" : "draft",
     }));
 
     const { data, error } = await ctx.supabase
       .from("marks")
-      .upsert(records as Database["public"]["Tables"]["marks"]["Insert"][], { onConflict: "student_id,subject_id,term_id,exam_type" })
+      .upsert(records as never, { onConflict: "student_id,subject_id,term_id,exam_type" })
       .select();
 
     if (error) return dbError(error, "Failed to load marks");
 
-    // Audit log
-    await ctx.supabase.from("audit_logs").insert({
-      school_id: schoolId,
+    await writeAuditLog(ctx.supabase, {
+      school_id: ctx.schoolId,
       user_id: ctx.user.id,
       action: "marks_entered",
       entity_type: "mark",
@@ -130,8 +106,9 @@ export const POST = route({
         count: records.length,
         exam_type: body.exam_type,
       },
-      ip_address: null,
     });
+
+    void invalidateSchoolAsync(ctx.schoolId);
 
     return respond.status(201, data);
   },

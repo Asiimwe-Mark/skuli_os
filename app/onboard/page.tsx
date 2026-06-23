@@ -94,10 +94,11 @@ const STEPS = [
   { title: "Choose Plan",    icon: CreditCard },
 ];
 
+// FIX 1: Removed stray `focus:` with no value
 const selectClass =
   "w-full h-11 px-3.5 rounded-xl border bg-card text-heading text-sm " +
   "border-border hover:border-border-strong " +
-  "focus:outline-none focus: focus:ring-2 focus:ring-border " +
+  "focus:outline-none focus:ring-2 focus:ring-border " +
   "transition-all duration-200";
 
 export default function OnboardPage() {
@@ -185,8 +186,6 @@ export default function OnboardPage() {
 
     try {
       // ── Step 1: Create the school first to get the school_id ────────────
-      // We need the school_id to build a proper storage path. The logo
-      // upload happens AFTER the API call returns the new school_id.
       const response = await fetch("/api/onboard", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -199,7 +198,7 @@ export default function OnboardPage() {
             email: email || undefined,
             school_type: schoolType,
             motto: motto || undefined,
-            logo_url: null, // uploaded in step 2 below
+            logo_url: null,
           },
           admin: { full_name: fullName, email: adminEmail, password },
           plan: selectedPlan,
@@ -240,9 +239,6 @@ export default function OnboardPage() {
       const schoolId = result.data?.school_id;
 
       // ── Step 2: Upload logo to school-scoped path ────────────────────────
-      // MIN-2 fix: logo goes to school-logos/{school_id}/{timestamp}.{ext}
-      // so it can be found, managed, and replaced per school. The temp-*
-      // path was impossible to clean up or find back.
       if (logoFile && schoolId) {
         const fileExt = logoFile.name.split(".").pop()?.toLowerCase() ?? "jpg";
         const filePath = `school-logos/${schoolId}/${Date.now()}.${fileExt}`;
@@ -251,7 +247,7 @@ export default function OnboardPage() {
           .from("school-assets")
           .upload(filePath, logoFile, {
             cacheControl: "3600",
-            upsert: true, // allow re-upload if onboarding is retried
+            upsert: true,
           });
 
         if (!uploadError) {
@@ -259,14 +255,11 @@ export default function OnboardPage() {
             .from("school-assets")
             .getPublicUrl(filePath);
 
-          // Patch the logo_url back onto the school row
           await fetch(`/api/settings/school`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ logo_url: urlData.publicUrl }),
           }).catch(() => {
-            // Non-fatal: school was created, logo update failed.
-            // User can re-upload in settings.
             console.warn("[onboard] logo URL patch failed — user can update in settings");
           });
         }
@@ -316,7 +309,10 @@ export default function OnboardPage() {
                 <Label htmlFor="district">District *</Label>
                 <select id="district" value={district} onChange={(e) => setDistrict(e.target.value)} className={selectClass}>
                   <option value="">Select district</option>
-                  {UGANDA_DISTRICTS.map((d) => <option key={d} value={d}>{d}</option>)}
+                  {/* FIX 2: key={d} is sufficient since district names are unique strings */}
+                  {UGANDA_DISTRICTS.map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
                 </select>
               </div>
               <div className="space-y-2">
@@ -464,8 +460,9 @@ export default function OnboardPage() {
                       : "border-border bg-card hover:border-border-strong"
                   }`}
                 >
+                  {/* FIX 3: Added bg-primary to the "Most Popular" badge */}
                   {plan.popular && (
-                    <span className="absolute -top-2 right-4 inline-flex items-center gap-1 text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-card">
+                    <span className="absolute -top-2 right-4 inline-flex items-center gap-1 bg-primary text-white text-[10px] font-bold px-2 py-0.5 rounded-full shadow-card">
                       <Sparkles className="h-2.5 w-2.5" />
                       Most Popular
                     </span>
@@ -487,10 +484,11 @@ export default function OnboardPage() {
                       </li>
                     ))}
                   </ul>
+                  {/* FIX 6: Added bg-primary to the selected plan checkmark badge */}
                   {selectedPlan === plan.id && (
                     <motion.div
                       layoutId="plan-check"
-                      className="absolute top-3 right-3 w-6 h-6 rounded-full flex items-center justify-center shadow-card"
+                      className="absolute top-3 right-3 w-6 h-6 rounded-full bg-primary flex items-center justify-center shadow-card"
                     >
                       <Check className="w-3.5 h-3.5 text-white" strokeWidth={3} />
                     </motion.div>
@@ -538,18 +536,22 @@ export default function OnboardPage() {
                 const isActive = i === step;
                 return (
                   <div key={i} className="flex items-center">
+                    {/* FIX 4: Added bg-primary to done and active step indicators */}
                     <motion.div
                       animate={{ scale: isActive ? 1.05 : 1 }}
                       className={`h-10 w-10 rounded-full flex items-center justify-center text-sm font-semibold transition-all ${
-                        isDone ? " text-white shadow-card"
-                          : isActive ? " text-white shadow-card"
+                        isDone
+                          ? "bg-primary text-white shadow-card"
+                          : isActive
+                          ? "bg-primary text-white shadow-card"
                           : "bg-bg-tertiary text-muted border border-border"
                       }`}
                     >
                       {isDone ? <Check className="w-4 h-4" strokeWidth={3} /> : <s.icon className="w-4 h-4" />}
                     </motion.div>
+                    {/* FIX 5: Added bg-primary to filled connector lines between steps */}
                     {i < STEPS.length - 1 && (
-                      <div className={`w-8 sm:w-12 h-0.5 mx-1 rounded transition-all ${isDone ? "" : "bg-border"}`} />
+                      <div className={`w-8 sm:w-12 h-0.5 mx-1 rounded transition-all ${isDone ? "bg-primary" : "bg-border"}`} />
                     )}
                   </div>
                 );

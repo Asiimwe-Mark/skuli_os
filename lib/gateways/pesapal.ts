@@ -137,7 +137,8 @@ export async function getPesapalToken(): Promise<string> {
   try {
     await supabase
       .from('pesapal_token_cache')
-      .upsert({ id: 'singleton', token: auth.token, expires_at: expiresAt, updated_at: new Date().toISOString() });
+      // cast payload to any to satisfy TS when table types are not available
+      .upsert({ id: 'singleton', token: auth.token, expires_at: expiresAt, updated_at: new Date().toISOString() } as any);
   } catch {
     // best-effort — ignore cache failures
   }

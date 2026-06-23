@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo} from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useDocumentTitle } from "@/lib/hooks/useDocumentTitle";
 import { motion } from "framer-motion";
 import { useRouter } from "next/navigation";
@@ -85,17 +85,30 @@ export default function StudentsPage() {
   const [sortBy, setSortBy] = useState<string>("full_name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [columnsOpen, setColumnsOpen] = useState(false);
-  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(() => {
-    if (typeof window === "undefined") return {
-      full_name: true, admission_number: true, class: true,
-      parent_phone: true, fee: true, enrollment_date: true,
-    };
-    const saved = localStorage.getItem("skuli-student-columns");
-    return saved ? JSON.parse(saved) : {
-      full_name: true, admission_number: true, class: true,
-      parent_phone: true, fee: true, enrollment_date: true,
-    };
-  });
+  const [visibleColumns, setVisibleColumns] = useState<Record<string, boolean>>(
+    () => {
+      if (typeof window === "undefined")
+        return {
+          full_name: true,
+          admission_number: true,
+          class: true,
+          parent_phone: true,
+          fee: true,
+          enrollment_date: true,
+        };
+      const saved = localStorage.getItem("skuli-student-columns");
+      return saved
+        ? JSON.parse(saved)
+        : {
+            full_name: true,
+            admission_number: true,
+            class: true,
+            parent_phone: true,
+            fee: true,
+            enrollment_date: true,
+          };
+    },
+  );
 
   function toggleColumn(key: string) {
     setVisibleColumns((prev) => {
@@ -140,17 +153,18 @@ export default function StudentsPage() {
         .from("students")
         .select(
           "id, school_id, full_name, gender, photo_url, admission_number, parent_name, parent_phone, parent_email, parent_nid, enrollment_date, date_of_birth, status, exit_date, current_class_id, created_at, updated_at, is_deleted, current_class:classes(id, name)",
-          { count: "exact" }
+          { count: "exact" },
         )
         .eq("school_id", school!.id)
         .eq("is_deleted", false);
 
       if (search) {
         query = query.or(
-          `full_name.ilike.%${search}%,admission_number.ilike.%${search}%,parent_phone.ilike.%${search}%`
+          `full_name.ilike.%${search}%,admission_number.ilike.%${search}%,parent_phone.ilike.%${search}%`,
         );
       }
-      if (classFilter !== "all") query = query.eq("current_class_id", classFilter);
+      if (classFilter !== "all")
+        query = query.eq("current_class_id", classFilter);
       // Audit 2.5: previously `statusFilter as any` — cast hid type
       // mismatches. Now narrowed to StudentStatus so a stray
       // statusFilter value ("foo") would fail the build, not silently
@@ -167,7 +181,7 @@ export default function StudentsPage() {
       if (error) throw error;
 
       const studentIds = (data || []).map((s: { id: string }) => s.id);
-      let feeMap: Record<string, { status: string; balance: number }> = {};
+      const feeMap: Record<string, { status: string; balance: number }> = {};
 
       if (studentIds.length > 0 && canViewFees) {
         const { data: feeData } = await supabase
@@ -181,14 +195,20 @@ export default function StudentsPage() {
         if (feeData) {
           for (const fa of feeData) {
             if (!feeMap[fa.student_id]) {
-              feeMap[fa.student_id] = { status: fa.status, balance: fa.balance };
+              feeMap[fa.student_id] = {
+                status: fa.status,
+                balance: fa.balance,
+              };
             }
           }
         }
       }
 
-      const enriched: StudentRow[] = (data ?? []).map((s: Tables<"students">) => ({
+      const enriched: StudentRow[] = (data ?? []).map((s) => ({
         ...s,
+        // ensure required StudentRow fields exist
+        address: (s as any).address ?? "",
+        motto: (s as any).motto ?? "",
         fee_account: feeMap[s.id] || null,
       }));
       return { students: enriched, total: count || 0 };
@@ -201,7 +221,9 @@ export default function StudentsPage() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("classes")
-        .select("id, name, school_id, level, stream, capacity, class_teacher_id")
+        .select(
+          "id, name, school_id, level, stream, capacity, class_teacher_id",
+        )
         .eq("school_id", school!.id)
         .eq("is_deleted", false)
         .order("name");
@@ -360,7 +382,9 @@ export default function StudentsPage() {
             </Button>
             {columnsOpen && (
               <div className="absolute right-0 top-full mt-1 z-50 w-48 rounded-lg border border-border bg-card p-3 shadow-lg">
-                <p className="text-xs font-medium text-heading mb-2">Toggle columns</p>
+                <p className="text-xs font-medium text-heading mb-2">
+                  Toggle columns
+                </p>
                 <div className="space-y-2">
                   {columnDefs.map((col) => (
                     <label
@@ -388,7 +412,9 @@ export default function StudentsPage() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => router.push("/dashboard/students/promote")}>
+              <DropdownMenuItem
+                onClick={() => router.push("/dashboard/students/promote")}
+              >
                 <ArrowUpRight className="w-4 h-4 mr-2" />
                 Promote Students
               </DropdownMenuItem>
@@ -515,17 +541,31 @@ export default function StudentsPage() {
         <motion.div {...fadeInUp} transition={{ delay: 0.1 }}>
           <EmptyState
             icon={GraduationCap}
-            title={search || classFilter !== "all" || statusFilter !== "all" || genderFilter !== "all"
-              ? "No students match your filters"
-              : "No students yet"}
+            title={
+              search ||
+              classFilter !== "all" ||
+              statusFilter !== "all" ||
+              genderFilter !== "all"
+                ? "No students match your filters"
+                : "No students yet"
+            }
             description={
-              search || classFilter !== "all" || statusFilter !== "all" || genderFilter !== "all"
+              search ||
+              classFilter !== "all" ||
+              statusFilter !== "all" ||
+              genderFilter !== "all"
                 ? "Try adjusting your search or filters."
                 : "Enroll your first student to get started with student management."
             }
             action={
-              !search && classFilter === "all" && statusFilter === "all" && genderFilter === "all" && canEditStudents ? (
-                <Button onClick={() => router.push("/dashboard/students/enroll")}>
+              !search &&
+              classFilter === "all" &&
+              statusFilter === "all" &&
+              genderFilter === "all" &&
+              canEditStudents ? (
+                <Button
+                  onClick={() => router.push("/dashboard/students/enroll")}
+                >
                   <UserPlus className="w-4 h-4 mr-2" />
                   Enroll First Student
                 </Button>
@@ -543,23 +583,28 @@ export default function StudentsPage() {
               <table className="w-full">
                 <thead>
                   <tr className="bg-bg-tertiary border-b border-border">
-                    {columnDefs.filter((col) => visibleColumns[col.key] !== false).map((col) => (
-                      <th
-                        key={col.key}
-                        className={cn(
-                          "px-4 py-3 text-left text-xs font-medium text-heading uppercase tracking-wider",
-                          col.key !== "fee" && "cursor-pointer hover:text-heading"
-                        )}
-                        onClick={() => col.key !== "fee" && handleSort(col.key)}
-                      >
-                        <div className="flex items-center gap-1">
-                          {col.label}
-                          {sortBy === col.key && (
-                            <ArrowUpDown className="w-3 h-3 text-text-heading" />
+                    {columnDefs
+                      .filter((col) => visibleColumns[col.key] !== false)
+                      .map((col) => (
+                        <th
+                          key={col.key}
+                          className={cn(
+                            "px-4 py-3 text-left text-xs font-medium text-heading uppercase tracking-wider",
+                            col.key !== "fee" &&
+                              "cursor-pointer hover:text-heading",
                           )}
-                        </div>
-                      </th>
-                    ))}
+                          onClick={() =>
+                            col.key !== "fee" && handleSort(col.key)
+                          }
+                        >
+                          <div className="flex items-center gap-1">
+                            {col.label}
+                            {sortBy === col.key && (
+                              <ArrowUpDown className="w-3 h-3 text-text-heading" />
+                            )}
+                          </div>
+                        </th>
+                      ))}
                     <th className="px-4 py-3 w-12" />
                   </tr>
                 </thead>
@@ -569,7 +614,10 @@ export default function StudentsPage() {
                       key={student.id}
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.18, delay: Math.min(i * 0.02, 0.3) }}
+                      transition={{
+                        duration: 0.18,
+                        delay: Math.min(i * 0.02, 0.3),
+                      }}
                       // Audit 10.4: the row is clickable but had no
                       // keyboard entry point. Tabbing through the
                       // page skipped every student. Add tabIndex so
@@ -594,94 +642,98 @@ export default function StudentsPage() {
                     >
                       {/* Student */}
                       {visibleColumns.full_name !== false && (
-                      <td className="px-4 py-3" data-label="Student">
-                        <div className="flex items-center gap-3">
-                          {student.photo_url ? (
-                            <img
-                              src={student.photo_url}
-                              alt={student.full_name}
-                              className="w-9 h-9 rounded-full object-cover"
-                            />
-                          ) : (
-                            <div className="w-9 h-9 rounded-full bg-warning-100 text-warning-700 flex items-center justify-center text-xs font-bold shrink-0">
-                              {getInitials(student.full_name)}
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <p className="text-sm font-medium truncate">
-                                {student.full_name}
+                        <td className="px-4 py-3" data-label="Student">
+                          <div className="flex items-center gap-3">
+                            {student.photo_url ? (
+                              <img
+                                src={student.photo_url}
+                                alt={student.full_name}
+                                className="w-9 h-9 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-9 h-9 rounded-full bg-warning-100 text-warning-700 flex items-center justify-center text-xs font-bold shrink-0">
+                                {getInitials(student.full_name)}
+                              </div>
+                            )}
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="text-sm font-medium truncate">
+                                  {student.full_name}
+                                </p>
+                                {(disciplineCounts[student.id] || 0) >= 3 && (
+                                  <Badge
+                                    variant="outline"
+                                    className="shrink-0 border-border text-warning-600 bg-warning-50 text-[10px] px-1.5 py-0"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      router.push(
+                                        `/dashboard/students/${student.id}?tab=discipline`,
+                                      );
+                                    }}
+                                  >
+                                    <AlertTriangle className="w-3 h-3 mr-0.5" />
+                                    {disciplineCounts[student.id]} incidents
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-xs text-heading capitalize">
+                                {student.gender || "---"}
                               </p>
-                              {(disciplineCounts[student.id] || 0) >= 3 && (
-                                <Badge
-                                  variant="outline"
-                                  className="shrink-0 border-border text-warning-600 bg-warning-50 text-[10px] px-1.5 py-0"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    router.push(`/dashboard/students/${student.id}?tab=discipline`);
-                                  }}
-                                >
-                                  <AlertTriangle className="w-3 h-3 mr-0.5" />
-                                  {disciplineCounts[student.id]} incidents
-                                </Badge>
-                              )}
                             </div>
-                            <p className="text-xs text-heading capitalize">
-                              {student.gender || "---"}
-                            </p>
                           </div>
-                        </div>
-                      </td>
+                        </td>
                       )}
 
                       {/* Admission No */}
                       {visibleColumns.admission_number !== false && (
-                      <td className="px-4 py-3" data-label="Adm. No.">
-                        <span className="text-sm font-mono text-text-heading">
-                          {student.admission_number}
-                        </span>
-                      </td>
+                        <td className="px-4 py-3" data-label="Adm. No.">
+                          <span className="text-sm font-mono text-text-heading">
+                            {student.admission_number}
+                          </span>
+                        </td>
                       )}
 
                       {/* Class */}
                       {visibleColumns.class !== false && (
-                      <td className="px-4 py-3" data-label="Class">
-                        <span className="text-sm">
-                          {student.current_class?.name || "---"}
-                        </span>
-                      </td>
+                        <td className="px-4 py-3" data-label="Class">
+                          <span className="text-sm">
+                            {student.current_class?.name || "---"}
+                          </span>
+                        </td>
                       )}
 
                       {/* Parent Phone */}
                       {visibleColumns.parent_phone !== false && (
-                      <td className="px-4 py-3" data-label="Parent Phone">
-                        <span className="text-sm text-heading">
-                          {student.parent_phone ? formatPhoneDisplay(student.parent_phone) : "—"}
-                        </span>
-                      </td>
+                        <td className="px-4 py-3" data-label="Parent Phone">
+                          <span className="text-sm text-heading">
+                            {student.parent_phone
+                              ? formatPhoneDisplay(student.parent_phone)
+                              : "—"}
+                          </span>
+                        </td>
                       )}
 
                       {/* Fee Status */}
                       {visibleColumns.fee !== false && (
-                      <td className="px-4 py-3" data-label="Fee Status">
-                        {canViewFees ? (
-                          getFeeBadge(
-                            student.fee_account?.status || null,
-                            student.fee_account?.balance || null
-                          )
-                        ) : (
-                          <span className="text-sm text-heading">---</span>
-                        )}
-                      </td>
+                        <td className="px-4 py-3" data-label="Fee Status">
+                          {canViewFees ? (
+                            getFeeBadge(
+                              student.fee_account?.status || null,
+                              student.fee_account?.balance || null,
+                            )
+                          ) : (
+                            <span className="text-sm text-heading">---</span>
+                          )}
+                        </td>
                       )}
 
                       {/* Enrollment Date */}
                       {visibleColumns.enrollment_date !== false && (
-                      <td className="px-4 py-3" data-label="Enrolled">
-                        <span className="text-sm text-heading">
-                          {formatDate(student.enrollment_date)}
-                        </span>
-                      </td>
+                        <td className="px-4 py-3" data-label="Enrolled">
+                          <span className="text-sm text-heading">
+                            {formatDate(student.enrollment_date)}
+                          </span>
+                        </td>
                       )}
 
                       {/* Actions */}
@@ -701,7 +753,9 @@ export default function StudentsPage() {
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation();
-                                router.push(`/dashboard/students/${student.id}`);
+                                router.push(
+                                  `/dashboard/students/${student.id}`,
+                                );
                               }}
                             >
                               View Profile
@@ -711,7 +765,7 @@ export default function StudentsPage() {
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   router.push(
-                                    `/dashboard/students/${student.id}?tab=edit`
+                                    `/dashboard/students/${student.id}?tab=edit`,
                                   );
                                 }}
                               >
@@ -771,7 +825,9 @@ export default function StudentsPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                  onClick={() =>
+                    setPage((p) => Math.min(totalPages - 1, p + 1))
+                  }
                   disabled={page >= totalPages - 1}
                 >
                   <ChevronRight className="w-4 h-4" />

@@ -202,10 +202,10 @@ export interface PortalFeeAccount extends FeeAccountRow {
   terms: (Pick<TermRow, 'id' | 'name' | 'start_date' | 'end_date'> & {
     academic_years: Pick<AcademicYearRow, 'id' | 'name'> | null;
   }) | null;
-  fee_structures: Pick<FeeStructureRow, 'id' | 'name' | 'amount' | 'is_mandatory'>[] | null;
+  fee_structures: Pick<FeeStructureRow, 'id' | 'name' | 'amount' | 'frequency'>[] | null;
   student_discounts: {
     id: string;
-    fee_discounts: Pick<FeeDiscountRow, 'id' | 'name' | 'discount_type' | 'value' | 'max_amount'> | null;
+    fee_discounts: Pick<FeeDiscountRow, 'id' | 'name' | 'discount_type' | 'value' | 'description'> | null;
   }[] | null;
 }
 

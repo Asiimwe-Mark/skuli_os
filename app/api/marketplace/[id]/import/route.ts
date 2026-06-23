@@ -82,7 +82,7 @@ export const POST = route({
   roles: ["SCHOOL_ADMIN", "BURSAR", "SUPER_ADMIN"],
   schema: importTemplateSchema,
   handler: async (ctx, body, _request, params) => {
-    const schoolId = ctx.profile.school_id!;
+    const schoolId = ctx.schoolId!;
     const { id } = (params ?? {}) as { id: string };
 
     const { data: template, error: tErr } = await ctx.supabase
@@ -131,7 +131,6 @@ export const POST = route({
         term_id: body.term_id!,
         name: it.name,
         amount: it.amount,
-        is_mandatory: it.is_mandatory,
       }));
       if (rows.length > 0) {
         const { error } = await ctx.supabase

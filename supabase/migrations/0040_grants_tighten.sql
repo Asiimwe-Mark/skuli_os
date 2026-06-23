@@ -1,6 +1,6 @@
 -- =============================================================================
--- SKULI SaaS: Tightened grants (Audit §8.1)
--- Migration 0028 (part 4)
+-- SKULI SaaS: Tightened grants (Audit Â§8.1)
+-- Migration 0040 (originally 0028 part 4)
 --
 -- The previous grants file (0026_grants.sql) ran:
 --   GRANT SELECT, INSERT, UPDATE, DELETE
@@ -15,7 +15,7 @@
 -- This migration:
 --   1. Revokes the blanket INSERT/UPDATE/DELETE grant from anon
 --      and authenticated. Both roles keep SELECT.
---   2. Keeps ALTER DEFAULT PRIVILEGES for SELECT only — new tables
+--   2. Keeps ALTER DEFAULT PRIVILEGES for SELECT only â€” new tables
 --      are at least readable to authenticated, but writes are
 --      explicitly granted per-table by follow-up migrations.
 --   3. Keeps service_role with full DML (it bypasses RLS by design
@@ -40,7 +40,7 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public
 
 -- 3. Restore DELETE for the operational log tables that the app
 --    actually needs to clear (e.g. expired notifications). The list
---    is small and explicit — anything else is denied.
+--    is small and explicit â€” anything else is denied.
 GRANT INSERT ON public.audit_logs              TO authenticated;
 GRANT INSERT ON public.in_app_notifications    TO authenticated;
 GRANT INSERT, UPDATE, DELETE

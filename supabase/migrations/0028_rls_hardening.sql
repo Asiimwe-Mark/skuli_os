@@ -247,14 +247,15 @@ CREATE POLICY tuition_payments_select ON tuition_payments FOR SELECT
 -- participants of a thread (so a parent can read threads they are
 -- part of, regardless of role).
 -- ---------------------------------------------------------------------------
+-- NOTE: message_threads is phone-based (one thread per parent_phone per school).
+-- There is no thread_participants table — the link is message_threads.parent_phone
+-- matched against users.phone for the calling user.
 DROP POLICY IF EXISTS thread_participant_select ON message_threads;
 CREATE POLICY thread_participant_select ON message_threads FOR SELECT
     USING (
         get_user_role() = 'PARENT'
-        AND EXISTS (
-            SELECT 1 FROM thread_participants tp
-            WHERE tp.thread_id = message_threads.id
-              AND tp.participant_user_id = auth.uid()
+        AND parent_phone = (
+            SELECT phone FROM users WHERE id = auth.uid()
         )
     );
 

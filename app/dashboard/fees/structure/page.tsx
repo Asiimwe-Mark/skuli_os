@@ -155,7 +155,9 @@ export default function FeeStructurePage() {
         .eq("is_deleted", false)
         .order("created_at", { ascending: true });
       if (error) throw error;
-      return (data ?? []) as FeeStructure[];
+      // supabase may return error-like objects in the data array in some cases;
+      // cast via unknown first to satisfy TypeScript when we're confident of the shape
+      return (data ?? []) as unknown as FeeStructure[];
     },
     enabled: !!school?.id && !!selectedTermId,
   });
@@ -636,7 +638,7 @@ export default function FeeStructurePage() {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete Fee Item</AlertDialogTitle>
             <AlertDialogDescription>
-              Are you sure you want to delete "{deletingItem?.name}"? This cannot be undone
+              Are you sure you want to delete &quot;{deletingItem?.name}&quot;? This cannot be undone
               and may affect existing fee accounts.
             </AlertDialogDescription>
           </AlertDialogHeader>

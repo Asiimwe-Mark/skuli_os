@@ -119,7 +119,6 @@ export async function withSchoolCache<T>(
 ): Promise<CacheResult<T>> {
   const key = keyFor(opts);
   const revalidateMs = (opts.revalidateSeconds ?? DEFAULT_REVALIDATE_SECONDS) * 1000;
-  const now = Date.now();
 
   if (redis) {
     return await withRedis<T>(key, revalidateMs, fn);
@@ -211,6 +210,39 @@ function evictIfFull(): void {
 }
 
 // ─── Invalidation ─────────────────────────────────────────────────────────────
+
+/**
+ * Fire-and-forget variant of `invalidateSchool`.
+ *
+ * Use this from mutation handlers. The cache invalidation does not
+ * need to land before the response is sent — only before the next
+ * read — so paying 30–200 ms of Redis SCAN+DEL latency on the
+ * mutation path is wasted wall-clock.
+ *
+ * The detached `setImmediate` runs the SCAN+DEL on the next tick
+ * after the response has been flushed to the client. Any error is
+ * swallowed and logged to the server console; the next read will
+ * fall through to the underlying DB query and self-correct.
+ *
+ * Note: `setImmediate` is a Node-only API. This module is only
+ * ever imported by route handlers running on the server, so the
+ * API is always available. If this file is ever imported in an
+ * edge runtime (which it shouldn't be — `cacheHeader` and friends
+ * are Node-only), fall back to `Promise.resolve().then(...)`.
+ */
+export function invalidateSchoolAsync(schoolId: string): void {
+  if (typeof setImmediate === "function") {
+    setImmediate(() => {
+      void invalidateSchool(schoolId).catch((err) => {
+        console.error("[api-cache] async invalidate failed", err);
+      });
+    });
+  } else {
+    void invalidateSchool(schoolId).catch((err) => {
+      console.error("[api-cache] async invalidate failed", err);
+    });
+  }
+}
 
 /**
  * Invalidate every cached entry for a school. Called from mutations.

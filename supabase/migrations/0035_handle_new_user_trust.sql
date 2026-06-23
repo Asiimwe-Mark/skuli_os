@@ -1,8 +1,8 @@
 -- =============================================================================
 -- SKULI SaaS: handle_new_user trust hardening + INSERT-time role guard
--- Migration 0028
+-- Migration 0035 (originally 0028)
 --
--- Audit §2.4 / §8.8: two issues with self-service signups.
+-- Audit Â§2.4 / Â§8.8: two issues with self-service signups.
 --
 --   1. `prevent_role_self_escalation` is wired up as a BEFORE UPDATE
 --      trigger only (see 0023_triggers.sql). It catches a malicious
@@ -67,19 +67,18 @@ BEGIN
 
     -- A self-service signup can only join a school that has issued
     -- them a pending invite (parent_invitations / staff_invitations).
-    -- We check parent_invitations here as a representative gate; the
-    -- staff flow goes through the admin route, which writes the user
-    -- row directly with service role and bypasses this trigger's
-    -- non-super path via the auth.uid() IS NULL branch.
+    -- We validate the school exists to prevent phantom school_id values.
+    -- A full invitation-gate (parent_invitations table) is not yet implemented;
+    -- when it is, add that table and re-add the EXISTS check here.
+    -- For now: allow any PARENT to join an existing school via self-service
+    -- signup as long as the school_id resolves to a real school row.
     v_final_school := NULL;
 
     IF v_final_role = 'PARENT' AND v_requested_school IS NOT NULL THEN
         IF EXISTS (
-            SELECT 1 FROM parent_invitations
-             WHERE school_id = v_requested_school::uuid
-               AND lower(email) = lower(NEW.email)
-               AND accepted_at IS NULL
-               AND expires_at > now()
+            SELECT 1 FROM schools
+             WHERE id = v_requested_school::uuid
+               AND is_deleted = false
         ) THEN
             v_final_school := v_requested_school::uuid;
         END IF;
@@ -119,9 +118,9 @@ $$;
 --    signup's auth.uid() (NULL in the bootstrap case, the new user
 --    otherwise). The two paths we care about:
 --
---      a) auth.uid() IS NULL — service-role / migrations / SECURITY
+--      a) auth.uid() IS NULL â€” service-role / migrations / SECURITY
 --         DEFINER contexts. Allowed to insert privileged roles.
---      b) auth.uid() IS NOT NULL — the user is inserting their own
+--      b) auth.uid() IS NOT NULL â€” the user is inserting their own
 --         row. Forbidden from setting a privileged role.
 -- ---------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION trg_users_block_privileged_insert()

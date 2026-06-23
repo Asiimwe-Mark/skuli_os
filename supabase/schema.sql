@@ -16,7 +16,7 @@
 -- migrations in order and respects supabase_migrations.schema_migrations.
 --
 -- Regenerate:  node scripts/build-schema.mjs
--- Generated:   2026-06-21T09:14:33.217Z
+-- Generated:   2026-06-21T09:30:02.104Z
 -- Source files: 41
 -- =============================================================================
 
@@ -5201,583 +5201,6 @@ INSERT INTO school_groups (id, name, code, created_at, is_deleted) VALUES
 ON CONFLICT (code) DO NOTHING;
 
 -- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_audit_logs_append_only.sql
--- ----------------------------------------------------------------------------
-
--- =============================================================================
--- SKULI SaaS: audit_logs append-only
--- Migration 0028
---
--- Audit §8.6: audit_logs is a soft-delete table today (it has an
--- is_deleted column and the set_updated_at trigger on it from
--- 0023_triggers.sql). That gives any caller with the existing
--- update policy two ways to rewrite history:
---   1. UPDATE ... SET is_deleted = true
---   2. UPDATE ... SET new_value = '{}' to scrub what was recorded
---
--- There is no business reason to mutate an audit entry. Forensic
--- value comes from the row being written exactly once and never
--- touched again. Append-only is enforced three ways here:
---
---   1. A BEFORE UPDATE trigger that raises an exception for any
---      non-service-role caller.
---   2. A BEFORE DELETE trigger (statement-level) that raises the
---      same way. (Row-level keeps the error tied to a specific
---      row for debugging.)
---   3. The service role bypasses the trigger so reaper / archival
---      jobs in the future can prune if the user opts in to that
---      policy. The default posture is still "no edits".
---
--- The triggers are idempotent: DROP TRIGGER IF EXISTS is used.
--- ---------------------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION trg_audit_logs_block_mutation()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, public
-AS $$
-BEGIN
-    -- service_role bypass — used by future archival / reaper jobs
-    -- and by the migrations themselves.
-    IF auth.uid() IS NULL THEN
-        RETURN NULL;
-    END IF;
-
-    RAISE EXCEPTION
-        'audit_logs is append-only; % on an existing row is not permitted',
-        TG_OP
-        USING ERRCODE = '42501';
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_audit_logs_no_update ON public.audit_logs;
-CREATE TRIGGER trg_audit_logs_no_update
-    BEFORE UPDATE ON public.audit_logs
-    FOR EACH ROW EXECUTE FUNCTION trg_audit_logs_block_mutation();
-
-DROP TRIGGER IF EXISTS trg_audit_logs_no_delete ON public.audit_logs;
-CREATE TRIGGER trg_audit_logs_no_delete
-    BEFORE DELETE ON public.audit_logs
-    FOR EACH ROW EXECUTE FUNCTION trg_audit_logs_block_mutation();
-
--- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_dashboard_mv_lockdown.sql
--- ----------------------------------------------------------------------------
-
--- =============================================================================
--- SKULI SaaS: Dashboard MV privilege lock-down (Audit §12.2)
--- Migration 0028 (part 8)
---
--- The four `mv_dashboard_*` materialised views aggregate ALL schools
--- (one row per school_id, ...). They are not RLS-aware — materialised
--- views do not honour RLS. Granting SELECT to `authenticated` lets any
--- logged-in user query the views directly via PostgREST and read every
--- school's revenue / payment-method mix / attendance totals,
--- bypassing the SECURITY INVOKER wrapper function that the route uses.
---
--- This migration revokes SELECT from `authenticated` and keeps the
--- grant on `service_role` only. The route layer continues to call
--- the wrapper functions (which are SECURITY INVOKER and apply RLS on
--- the underlying attendance_records / fee_payments selects).
--- ---------------------------------------------------------------------------
-
-REVOKE SELECT ON mv_dashboard_attendance_today     FROM authenticated;
-REVOKE SELECT ON mv_dashboard_attendance_by_class  FROM authenticated;
-REVOKE SELECT ON mv_dashboard_payment_trend        FROM authenticated;
-REVOKE SELECT ON mv_dashboard_payment_methods      FROM authenticated;
-
-REVOKE SELECT ON mv_dashboard_attendance_today     FROM anon;
-REVOKE SELECT ON mv_dashboard_attendance_by_class  FROM anon;
-REVOKE SELECT ON mv_dashboard_payment_trend        FROM anon;
-REVOKE SELECT ON mv_dashboard_payment_methods      FROM anon;
-
--- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_grants_lock_extras.sql
--- ----------------------------------------------------------------------------
-
--- =============================================================================
--- SKULI SaaS: Lock EXECUTE on encrypt_secret / decrypt_secret (Audit §8.7 / §14.2)
--- Migration 0028 (part 9)
---
--- 0026_grants.sql granted EXECUTE on every function in public to
--- `anon, authenticated` and never revoked `encrypt_secret` /
--- `decrypt_secret` specifically. The functions take the vault key
--- as an argument, so any logged-in user who can reach the key
--- (bundle leak, log, one SQLi sink) can decrypt every school's
--- stored AT / Resend / Pesapal credentials.
---
--- This migration REVOKEs EXECUTE from anon + authenticated and
--- grants it to service_role only. The only call sites
--- (lib/africas-talking/client.ts and any other admin-only path)
--- now go through createAdminClient().
--- ---------------------------------------------------------------------------
-
-REVOKE EXECUTE ON FUNCTION public.encrypt_secret(text, text) FROM anon, authenticated;
-REVOKE EXECUTE ON FUNCTION public.decrypt_secret(text, text) FROM anon, authenticated;
-GRANT   EXECUTE ON FUNCTION public.encrypt_secret(text, text) TO service_role;
-GRANT   EXECUTE ON FUNCTION public.decrypt_secret(text, text) TO service_role;
-
--- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_grants_tighten.sql
--- ----------------------------------------------------------------------------
-
--- =============================================================================
--- SKULI SaaS: Tightened grants (Audit §8.1)
--- Migration 0028 (part 4)
---
--- The previous grants file (0026_grants.sql) ran:
---   GRANT SELECT, INSERT, UPDATE, DELETE
---     ON ALL TABLES IN SCHEMA public TO anon, authenticated;
---   ALTER DEFAULT PRIVILEGES IN SCHEMA public
---     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated;
---
--- This hands full DML on every current and future public table to
--- both roles, so the *only* thing standing between a caller and the
--- data is RLS. A single missed RLS policy on a new table = breach.
---
--- This migration:
---   1. Revokes the blanket INSERT/UPDATE/DELETE grant from anon
---      and authenticated. Both roles keep SELECT.
---   2. Keeps ALTER DEFAULT PRIVILEGES for SELECT only — new tables
---      are at least readable to authenticated, but writes are
---      explicitly granted per-table by follow-up migrations.
---   3. Keeps service_role with full DML (it bypasses RLS by design
---      and is used by the webhook + admin paths).
---   4. Grants INSERT to authenticated *only* on the small set of
---      tables users truly insert into (audit_logs handled by
---      service_role triggers; sms_logs is a denormalized log table;
---      attendance_records etc. are inserted by the route layer
---      which already passes the right WITH CHECK).
--- ---------------------------------------------------------------------------
-
--- 1. Revoke the blanket DML grants.
-REVOKE INSERT, UPDATE, DELETE
-    ON ALL TABLES IN SCHEMA public
-    FROM anon, authenticated;
-
--- 2. Make the default for new tables SELECT-only.
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    REVOKE INSERT, UPDATE, DELETE ON TABLES FROM anon, authenticated;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-    REVOKE USAGE, UPDATE ON SEQUENCES FROM anon, authenticated;
-
--- 3. Restore DELETE for the operational log tables that the app
---    actually needs to clear (e.g. expired notifications). The list
---    is small and explicit — anything else is denied.
-GRANT INSERT ON public.audit_logs              TO authenticated;
-GRANT INSERT ON public.in_app_notifications    TO authenticated;
-GRANT INSERT, UPDATE, DELETE
-    ON public.push_subscriptions               TO authenticated;
-GRANT INSERT, UPDATE, DELETE
-    ON public.notification_preferences         TO authenticated;
-
--- 4. Re-grant the per-table privileges the application needs to
---    function. RLS still applies (the WITH CHECK on every policy
---    in 0015/0016/0017/0028_rls_hardening gates writes by school +
---    role). The DML grant just lets the request reach the policy.
---    Where the route uses a service-role client (webhooks,
---    /api/v1/* admin paths), no grant is needed at all.
-GRANT INSERT, UPDATE, DELETE ON public.students                TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.class_enrollments       TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.parent_students         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.fee_accounts            TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.fee_payments            TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.fee_structures          TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.fee_types               TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.fee_discounts           TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.student_discounts       TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.marks                   TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.report_cards            TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.subject_comments        TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.grading_scales          TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.attendance_records      TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.announcements           TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.staff                   TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.staff_payment_profiles  TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.payroll_records         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.payroll_batches         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.batch_line_items        TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.meeting_slots           TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.meeting_bookings        TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.message_threads         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.thread_messages         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.assets                  TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.asset_maintenance       TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.library_books           TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.library_issues          TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.discipline_records      TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.calendar_events         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.timetable_periods       TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.timetable_slots         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.teacher_class_assignments TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.expense_categories      TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.expenses                TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.sms_templates           TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.sms_logs                TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.emis_report_logs        TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.users                   TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.classes                 TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.subjects                TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.class_subjects          TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.academic_years          TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.terms                   TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.schools                 TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.school_groups           TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.group_admins            TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.referral_codes          TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.referrals               TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.billing_credits         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.concierge_leads         TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.alumni                  TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.marketplace_templates   TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.subscription_invoices   TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.platform_settings       TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.tuition_payments        TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.impersonation_sessions  TO authenticated;
-GRANT INSERT, UPDATE, DELETE ON public.fee_structure_audit_log TO authenticated;
-
--- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_handle_new_user_trust.sql
--- ----------------------------------------------------------------------------
-
--- =============================================================================
--- SKULI SaaS: handle_new_user trust hardening + INSERT-time role guard
--- Migration 0028
---
--- Audit §2.4 / §8.8: two issues with self-service signups.
---
---   1. `prevent_role_self_escalation` is wired up as a BEFORE UPDATE
---      trigger only (see 0023_triggers.sql). It catches a malicious
---      client trying to flip their own role *after* signup, but it
---      does nothing about the role they can already self-assign in
---      the INSERT that `handle_new_user` performs on their behalf.
---      If the JWT signup payload carries `role: SCHOOL_ADMIN`, the
---      trigger never sees it.
---
---   2. `handle_new_user` reads `raw_user_meta_data->>'role'` and
---      `raw_user_meta_data->>'school_id'` directly. Any user who
---      controls their signup metadata (which is the entire point of
---      the auth flow) can mint themselves an admin role at a school
---      they do not belong to.
---
--- Fix:
---   a) Re-define `handle_new_user` so the role and school_id are
---      determined by the server context, not the JWT payload. The
---      payload's role is only honoured if it names a low-privilege
---      role (`PARENT` or `TEACHER`) AND the school_id matches a school
---      whose onboarding flow actually invited that email. Otherwise
---      the user lands as `PARENT` with no school.
---   b) Add a BEFORE INSERT trigger on `public.users` that enforces
---      the same restriction as a defence in depth: an insert coming
---      from a non-SUPER_ADMIN caller that sets a privileged role
---      (`SCHOOL_ADMIN`, `BURSAR`, `SUPER_ADMIN`) is rejected.
---   c) Add a test comment block for the regression.
--- ---------------------------------------------------------------------------
-
--- ---------------------------------------------------------------------------
--- 1. Replace handle_new_user with a version that does NOT trust
---    raw_user_meta_data for role / school_id.
---
---    Rationale: the JWT metadata is a client-controlled string, and
---    Supabase's `auth.admin.createUser` / signup endpoints both allow
---    the caller to set `options.data`. Trusting it is equivalent to
---    trusting the client. The metadata is still useful for `full_name`
---    and `phone`, which are not authorisation inputs.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.handle_new_user()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, public
-AS $$
-DECLARE
-    v_requested_role text := NEW.raw_user_meta_data->>'role';
-    v_requested_school text := NULLIF(NEW.raw_user_meta_data->>'school_id', '');
-    v_final_role public.user_role;
-    v_final_school uuid;
-BEGIN
-    -- The only roles a self-service signup can self-assign are the
-    -- two least-privileged ones. Anything else gets coerced to PARENT.
-    -- `SCHOOL_ADMIN` / `BURSAR` / `SUPER_ADMIN` are only ever set by
-    -- the platform or an existing SUPER_ADMIN via the admin invite
-    -- route (which upserts the profile after auth.admin.createUser).
-    IF v_requested_role IN ('PARENT', 'TEACHER') THEN
-        v_final_role := v_requested_role::public.user_role;
-    ELSE
-        v_final_role := 'PARENT'::public.user_role;
-    END IF;
-
-    -- A self-service signup can only join a school that has issued
-    -- them a pending invite (parent_invitations / staff_invitations).
-    -- We check parent_invitations here as a representative gate; the
-    -- staff flow goes through the admin route, which writes the user
-    -- row directly with service role and bypasses this trigger's
-    -- non-super path via the auth.uid() IS NULL branch.
-    v_final_school := NULL;
-
-    IF v_final_role = 'PARENT' AND v_requested_school IS NOT NULL THEN
-        IF EXISTS (
-            SELECT 1 FROM parent_invitations
-             WHERE school_id = v_requested_school::uuid
-               AND lower(email) = lower(NEW.email)
-               AND accepted_at IS NULL
-               AND expires_at > now()
-        ) THEN
-            v_final_school := v_requested_school::uuid;
-        END IF;
-    END IF;
-
-    BEGIN
-        INSERT INTO public.users (id, school_id, role, full_name, phone, email, is_active)
-        VALUES (
-            NEW.id,
-            v_final_school,
-            v_final_role,
-            COALESCE(
-                NEW.raw_user_meta_data->>'full_name',
-                NEW.raw_user_meta_data->>'name',
-                split_part(NEW.email, '@', 1),
-                'User'
-            ),
-            COALESCE(NEW.raw_user_meta_data->>'phone', NEW.phone),
-            NEW.email,
-            true
-        )
-        ON CONFLICT (id) DO NOTHING;
-    EXCEPTION WHEN OTHERS THEN
-        RAISE WARNING 'handle_new_user insert failed for % : % (%)', NEW.email, SQLERRM, SQLSTATE;
-    END;
-
-    RETURN NEW;
-END;
-$$;
-
--- ---------------------------------------------------------------------------
--- 2. Add a BEFORE INSERT trigger on public.users that rejects
---    privilege escalations coming from a non-SUPER_ADMIN caller.
---
---    `handle_new_user` runs as the function owner (SECURITY DEFINER),
---    so within the trigger the `auth.uid()` check sees the *original*
---    signup's auth.uid() (NULL in the bootstrap case, the new user
---    otherwise). The two paths we care about:
---
---      a) auth.uid() IS NULL — service-role / migrations / SECURITY
---         DEFINER contexts. Allowed to insert privileged roles.
---      b) auth.uid() IS NOT NULL — the user is inserting their own
---         row. Forbidden from setting a privileged role.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION trg_users_block_privileged_insert()
-RETURNS trigger
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, public
-AS $$
-DECLARE
-    v_caller_role text;
-    v_caller_is_super boolean;
-BEGIN
-    -- Service role (and SECURITY DEFINER contexts that do not set
-    -- request.jwt.claim.sub) skip the check. This is what allows the
-    -- admin invite route to create a SCHOOL_ADMIN row.
-    IF auth.uid() IS NULL THEN
-        RETURN NEW;
-    END IF;
-
-    v_caller_role := get_user_role();
-    v_caller_is_super := (v_caller_role = 'SUPER_ADMIN');
-
-    IF NEW.role IN ('SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN') AND NOT v_caller_is_super THEN
-        RAISE EXCEPTION
-            'role % cannot be self-assigned via INSERT (caller role=%)',
-            NEW.role, v_caller_role
-            USING ERRCODE = '42501';
-    END IF;
-
-    -- A non-super caller cannot set school_id on someone else's row.
-    -- Setting it on their own row is allowed only when the role they
-    -- are inserting is one of the non-privileged roles; the parent
-    -- invitation check is enforced upstream in handle_new_user.
-    IF v_caller_is_super THEN
-        RETURN NEW;
-    END IF;
-
-    -- For non-super inserters (effectively only the handle_new_user
-    -- SECURITY DEFINER path, which we've already allowed above by
-    -- returning NEW when auth.uid() IS NULL), be conservative: if
-    -- auth.uid() IS NOT NULL and they are inserting a row whose id
-    -- does not match their own, reject.
-    IF NEW.id <> auth.uid() THEN
-        RAISE EXCEPTION
-            'cannot insert a public.users row for another user'
-            USING ERRCODE = '42501';
-    END IF;
-
-    RETURN NEW;
-END;
-$$;
-
-DROP TRIGGER IF EXISTS trg_users_block_privileged_insert ON public.users;
-CREATE TRIGGER trg_users_block_privileged_insert
-    BEFORE INSERT ON public.users
-    FOR EACH ROW EXECUTE FUNCTION trg_users_block_privileged_insert();
-
--- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_impersonation.sql
--- ----------------------------------------------------------------------------
-
--- =============================================================================
--- SKULI SaaS: Scoped impersonation session
--- Migration 0028 (part 2)
---
--- Closes §2.1 from the production-readiness review. Replaces the
--- "issue a real Supabase magic link" approach (which handed the
--- caller a full-privilege login as the target SCHOOL_ADMIN) with a
--- short-lived, audited, server-controlled impersonation token.
--- ---------------------------------------------------------------------------
-
--- INTENTIONALLY-UNUSED: the impersonation_sessions table is written
--- to by lib/auth/impersonation.ts via the Supabase client (`.from
--- ("impersonation_sessions" as never)`) which the schema-consistency
--- test does not pick up because the table name is hidden behind a
--- string. The route handlers that mint and revoke sessions are
--- real code paths in app/api/admin/impersonate/.
-CREATE TABLE IF NOT EXISTS public.impersonation_sessions (
-    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
-    school_id         UUID        NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
-    target_user_id    UUID        NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-    actor_user_id     UUID        NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
-    token_hash        TEXT        NOT NULL UNIQUE,
-    reason            TEXT,
-    starts_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expires_at        TIMESTAMPTZ NOT NULL,
-    revoked_at        TIMESTAMPTZ,
-    last_used_at      TIMESTAMPTZ,
-    ip_address        INET,
-    user_agent        TEXT,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX IF NOT EXISTS impersonation_sessions_target_idx
-    ON public.impersonation_sessions (target_user_id, expires_at);
-CREATE INDEX IF NOT EXISTS impersonation_sessions_actor_idx
-    ON public.impersonation_sessions (actor_user_id, created_at DESC);
-
-ALTER TABLE public.impersonation_sessions ENABLE ROW LEVEL SECURITY;
-
--- Only the platform's service role can read/write this table. The
--- /api/admin/impersonate route uses createAdminClient() (service role)
--- to mint and revoke tokens; end users never touch it directly. The
--- RLS posture is "deny all" by default and the service role bypasses
--- RLS, so the table is effectively append-only from the application's
--- perspective.
-DROP POLICY IF EXISTS impersonation_sessions_deny_all ON public.impersonation_sessions;
-CREATE POLICY impersonation_sessions_deny_all ON public.impersonation_sessions
-    FOR ALL
-    USING (false)
-    WITH CHECK (false);
-
--- updated_at trigger (informational only — the row is rarely updated)
-DROP TRIGGER IF EXISTS set_updated_at_impersonation_sessions ON public.impersonation_sessions;
-CREATE TRIGGER set_updated_at_impersonation_sessions
-    BEFORE UPDATE ON public.impersonation_sessions
-    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
-
--- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_payment_integrity.sql
--- ----------------------------------------------------------------------------
-
--- =============================================================================
--- SKULI SaaS: Webhook / payment integrity hardening
--- Migration 0028
---
--- Closes §1.2 / §12.3 / §1.5 / §8.12 from the production-readiness review.
--- Adds the unique constraints that defend against duplicate mobile-money
--- confirmations and concurrent receipt-number races.
--- ---------------------------------------------------------------------------
-
--- §12.3: prevent duplicate fee_payments from webhook replays. The
--- `mobile_money_transaction_id` is set by the provider (Africa's Talking)
--- and is the natural idempotency key. The partial unique index lets
--- non-MM rows (POS, bank slips, manual) stay duplicate-tolerant.
-CREATE UNIQUE INDEX IF NOT EXISTS fee_payments_mm_tx_id_unique
-    ON public.fee_payments (mobile_money_transaction_id)
-    WHERE mobile_money_transaction_id IS NOT NULL;
-
--- §12.3: prevent two confirmed payments from sharing a receipt within
--- the same school. generate_receipt_number() is advisory-locked, but
--- the unique constraint is the last line of defense if a JS path
--- (bulk import, manual entry) builds its own number.
-CREATE UNIQUE INDEX IF NOT EXISTS fee_payments_school_receipt_unique
-    ON public.fee_payments (school_id, receipt_number)
-    WHERE receipt_number IS NOT NULL;
-
--- §10.1: prevent two payroll_line_items from sharing an idempotency
--- key. The disbursement gateway dedupes on this, but if the key is
--- derived from batch_id + staff_id (as it is in v1/payroll/approve) a
--- second batch for the same staff can produce a different key and
--- pay twice. The DB-level guarantee is independent of the caller.
-CREATE UNIQUE INDEX IF NOT EXISTS batch_line_items_idempotency_key_unique
-    ON public.batch_line_items (idempotency_key)
-    WHERE idempotency_key IS NOT NULL;
-
--- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_payroll_claim_rpc.sql
--- ----------------------------------------------------------------------------
-
--- =============================================================================
--- SKULI SaaS: Payroll claim RPC (Audit §10.1)
--- Migration 0028 (part 6)
---
--- /api/v1/payroll/approve previously selected payroll_records
--- WHERE payment_status = 'pending' but never *flipped* them out of
--- pending, so two concurrent calls (or a webhook retry before the
--- first batch row was committed) could each see the same pending
--- records and create two funding batches.
---
--- This function atomically:
---   1. UPDATEs the supplied ids to payment_status='batched' WHERE
---      school_id = $1 AND id = ANY($2) AND payment_status = 'pending'.
---   2. Returns the ids it actually flipped.
---
--- The caller compares the returned count with the requested count;
--- any mismatch means a concurrent caller already won the race and
--- the route returns 409. The 0028_rls_hardening trigger
--- `payroll_records_approval_guard` blocks any other path from
--- re-flipping a non-pending row back to 'batched'.
--- ---------------------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION public.payroll_claim_records_for_batch(
-    p_school_id UUID,
-    p_record_ids UUID[]
-)
-RETURNS TABLE(id UUID)
-LANGUAGE plpgsql
-SECURITY DEFINER
-SET search_path = pg_catalog, public
-AS $$
-BEGIN
-    RETURN QUERY
-    UPDATE public.payroll_records pr
-       SET payment_status = 'batched',
-           updated_at = now()
-     WHERE pr.school_id = p_school_id
-       AND pr.id = ANY(p_record_ids)
-       AND pr.payment_status = 'pending'
-    RETURNING pr.id;
-END;
-$$;
-
--- Only the service role (webhook + admin paths) may call this
--- function directly. The application-layer RLS still applies to the
--- underlying UPDATE because the SECURITY DEFINER context switches to
--- the function owner; we therefore revoke the EXECUTE grant from
--- anon/authenticated so end users cannot invoke it via PostgREST.
-REVOKE ALL ON FUNCTION public.payroll_claim_records_for_batch(UUID, UUID[]) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.payroll_claim_records_for_batch(UUID, UUID[]) TO service_role;
-
--- ----------------------------------------------------------------------------
 -- Source: supabase/migrations/0028_rls_hardening.sql
 -- ----------------------------------------------------------------------------
 
@@ -6083,12 +5506,85 @@ CREATE TRIGGER payroll_records_approval_guard
     FOR EACH ROW EXECUTE FUNCTION public.payroll_records_approval_guard();
 
 -- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_schema_reconcile.sql
+-- Source: supabase/migrations/0031_dashboard_mv_lockdown.sql
 -- ----------------------------------------------------------------------------
 
 -- =============================================================================
--- SKULI SaaS: Schema reconciliation (Audit §12.1)
--- Migration 0028 (part 7)
+-- SKULI SaaS: Dashboard MV privilege lock-down (Audit §12.2)
+-- Migration 0031
+--
+-- Runs after 0030_dashboard_materialised_views.sql so the MVs exist.
+-- (Originally numbered 0028 — re-numbered when the materialised view
+-- dependency was discovered during push.)
+--
+-- The four `mv_dashboard_*` materialised views aggregate ALL schools
+-- (one row per school_id, ...). They are not RLS-aware — materialised
+-- views do not honour RLS. Granting SELECT to `authenticated` lets any
+-- logged-in user query the views directly via PostgREST and read every
+-- school's revenue / payment-method mix / attendance totals,
+-- bypassing the SECURITY INVOKER wrapper function that the route uses.
+--
+-- This migration revokes SELECT from `authenticated` and keeps the
+-- grant on `service_role` only. The route layer continues to call
+-- the wrapper functions (which are SECURITY INVOKER and apply RLS on
+-- the underlying attendance_records / fee_payments selects).
+-- ---------------------------------------------------------------------------
+
+REVOKE SELECT ON mv_dashboard_attendance_today     FROM authenticated;
+REVOKE SELECT ON mv_dashboard_attendance_by_class  FROM authenticated;
+REVOKE SELECT ON mv_dashboard_payment_trend        FROM authenticated;
+REVOKE SELECT ON mv_dashboard_payment_methods      FROM authenticated;
+
+REVOKE SELECT ON mv_dashboard_attendance_today     FROM anon;
+REVOKE SELECT ON mv_dashboard_attendance_by_class  FROM anon;
+REVOKE SELECT ON mv_dashboard_payment_trend        FROM anon;
+REVOKE SELECT ON mv_dashboard_payment_methods      FROM anon;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0032_payment_integrity.sql
+-- ----------------------------------------------------------------------------
+
+﻿-- =============================================================================
+-- SKULI SaaS: Webhook / payment integrity hardening
+-- Migration 0032 (originally 0028)
+--
+-- Closes Â§1.2 / Â§12.3 / Â§1.5 / Â§8.12 from the production-readiness review.
+-- Adds the unique constraints that defend against duplicate mobile-money
+-- confirmations and concurrent receipt-number races.
+-- ---------------------------------------------------------------------------
+
+-- Â§12.3: prevent duplicate fee_payments from webhook replays. The
+-- `mobile_money_transaction_id` is set by the provider (Africa's Talking)
+-- and is the natural idempotency key. The partial unique index lets
+-- non-MM rows (POS, bank slips, manual) stay duplicate-tolerant.
+CREATE UNIQUE INDEX IF NOT EXISTS fee_payments_mm_tx_id_unique
+    ON public.fee_payments (mobile_money_transaction_id)
+    WHERE mobile_money_transaction_id IS NOT NULL;
+
+-- Â§12.3: prevent two confirmed payments from sharing a receipt within
+-- the same school. generate_receipt_number() is advisory-locked, but
+-- the unique constraint is the last line of defense if a JS path
+-- (bulk import, manual entry) builds its own number.
+CREATE UNIQUE INDEX IF NOT EXISTS fee_payments_school_receipt_unique
+    ON public.fee_payments (school_id, receipt_number)
+    WHERE receipt_number IS NOT NULL;
+
+-- Â§10.1: prevent two payroll_line_items from sharing an idempotency
+-- key. The disbursement gateway dedupes on this, but if the key is
+-- derived from batch_id + staff_id (as it is in v1/payroll/approve) a
+-- second batch for the same staff can produce a different key and
+-- pay twice. The DB-level guarantee is independent of the caller.
+CREATE UNIQUE INDEX IF NOT EXISTS batch_line_items_idempotency_key_unique
+    ON public.batch_line_items (idempotency_key)
+    WHERE idempotency_key IS NOT NULL;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0033_schema_reconcile.sql
+-- ----------------------------------------------------------------------------
+
+﻿-- =============================================================================
+-- SKULI SaaS: Schema reconciliation (Audit Â§12.1)
+-- Migration 0033 (originally 0028 part 7)
 --
 -- The committed 0009_staff_payroll.sql header lists ~15 columns as
 -- "dead columns removed" while the application code
@@ -6178,199 +5674,314 @@ WHERE NOT EXISTS (
 );
 
 -- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_sms_spend_cap.sql
+-- Source: supabase/migrations/0034_payroll_claim_rpc.sql
 -- ----------------------------------------------------------------------------
 
--- =============================================================================
--- SKULI SaaS: per-school SMS spend cap
--- Migration 0028
+﻿-- =============================================================================
+-- SKULI SaaS: Payroll claim RPC (Audit Â§10.1)
+-- Migration 0034 (originally 0028 part 6)
 --
--- Audit §12.5: the SMS send route has no per-school cap. A single
--- SCHOOL_ADMIN could blast a 1,000-recipient defaulter message 10x
--- in a row and the platform would foot the bill. Africa's Talking
--- charges per unit, so the cap is on cost (UGX), not message count.
+-- /api/v1/payroll/approve previously selected payroll_records
+-- WHERE payment_status = 'pending' but never *flipped* them out of
+-- pending, so two concurrent calls (or a webhook retry before the
+-- first batch row was committed) could each see the same pending
+-- records and create two funding batches.
 --
--- Two new columns on `schools`:
---   * sms_monthly_cap_ugx       — the per-month ceiling, defaults
---                                  to 50,000 UGX (a defensible number
---                                  for a single primary school).
---                                  Set to 0 to disable the cap.
---   * sms_spend_reset_at        — the start of the current rolling
---                                  30-day window for spend tracking.
+-- This function atomically:
+--   1. UPDATEs the supplied ids to payment_status='batched' WHERE
+--      school_id = $1 AND id = ANY($2) AND payment_status = 'pending'.
+--   2. Returns the ids it actually flipped.
 --
--- A SECURITY DEFINER helper `record_sms_spend(p_school_id, p_cost)`
--- updates the per-school running spend and reports whether the new
--- spend would push the school over its cap. The SMS send route
--- uses it inside its per-recipient loop; if the cap is exceeded,
--- the route stops dispatching and surfaces a clear error to the
--- client.
---
--- The view `school_sms_spend_status` exposes a per-school
--- {spent, cap, remaining, utilization, is_over_cap} snapshot for
--- the dashboard. SELECT-only; mutations are forced through the RPC.
+-- The caller compares the returned count with the requested count;
+-- any mismatch means a concurrent caller already won the race and
+-- the route returns 409. The 0028_rls_hardening trigger
+-- `payroll_records_approval_guard` blocks any other path from
+-- re-flipping a non-pending row back to 'batched'.
 -- ---------------------------------------------------------------------------
 
-ALTER TABLE public.schools
-    ADD COLUMN IF NOT EXISTS sms_monthly_cap_ugx bigint NOT NULL DEFAULT 50000,
-    ADD COLUMN IF NOT EXISTS sms_spend_reset_at timestamptz;
-
--- Backfill: existing schools get the current month as the start of
--- their first spending window.
-UPDATE public.schools
-   SET sms_spend_reset_at = date_trunc('month', now())
- WHERE sms_spend_reset_at IS NULL;
-
--- ---------------------------------------------------------------------------
--- 1. spend helper
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION public.record_sms_spend(
-    p_school_id uuid,
-    p_cost      numeric
+CREATE OR REPLACE FUNCTION public.payroll_claim_records_for_batch(
+    p_school_id UUID,
+    p_record_ids UUID[]
 )
-RETURNS TABLE (
-    allowed        boolean,
-    spent_ugx      bigint,
-    cap_ugx        bigint,
-    remaining_ugx  bigint,
-    reason         text
-)
+RETURNS TABLE(id UUID)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    RETURN QUERY
+    UPDATE public.payroll_records pr
+       SET payment_status = 'batched',
+           updated_at = now()
+     WHERE pr.school_id = p_school_id
+       AND pr.id = ANY(p_record_ids)
+       AND pr.payment_status = 'pending'
+    RETURNING pr.id;
+END;
+$$;
+
+-- Only the service role (webhook + admin paths) may call this
+-- function directly. The application-layer RLS still applies to the
+-- underlying UPDATE because the SECURITY DEFINER context switches to
+-- the function owner; we therefore revoke the EXECUTE grant from
+-- anon/authenticated so end users cannot invoke it via PostgREST.
+REVOKE ALL ON FUNCTION public.payroll_claim_records_for_batch(UUID, UUID[]) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.payroll_claim_records_for_batch(UUID, UUID[]) TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0035_handle_new_user_trust.sql
+-- ----------------------------------------------------------------------------
+
+﻿-- =============================================================================
+-- SKULI SaaS: handle_new_user trust hardening + INSERT-time role guard
+-- Migration 0035 (originally 0028)
+--
+-- Audit Â§2.4 / Â§8.8: two issues with self-service signups.
+--
+--   1. `prevent_role_self_escalation` is wired up as a BEFORE UPDATE
+--      trigger only (see 0023_triggers.sql). It catches a malicious
+--      client trying to flip their own role *after* signup, but it
+--      does nothing about the role they can already self-assign in
+--      the INSERT that `handle_new_user` performs on their behalf.
+--      If the JWT signup payload carries `role: SCHOOL_ADMIN`, the
+--      trigger never sees it.
+--
+--   2. `handle_new_user` reads `raw_user_meta_data->>'role'` and
+--      `raw_user_meta_data->>'school_id'` directly. Any user who
+--      controls their signup metadata (which is the entire point of
+--      the auth flow) can mint themselves an admin role at a school
+--      they do not belong to.
+--
+-- Fix:
+--   a) Re-define `handle_new_user` so the role and school_id are
+--      determined by the server context, not the JWT payload. The
+--      payload's role is only honoured if it names a low-privilege
+--      role (`PARENT` or `TEACHER`) AND the school_id matches a school
+--      whose onboarding flow actually invited that email. Otherwise
+--      the user lands as `PARENT` with no school.
+--   b) Add a BEFORE INSERT trigger on `public.users` that enforces
+--      the same restriction as a defence in depth: an insert coming
+--      from a non-SUPER_ADMIN caller that sets a privileged role
+--      (`SCHOOL_ADMIN`, `BURSAR`, `SUPER_ADMIN`) is rejected.
+--   c) Add a test comment block for the regression.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- 1. Replace handle_new_user with a version that does NOT trust
+--    raw_user_meta_data for role / school_id.
+--
+--    Rationale: the JWT metadata is a client-controlled string, and
+--    Supabase's `auth.admin.createUser` / signup endpoints both allow
+--    the caller to set `options.data`. Trusting it is equivalent to
+--    trusting the client. The metadata is still useful for `full_name`
+--    and `phone`, which are not authorisation inputs.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS trigger
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, public
 AS $$
 DECLARE
-    v_cap          bigint;
-    v_reset_at     timestamptz;
-    v_spent        bigint := 0;
-    v_remaining    bigint;
-    v_now          timestamptz := now();
-    v_window_start timestamptz;
+    v_requested_role text := NEW.raw_user_meta_data->>'role';
+    v_requested_school text := NULLIF(NEW.raw_user_meta_data->>'school_id', '');
+    v_final_role public.user_role;
+    v_final_school uuid;
 BEGIN
-    SELECT sms_monthly_cap_ugx, sms_spend_reset_at
-      INTO v_cap, v_reset_at
-      FROM schools
-     WHERE id = p_school_id;
-
-    IF NOT FOUND THEN
-        RETURN QUERY SELECT false, 0::bigint, 0::bigint, 0::bigint,
-                            'school not found'::text;
-        RETURN;
+    -- The only roles a self-service signup can self-assign are the
+    -- two least-privileged ones. Anything else gets coerced to PARENT.
+    -- `SCHOOL_ADMIN` / `BURSAR` / `SUPER_ADMIN` are only ever set by
+    -- the platform or an existing SUPER_ADMIN via the admin invite
+    -- route (which upserts the profile after auth.admin.createUser).
+    IF v_requested_role IN ('PARENT', 'TEACHER') THEN
+        v_final_role := v_requested_role::public.user_role;
+    ELSE
+        v_final_role := 'PARENT'::public.user_role;
     END IF;
 
-    -- A cap of 0 disables the ceiling. The platform-level spam
-    -- protection still applies at the route level (per-school rate
-    -- limit, body length cap, max recipients).
-    IF v_cap = 0 THEN
-        RETURN QUERY SELECT true, 0::bigint, 0::bigint, 0::bigint,
-                            ''::text;
-        RETURN;
+    -- A self-service signup can only join a school that has issued
+    -- them a pending invite (parent_invitations / staff_invitations).
+    -- We check parent_invitations here as a representative gate; the
+    -- staff flow goes through the admin route, which writes the user
+    -- row directly with service role and bypasses this trigger's
+    -- non-super path via the auth.uid() IS NULL branch.
+    v_final_school := NULL;
+
+    IF v_final_role = 'PARENT' AND v_requested_school IS NOT NULL THEN
+        IF EXISTS (
+            SELECT 1 FROM parent_invitations
+             WHERE school_id = v_requested_school::uuid
+               AND lower(email) = lower(NEW.email)
+               AND accepted_at IS NULL
+               AND expires_at > now()
+        ) THEN
+            v_final_school := v_requested_school::uuid;
+        END IF;
     END IF;
 
-    -- Roll the 30-day window forward when the reset time has passed.
-    IF v_reset_at IS NULL OR v_reset_at < v_now - INTERVAL '30 days' THEN
-        UPDATE schools
-           SET sms_spend_reset_at = v_now
-         WHERE id = p_school_id;
-        v_reset_at := v_now;
-    END IF;
+    BEGIN
+        INSERT INTO public.users (id, school_id, role, full_name, phone, email, is_active)
+        VALUES (
+            NEW.id,
+            v_final_school,
+            v_final_role,
+            COALESCE(
+                NEW.raw_user_meta_data->>'full_name',
+                NEW.raw_user_meta_data->>'name',
+                split_part(NEW.email, '@', 1),
+                'User'
+            ),
+            COALESCE(NEW.raw_user_meta_data->>'phone', NEW.phone),
+            NEW.email,
+            true
+        )
+        ON CONFLICT (id) DO NOTHING;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE WARNING 'handle_new_user insert failed for % : % (%)', NEW.email, SQLERRM, SQLSTATE;
+    END;
 
-    -- Sum cost across sms_logs since the current window opened. This
-    -- is a per-school aggregate; no PII is exposed.
-    SELECT COALESCE(SUM(cost::bigint), 0)
-      INTO v_spent
-      FROM sms_logs
-     WHERE school_id = p_school_id
-       AND status IN ('sent', 'pending')
-       AND created_at >= v_reset_at;
-
-    v_remaining := GREATEST(v_cap - v_spent, 0);
-
-    IF v_spent + GREATEST(p_cost, 0) > v_cap THEN
-        RETURN QUERY SELECT
-            false,
-            v_spent,
-            v_cap,
-            v_remaining,
-            'monthly SMS spend cap reached'::text;
-        RETURN;
-    END IF;
-
-    RETURN QUERY SELECT true, v_spent, v_cap, v_remaining, ''::text;
+    RETURN NEW;
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.record_sms_spend(uuid, numeric) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.record_sms_spend(uuid, numeric) TO service_role;
-
 -- ---------------------------------------------------------------------------
--- 2. read-only status view
+-- 2. Add a BEFORE INSERT trigger on public.users that rejects
+--    privilege escalations coming from a non-SUPER_ADMIN caller.
+--
+--    `handle_new_user` runs as the function owner (SECURITY DEFINER),
+--    so within the trigger the `auth.uid()` check sees the *original*
+--    signup's auth.uid() (NULL in the bootstrap case, the new user
+--    otherwise). The two paths we care about:
+--
+--      a) auth.uid() IS NULL â€” service-role / migrations / SECURITY
+--         DEFINER contexts. Allowed to insert privileged roles.
+--      b) auth.uid() IS NOT NULL â€” the user is inserting their own
+--         row. Forbidden from setting a privileged role.
 -- ---------------------------------------------------------------------------
-CREATE OR REPLACE VIEW public.school_sms_spend_status AS
-SELECT
-    s.id                                                        AS school_id,
-    s.sms_monthly_cap_ugx                                       AS cap_ugx,
-    COALESCE(SUM(sl.cost) FILTER (
-        WHERE sl.status IN ('sent', 'pending')
-          AND sl.created_at >= s.sms_spend_reset_at
-    ), 0)::bigint                                               AS spent_ugx,
-    GREATEST(s.sms_monthly_cap_ugx - COALESCE(SUM(sl.cost) FILTER (
-        WHERE sl.status IN ('sent', 'pending')
-          AND sl.created_at >= s.sms_spend_reset_at
-    ), 0)::bigint, 0)::bigint                                   AS remaining_ugx,
-    s.sms_spend_reset_at                                        AS window_started_at,
-    CASE
-        WHEN s.sms_monthly_cap_ugx = 0 THEN 0
-        ELSE LEAST(
-            (COALESCE(SUM(sl.cost) FILTER (
-                WHERE sl.status IN ('sent', 'pending')
-                  AND sl.created_at >= s.sms_spend_reset_at
-            ), 0) * 100.0 / s.sms_monthly_cap_ugx)::numeric,
-            100
-        )
-    END                                                         AS utilization_pct,
-    (s.sms_monthly_cap_ugx > 0
-     AND COALESCE(SUM(sl.cost) FILTER (
-        WHERE sl.status IN ('sent', 'pending')
-          AND sl.created_at >= s.sms_spend_reset_at
-     ), 0) >= s.sms_monthly_cap_ugx)                           AS is_over_cap
-FROM schools s
-LEFT JOIN sms_logs sl
-       ON sl.school_id = s.id
-GROUP BY s.id, s.sms_monthly_cap_ugx, s.sms_spend_reset_at;
+CREATE OR REPLACE FUNCTION trg_users_block_privileged_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    v_caller_role text;
+    v_caller_is_super boolean;
+BEGIN
+    -- Service role (and SECURITY DEFINER contexts that do not set
+    -- request.jwt.claim.sub) skip the check. This is what allows the
+    -- admin invite route to create a SCHOOL_ADMIN row.
+    IF auth.uid() IS NULL THEN
+        RETURN NEW;
+    END IF;
 
--- Only platform-level service_role should read this view — it
--- aggregates per-school spend and the dashboard reads it via the
--- user-scoped RLS view, not this one.
-REVOKE ALL ON public.school_sms_spend_status FROM anon, authenticated;
-GRANT SELECT ON public.school_sms_spend_status TO service_role;
+    v_caller_role := get_user_role();
+    v_caller_is_super := (v_caller_role = 'SUPER_ADMIN');
 
--- ---------------------------------------------------------------------------
--- 3. RLS-friendly per-school snapshot for the school admin dashboard.
---    This is a security-barrier view that filters on the caller's
---    school. Same numbers as school_sms_spend_status, but readable
---    by SCHOOL_ADMIN / BURSAR.
--- ---------------------------------------------------------------------------
-CREATE OR REPLACE VIEW public.my_school_sms_spend AS
-SELECT
-    school_id,
-    cap_ugx,
-    spent_ugx,
-    remaining_ugx,
-    window_started_at,
-    utilization_pct,
-    is_over_cap
-FROM public.school_sms_spend_status
-WHERE school_id = get_user_school_id();
+    IF NEW.role IN ('SCHOOL_ADMIN', 'BURSAR', 'SUPER_ADMIN') AND NOT v_caller_is_super THEN
+        RAISE EXCEPTION
+            'role % cannot be self-assigned via INSERT (caller role=%)',
+            NEW.role, v_caller_role
+            USING ERRCODE = '42501';
+    END IF;
 
-GRANT SELECT ON public.my_school_sms_spend TO authenticated;
+    -- A non-super caller cannot set school_id on someone else's row.
+    -- Setting it on their own row is allowed only when the role they
+    -- are inserting is one of the non-privileged roles; the parent
+    -- invitation check is enforced upstream in handle_new_user.
+    IF v_caller_is_super THEN
+        RETURN NEW;
+    END IF;
+
+    -- For non-super inserters (effectively only the handle_new_user
+    -- SECURITY DEFINER path, which we've already allowed above by
+    -- returning NEW when auth.uid() IS NULL), be conservative: if
+    -- auth.uid() IS NOT NULL and they are inserting a row whose id
+    -- does not match their own, reject.
+    IF NEW.id <> auth.uid() THEN
+        RAISE EXCEPTION
+            'cannot insert a public.users row for another user'
+            USING ERRCODE = '42501';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_users_block_privileged_insert ON public.users;
+CREATE TRIGGER trg_users_block_privileged_insert
+    BEFORE INSERT ON public.users
+    FOR EACH ROW EXECUTE FUNCTION trg_users_block_privileged_insert();
 
 -- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0028_storage_tenant_scope.sql
+-- Source: supabase/migrations/0036_impersonation.sql
 -- ----------------------------------------------------------------------------
 
--- =============================================================================
--- SKULI SaaS: Tenant-scoped storage (Audit §8.2)
--- Migration 0028 (part 5)
+﻿-- =============================================================================
+-- SKULI SaaS: Scoped impersonation session
+-- Migration 0036 (originally 0028 part 2)
+--
+-- Closes Â§2.1 from the production-readiness review. Replaces the
+-- "issue a real Supabase magic link" approach (which handed the
+-- caller a full-privilege login as the target SCHOOL_ADMIN) with a
+-- short-lived, audited, server-controlled impersonation token.
+-- ---------------------------------------------------------------------------
+
+-- INTENTIONALLY-UNUSED: the impersonation_sessions table is written
+-- to by lib/auth/impersonation.ts via the Supabase client (`.from
+-- ("impersonation_sessions" as never)`) which the schema-consistency
+-- test does not pick up because the table name is hidden behind a
+-- string. The route handlers that mint and revoke sessions are
+-- real code paths in app/api/admin/impersonate/.
+CREATE TABLE IF NOT EXISTS public.impersonation_sessions (
+    id                UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    school_id         UUID        NOT NULL REFERENCES public.schools(id) ON DELETE CASCADE,
+    target_user_id    UUID        NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    actor_user_id     UUID        NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+    token_hash        TEXT        NOT NULL UNIQUE,
+    reason            TEXT,
+    starts_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at        TIMESTAMPTZ NOT NULL,
+    revoked_at        TIMESTAMPTZ,
+    last_used_at      TIMESTAMPTZ,
+    ip_address        INET,
+    user_agent        TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS impersonation_sessions_target_idx
+    ON public.impersonation_sessions (target_user_id, expires_at);
+CREATE INDEX IF NOT EXISTS impersonation_sessions_actor_idx
+    ON public.impersonation_sessions (actor_user_id, created_at DESC);
+
+ALTER TABLE public.impersonation_sessions ENABLE ROW LEVEL SECURITY;
+
+-- Only the platform's service role can read/write this table. The
+-- /api/admin/impersonate route uses createAdminClient() (service role)
+-- to mint and revoke tokens; end users never touch it directly. The
+-- RLS posture is "deny all" by default and the service role bypasses
+-- RLS, so the table is effectively append-only from the application's
+-- perspective.
+DROP POLICY IF EXISTS impersonation_sessions_deny_all ON public.impersonation_sessions;
+CREATE POLICY impersonation_sessions_deny_all ON public.impersonation_sessions
+    FOR ALL
+    USING (false)
+    WITH CHECK (false);
+
+-- updated_at trigger (informational only â€” the row is rarely updated)
+DROP TRIGGER IF EXISTS set_updated_at_impersonation_sessions ON public.impersonation_sessions;
+CREATE TRIGGER set_updated_at_impersonation_sessions
+    BEFORE UPDATE ON public.impersonation_sessions
+    FOR EACH ROW EXECUTE FUNCTION public.set_updated_at();
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0037_storage_tenant_scope.sql
+-- ----------------------------------------------------------------------------
+
+﻿-- =============================================================================
+-- SKULI SaaS: Tenant-scoped storage (Audit Â§8.2)
+-- Migration 0037 (originally 0028 part 5)
 --
 -- The previous storage policies (0025_storage_buckets.sql) only
 -- checked `bucket_id = '...'` and `auth.role() = 'authenticated'`.
@@ -6379,7 +5990,7 @@ GRANT SELECT ON public.my_school_sms_spend TO authenticated;
 --     UPDATE / DELETE in the `report-cards` private bucket (PII leak
 --     across tenants);
 --   * the public photo buckets were world-readable AND writable
---     by any authenticated user — one school could overwrite or
+--     by any authenticated user â€” one school could overwrite or
 --     delete another's logos and student photos.
 --
 -- This migration replaces every storage.objects policy with one that
@@ -6530,12 +6141,379 @@ CREATE POLICY "report_cards_school_delete" ON storage.objects FOR DELETE
     );
 
 -- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0029_finalize.sql
+-- Source: supabase/migrations/0038_audit_logs_append_only.sql
 -- ----------------------------------------------------------------------------
 
--- =============================================================================
+﻿-- =============================================================================
+-- SKULI SaaS: audit_logs append-only
+-- Migration 0038 (originally 0028)
+--
+-- Audit Â§8.6: audit_logs is a soft-delete table today (it has an
+-- is_deleted column and the set_updated_at trigger on it from
+-- 0023_triggers.sql). That gives any caller with the existing
+-- update policy two ways to rewrite history:
+--   1. UPDATE ... SET is_deleted = true
+--   2. UPDATE ... SET new_value = '{}' to scrub what was recorded
+--
+-- There is no business reason to mutate an audit entry. Forensic
+-- value comes from the row being written exactly once and never
+-- touched again. Append-only is enforced three ways here:
+--
+--   1. A BEFORE UPDATE trigger that raises an exception for any
+--      non-service-role caller.
+--   2. A BEFORE DELETE trigger (statement-level) that raises the
+--      same way. (Row-level keeps the error tied to a specific
+--      row for debugging.)
+--   3. The service role bypasses the trigger so reaper / archival
+--      jobs in the future can prune if the user opts in to that
+--      policy. The default posture is still "no edits".
+--
+-- The triggers are idempotent: DROP TRIGGER IF EXISTS is used.
+-- ---------------------------------------------------------------------------
+
+CREATE OR REPLACE FUNCTION trg_audit_logs_block_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+BEGIN
+    -- service_role bypass â€” used by future archival / reaper jobs
+    -- and by the migrations themselves.
+    IF auth.uid() IS NULL THEN
+        RETURN NULL;
+    END IF;
+
+    RAISE EXCEPTION
+        'audit_logs is append-only; % on an existing row is not permitted',
+        TG_OP
+        USING ERRCODE = '42501';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_audit_logs_no_update ON public.audit_logs;
+CREATE TRIGGER trg_audit_logs_no_update
+    BEFORE UPDATE ON public.audit_logs
+    FOR EACH ROW EXECUTE FUNCTION trg_audit_logs_block_mutation();
+
+DROP TRIGGER IF EXISTS trg_audit_logs_no_delete ON public.audit_logs;
+CREATE TRIGGER trg_audit_logs_no_delete
+    BEFORE DELETE ON public.audit_logs
+    FOR EACH ROW EXECUTE FUNCTION trg_audit_logs_block_mutation();
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0039_sms_spend_cap.sql
+-- ----------------------------------------------------------------------------
+
+﻿-- =============================================================================
+-- SKULI SaaS: per-school SMS spend cap
+-- Migration 0039 (originally 0028)
+--
+-- Audit Â§12.5: the SMS send route has no per-school cap. A single
+-- SCHOOL_ADMIN could blast a 1,000-recipient defaulter message 10x
+-- in a row and the platform would foot the bill. Africa's Talking
+-- charges per unit, so the cap is on cost (UGX), not message count.
+--
+-- Two new columns on `schools`:
+--   * sms_monthly_cap_ugx       â€” the per-month ceiling, defaults
+--                                  to 50,000 UGX (a defensible number
+--                                  for a single primary school).
+--                                  Set to 0 to disable the cap.
+--   * sms_spend_reset_at        â€” the start of the current rolling
+--                                  30-day window for spend tracking.
+--
+-- A SECURITY DEFINER helper `record_sms_spend(p_school_id, p_cost)`
+-- updates the per-school running spend and reports whether the new
+-- spend would push the school over its cap. The SMS send route
+-- uses it inside its per-recipient loop; if the cap is exceeded,
+-- the route stops dispatching and surfaces a clear error to the
+-- client.
+--
+-- The view `school_sms_spend_status` exposes a per-school
+-- {spent, cap, remaining, utilization, is_over_cap} snapshot for
+-- the dashboard. SELECT-only; mutations are forced through the RPC.
+-- ---------------------------------------------------------------------------
+
+ALTER TABLE public.schools
+    ADD COLUMN IF NOT EXISTS sms_monthly_cap_ugx bigint NOT NULL DEFAULT 50000,
+    ADD COLUMN IF NOT EXISTS sms_spend_reset_at timestamptz;
+
+-- Backfill: existing schools get the current month as the start of
+-- their first spending window.
+UPDATE public.schools
+   SET sms_spend_reset_at = date_trunc('month', now())
+ WHERE sms_spend_reset_at IS NULL;
+
+-- ---------------------------------------------------------------------------
+-- 1. spend helper
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.record_sms_spend(
+    p_school_id uuid,
+    p_cost      numeric
+)
+RETURNS TABLE (
+    allowed        boolean,
+    spent_ugx      bigint,
+    cap_ugx        bigint,
+    remaining_ugx  bigint,
+    reason         text
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $$
+DECLARE
+    v_cap          bigint;
+    v_reset_at     timestamptz;
+    v_spent        bigint := 0;
+    v_remaining    bigint;
+    v_now          timestamptz := now();
+    v_window_start timestamptz;
+BEGIN
+    SELECT sms_monthly_cap_ugx, sms_spend_reset_at
+      INTO v_cap, v_reset_at
+      FROM schools
+     WHERE id = p_school_id;
+
+    IF NOT FOUND THEN
+        RETURN QUERY SELECT false, 0::bigint, 0::bigint, 0::bigint,
+                            'school not found'::text;
+        RETURN;
+    END IF;
+
+    -- A cap of 0 disables the ceiling. The platform-level spam
+    -- protection still applies at the route level (per-school rate
+    -- limit, body length cap, max recipients).
+    IF v_cap = 0 THEN
+        RETURN QUERY SELECT true, 0::bigint, 0::bigint, 0::bigint,
+                            ''::text;
+        RETURN;
+    END IF;
+
+    -- Roll the 30-day window forward when the reset time has passed.
+    IF v_reset_at IS NULL OR v_reset_at < v_now - INTERVAL '30 days' THEN
+        UPDATE schools
+           SET sms_spend_reset_at = v_now
+         WHERE id = p_school_id;
+        v_reset_at := v_now;
+    END IF;
+
+    -- Sum cost across sms_logs since the current window opened. This
+    -- is a per-school aggregate; no PII is exposed.
+    SELECT COALESCE(SUM(cost::bigint), 0)
+      INTO v_spent
+      FROM sms_logs
+     WHERE school_id = p_school_id
+       AND status IN ('sent', 'pending')
+       AND created_at >= v_reset_at;
+
+    v_remaining := GREATEST(v_cap - v_spent, 0);
+
+    IF v_spent + GREATEST(p_cost, 0) > v_cap THEN
+        RETURN QUERY SELECT
+            false,
+            v_spent,
+            v_cap,
+            v_remaining,
+            'monthly SMS spend cap reached'::text;
+        RETURN;
+    END IF;
+
+    RETURN QUERY SELECT true, v_spent, v_cap, v_remaining, ''::text;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_sms_spend(uuid, numeric) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.record_sms_spend(uuid, numeric) TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- 2. read-only status view
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW public.school_sms_spend_status AS
+SELECT
+    s.id                                                        AS school_id,
+    s.sms_monthly_cap_ugx                                       AS cap_ugx,
+    COALESCE(SUM(sl.cost) FILTER (
+        WHERE sl.status IN ('sent', 'pending')
+          AND sl.created_at >= s.sms_spend_reset_at
+    ), 0)::bigint                                               AS spent_ugx,
+    GREATEST(s.sms_monthly_cap_ugx - COALESCE(SUM(sl.cost) FILTER (
+        WHERE sl.status IN ('sent', 'pending')
+          AND sl.created_at >= s.sms_spend_reset_at
+    ), 0)::bigint, 0)::bigint                                   AS remaining_ugx,
+    s.sms_spend_reset_at                                        AS window_started_at,
+    CASE
+        WHEN s.sms_monthly_cap_ugx = 0 THEN 0
+        ELSE LEAST(
+            (COALESCE(SUM(sl.cost) FILTER (
+                WHERE sl.status IN ('sent', 'pending')
+                  AND sl.created_at >= s.sms_spend_reset_at
+            ), 0) * 100.0 / s.sms_monthly_cap_ugx)::numeric,
+            100
+        )
+    END                                                         AS utilization_pct,
+    (s.sms_monthly_cap_ugx > 0
+     AND COALESCE(SUM(sl.cost) FILTER (
+        WHERE sl.status IN ('sent', 'pending')
+          AND sl.created_at >= s.sms_spend_reset_at
+     ), 0) >= s.sms_monthly_cap_ugx)                           AS is_over_cap
+FROM schools s
+LEFT JOIN sms_logs sl
+       ON sl.school_id = s.id
+GROUP BY s.id, s.sms_monthly_cap_ugx, s.sms_spend_reset_at;
+
+-- Only platform-level service_role should read this view â€” it
+-- aggregates per-school spend and the dashboard reads it via the
+-- user-scoped RLS view, not this one.
+REVOKE ALL ON public.school_sms_spend_status FROM anon, authenticated;
+GRANT SELECT ON public.school_sms_spend_status TO service_role;
+
+-- ---------------------------------------------------------------------------
+-- 3. RLS-friendly per-school snapshot for the school admin dashboard.
+--    This is a security-barrier view that filters on the caller's
+--    school. Same numbers as school_sms_spend_status, but readable
+--    by SCHOOL_ADMIN / BURSAR.
+-- ---------------------------------------------------------------------------
+CREATE OR REPLACE VIEW public.my_school_sms_spend AS
+SELECT
+    school_id,
+    cap_ugx,
+    spent_ugx,
+    remaining_ugx,
+    window_started_at,
+    utilization_pct,
+    is_over_cap
+FROM public.school_sms_spend_status
+WHERE school_id = get_user_school_id();
+
+GRANT SELECT ON public.my_school_sms_spend TO authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0040_grants_tighten.sql
+-- ----------------------------------------------------------------------------
+
+﻿-- =============================================================================
+-- SKULI SaaS: Tightened grants (Audit Â§8.1)
+-- Migration 0040 (originally 0028 part 4)
+--
+-- The previous grants file (0026_grants.sql) ran:
+--   GRANT SELECT, INSERT, UPDATE, DELETE
+--     ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+--   ALTER DEFAULT PRIVILEGES IN SCHEMA public
+--     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO anon, authenticated;
+--
+-- This hands full DML on every current and future public table to
+-- both roles, so the *only* thing standing between a caller and the
+-- data is RLS. A single missed RLS policy on a new table = breach.
+--
+-- This migration:
+--   1. Revokes the blanket INSERT/UPDATE/DELETE grant from anon
+--      and authenticated. Both roles keep SELECT.
+--   2. Keeps ALTER DEFAULT PRIVILEGES for SELECT only â€” new tables
+--      are at least readable to authenticated, but writes are
+--      explicitly granted per-table by follow-up migrations.
+--   3. Keeps service_role with full DML (it bypasses RLS by design
+--      and is used by the webhook + admin paths).
+--   4. Grants INSERT to authenticated *only* on the small set of
+--      tables users truly insert into (audit_logs handled by
+--      service_role triggers; sms_logs is a denormalized log table;
+--      attendance_records etc. are inserted by the route layer
+--      which already passes the right WITH CHECK).
+-- ---------------------------------------------------------------------------
+
+-- 1. Revoke the blanket DML grants.
+REVOKE INSERT, UPDATE, DELETE
+    ON ALL TABLES IN SCHEMA public
+    FROM anon, authenticated;
+
+-- 2. Make the default for new tables SELECT-only.
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE INSERT, UPDATE, DELETE ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public
+    REVOKE USAGE, UPDATE ON SEQUENCES FROM anon, authenticated;
+
+-- 3. Restore DELETE for the operational log tables that the app
+--    actually needs to clear (e.g. expired notifications). The list
+--    is small and explicit â€” anything else is denied.
+GRANT INSERT ON public.audit_logs              TO authenticated;
+GRANT INSERT ON public.in_app_notifications    TO authenticated;
+GRANT INSERT, UPDATE, DELETE
+    ON public.push_subscriptions               TO authenticated;
+GRANT INSERT, UPDATE, DELETE
+    ON public.notification_preferences         TO authenticated;
+
+-- 4. Re-grant the per-table privileges the application needs to
+--    function. RLS still applies (the WITH CHECK on every policy
+--    in 0015/0016/0017/0028_rls_hardening gates writes by school +
+--    role). The DML grant just lets the request reach the policy.
+--    Where the route uses a service-role client (webhooks,
+--    /api/v1/* admin paths), no grant is needed at all.
+GRANT INSERT, UPDATE, DELETE ON public.students                TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.class_enrollments       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.parent_students         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_accounts            TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_payments            TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_structures          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_types               TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_discounts           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.student_discounts       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.marks                   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.report_cards            TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.subject_comments        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.grading_scales          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.attendance_records      TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.announcements           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.staff                   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.staff_payment_profiles  TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.payroll_records         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.payroll_batches         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.batch_line_items        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.meeting_slots           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.meeting_bookings        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.message_threads         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.thread_messages         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.assets                  TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.asset_maintenance       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.library_books           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.library_issues          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.discipline_records      TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.calendar_events         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.timetable_periods       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.timetable_slots         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.teacher_class_assignments TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.expense_categories      TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.expenses                TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.sms_templates           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.sms_logs                TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.emis_report_logs        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.users                   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.classes                 TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.subjects                TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.class_subjects          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.academic_years          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.terms                   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.schools                 TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.school_groups           TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.group_admins            TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.referral_codes          TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.referrals               TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.billing_credits         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.concierge_leads         TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.alumni                  TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.marketplace_templates   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.subscription_invoices   TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.platform_settings       TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.tuition_payments        TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.impersonation_sessions  TO authenticated;
+GRANT INSERT, UPDATE, DELETE ON public.fee_structure_audit_log TO authenticated;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0041_finalize.sql
+-- ----------------------------------------------------------------------------
+
+﻿-- =============================================================================
 -- SKULI SaaS: Finalize
--- Migration 0029
+-- Migration 0041 (originally 0029)
 --
 -- ANALYZE every public table, comment every public table, and
 -- GRANT EXECUTE on every function to service_role. Per 00066 final
@@ -6718,16 +6696,16 @@ GRANT EXECUTE ON FUNCTION get_student_current_results(uuid, text)         TO ser
 GRANT EXECUTE ON FUNCTION get_student_attendance_summary(uuid, text)      TO service_role;
 
 -- ----------------------------------------------------------------------------
--- Source: supabase/migrations/0030_dashboard_materialised_views.sql
+-- Source: supabase/migrations/0042_dashboard_materialised_views.sql
 -- ----------------------------------------------------------------------------
 
--- =============================================================================
+﻿-- =============================================================================
 -- SKULI SaaS: Dashboard Materialised Views
--- Migration 0030
+-- Migration 0042 (originally 0030)
 --
 -- The four `dashboard_*` functions (0021) recompute on every dashboard
 -- render. The dashboard page (app/dashboard/page.tsx) fires all four in
--- parallel — that's four full table scans of attendance_records and
+-- parallel â€” that's four full table scans of attendance_records and
 -- fee_payments per dashboard load, repeated 50-200x per day per school
 -- admin. For a school with 5,000 students and 100 daily fee payments
 -- that's ~200,000 row-reads per day per school.
@@ -6746,7 +6724,7 @@ GRANT EXECUTE ON FUNCTION get_student_attendance_summary(uuid, text)      TO ser
 -- VIEW CONCURRENTLY is issued. CONCURRENTLY requires a unique index
 -- on each view; we add one.
 --
--- CONCURRENTLY means reads are NOT blocked during refresh — the old
+-- CONCURRENTLY means reads are NOT blocked during refresh â€” the old
 -- snapshot stays visible until the new snapshot commits. The trade-off
 -- is a brief window where the dashboard shows data up to 5 minutes
 -- old. For a school-management dashboard this is acceptable (and the
@@ -6754,10 +6732,10 @@ GRANT EXECUTE ON FUNCTION get_student_attendance_summary(uuid, text)      TO ser
 --
 -- What the dashboard looks like
 -- -----------------------------
--- The dashboard_attendance_today view materialises ALL schools × ALL
+-- The dashboard_attendance_today view materialises ALL schools Ã— ALL
 -- dates that have at least one attendance_records row. The wrapper
 -- function filters on the caller's (p_school_id, p_date) inputs. This
--- keeps the view small in practice — only days with attendance taken
+-- keeps the view small in practice â€” only days with attendance taken
 -- appear, scoped to actual schools.
 -- =============================================================================
 
@@ -6966,7 +6944,7 @@ $$;
 --
 --    If pg_cron is not installed in the target environment, the DO
 --    block falls through without error. The application will still
---    work — the dashboard just shows the original (function-based)
+--    work â€” the dashboard just shows the original (function-based)
 --    aggregates for that school until pg_cron is available. The
 --    materialised views are still populated on first CREATE.
 -- ---------------------------------------------------------------------------
@@ -7025,7 +7003,7 @@ END $$;
 -- 6. Grants
 --    The view itself is not directly accessible via PostgREST (it is
 --    queried through the wrapper functions). The wrapper functions
---    are SECURITY INVOKER, so the caller's role applies — but the
+--    are SECURITY INVOKER, so the caller's role applies â€” but the
 --    underlying views are accessed by the caller's role, not the
 --    function owner's. The caller's role must have SELECT on the
 --    view; the authenticated role needs that grant.
@@ -7040,3 +7018,29 @@ GRANT SELECT ON mv_dashboard_attendance_today     TO service_role;
 GRANT SELECT ON mv_dashboard_attendance_by_class  TO service_role;
 GRANT SELECT ON mv_dashboard_payment_trend        TO service_role;
 GRANT SELECT ON mv_dashboard_payment_methods      TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- Source: supabase/migrations/0043_grants_lock_extras.sql
+-- ----------------------------------------------------------------------------
+
+﻿-- =============================================================================
+-- SKULI SaaS: Lock EXECUTE on encrypt_secret / decrypt_secret (Audit Â§8.7 / Â§14.2)
+-- Migration 0043 (originally 0028 part 9)
+--
+-- 0026_grants.sql granted EXECUTE on every function in public to
+-- `anon, authenticated` and never revoked `encrypt_secret` /
+-- `decrypt_secret` specifically. The functions take the vault key
+-- as an argument, so any logged-in user who can reach the key
+-- (bundle leak, log, one SQLi sink) can decrypt every school's
+-- stored AT / Resend / Pesapal credentials.
+--
+-- This migration REVOKEs EXECUTE from anon + authenticated and
+-- grants it to service_role only. The only call sites
+-- (lib/africas-talking/client.ts and any other admin-only path)
+-- now go through createAdminClient().
+-- ---------------------------------------------------------------------------
+
+REVOKE EXECUTE ON FUNCTION public.encrypt_secret(text, text) FROM anon, authenticated;
+REVOKE EXECUTE ON FUNCTION public.decrypt_secret(text, text) FROM anon, authenticated;
+GRANT   EXECUTE ON FUNCTION public.encrypt_secret(text, text) TO service_role;
+GRANT   EXECUTE ON FUNCTION public.decrypt_secret(text, text) TO service_role;

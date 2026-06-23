@@ -1,6 +1,6 @@
 -- =============================================================================
--- SKULI SaaS: Payroll claim RPC (Audit §10.1)
--- Migration 0028 (part 6)
+-- SKULI SaaS: Payroll claim RPC (Audit Â§10.1)
+-- Migration 0034 (originally 0028 part 6)
 --
 -- /api/v1/payroll/approve previously selected payroll_records
 -- WHERE payment_status = 'pending' but never *flipped* them out of
