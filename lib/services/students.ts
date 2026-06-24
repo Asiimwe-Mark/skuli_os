@@ -12,6 +12,19 @@
  *
  * Encapsulated here so the route handler is 30 LOC and so the
  * business rules are unit-testable.
+ *
+ * ─── scopedQuery call-site rules ────────────────────────────────
+ *
+ * scopedQuery(ctx, table) returns the raw PostgrestQueryBuilder.
+ * The school_id filter MUST be applied after the operation verb:
+ *
+ *   reads:   .select(...).eq("school_id", ctx.schoolId)
+ *   inserts: .insert({ school_id: ctx.schoolId, ...payload })
+ *   updates: .update({...}).eq("school_id", ctx.schoolId)
+ *   deletes: .delete().eq("school_id", ctx.schoolId)
+ *
+ * Never chain .eq() directly on scopedQuery()'s return value —
+ * that was the root cause of the "x.eq is not a function" errors.
  */
 
 import crypto from "crypto";
@@ -58,9 +71,6 @@ export function generateAdmissionNumber(): string {
  * Create a student, their class enrollment for the current term,
  * and a fee_account row so the dashboard / defaulters / fee
  * statement pages render correctly on day one.
- *
- * Audit and cache invalidation are scheduled by the caller-side
- * helpers in this file.
  */
 export async function createStudent(
   ctx: AuthContext,
@@ -76,8 +86,11 @@ export async function createStudent(
     async () => {
       const admissionNumber = body.admission_number ?? generateAdmissionNumber();
 
+      // FIX: school_id goes in the INSERT payload, not as a pre-chained
+      // .eq() on the builder. .eq() is only available after a verb.
       const { data: student, error } = await scopedQuery(ctx, "students")
         .insert({
+          school_id: ctx.schoolId,           // ← school scope in payload
           admission_number: admissionNumber,
           full_name: body.full_name,
           date_of_birth: body.date_of_birth ?? null,
@@ -108,8 +121,6 @@ export async function createStudent(
       await ensureCurrentEnrollment(ctx, student.id, body.current_class_id);
       await ensureCurrentFeeAccount(ctx, student.id);
 
-      // New-value audit (the entity_id is the student id now we
-      // know it).
       await writeAuditLog(ctx.supabase, {
         school_id: ctx.schoolId,
         user_id: ctx.user.id,
@@ -131,8 +142,10 @@ async function ensureCurrentEnrollment(
   studentId: string,
   classId: string,
 ): Promise<void> {
+  // FIX: .select() first, then .eq() — correct verb-then-filter order
   const { data: term } = await scopedQuery(ctx, "terms")
     .select("id, academic_year_id")
+    .eq("school_id", ctx.schoolId)           // ← after .select()
     .eq("is_current", true)
     .maybeSingle();
   if (!term) return;
@@ -146,8 +159,10 @@ async function ensureCurrentEnrollment(
 }
 
 async function ensureCurrentFeeAccount(ctx: AuthContext, studentId: string): Promise<void> {
+  // FIX: same — .select() before .eq()
   const { data: term } = await scopedQuery(ctx, "terms")
     .select("id, academic_year_id")
+    .eq("school_id", ctx.schoolId)           // ← after .select()
     .eq("is_current", true)
     .maybeSingle();
   if (!term) return;
@@ -168,11 +183,6 @@ async function ensureCurrentFeeAccount(ctx: AuthContext, studentId: string): Pro
 
 /**
  * Paginated student list with optional teacher-class restriction.
- *
- * `teacherAllowedClassIds` — when non-null, restricts the result to
- * students whose `current_class_id` is in the set. The handler does
- * the role check (TEACHER vs everything else); this service just
- * applies the filter.
  */
 export async function listStudents(
   ctx: AuthContext,
@@ -187,8 +197,10 @@ export async function listStudents(
 }> {
   const { page, limit, from, to } = paginated.parse(req);
 
+  // FIX: .select() first, then .eq("school_id") — correct order
   let query = scopedQuery(ctx, "students")
     .select("*, current_class:classes(id, name)", { count: "exact" })
+    .eq("school_id", ctx.schoolId)           // ← after .select()
     .eq("is_deleted", false);
 
   if (opts.classId) {
@@ -217,9 +229,8 @@ export async function listStudents(
   if (error) {
     throw new AuthError(`Failed to load students: ${error.message}`, 400);
   }
-  // Touch escapeIlike so the import is preserved even if a future
-  // caller wants raw interpolation outside `searchFilter`.
-  void escapeIlike;
+
+  void escapeIlike; // preserve import
   return paginated.envelope(data ?? [], count ?? 0, page, limit);
 }
 

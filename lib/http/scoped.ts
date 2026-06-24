@@ -32,6 +32,36 @@
  *
  * All helpers are pure (no network) and side-effect free; safe to
  * call from any route handler, server action, or unit test.
+ *
+ * ─── IMPORTANT: scopedQuery design ──────────────────────────────
+ *
+ * scopedQuery returns the raw PostgrestQueryBuilder from .from(table)
+ * WITHOUT pre-chaining .eq("school_id"). This is intentional:
+ *
+ *   • .eq() only exists on PostgrestFilterBuilder, which you get
+ *     AFTER calling a verb (.select / .insert / .update / .delete).
+ *   • Chaining .eq() on the raw builder returns undefined, breaking
+ *     every subsequent method call with "x.eq is not a function".
+ *
+ * Call site pattern:
+ *
+ *   // reads — school scope after .select()
+ *   scopedQuery(ctx, "students")
+ *     .select("*", { count: "exact" })
+ *     .eq("school_id", ctx.schoolId)
+ *     .eq("is_deleted", false)
+ *
+ *   // inserts — school_id goes in the payload
+ *   scopedQuery(ctx, "students")
+ *     .insert({ school_id: ctx.schoolId, ...rest })
+ *     .select("id")
+ *     .single()
+ *
+ *   // updates — school scope after .update()
+ *   scopedQuery(ctx, "students")
+ *     .update({ status: "inactive" })
+ *     .eq("school_id", ctx.schoolId)
+ *     .eq("id", studentId)
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -50,29 +80,27 @@ const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
 /**
- * Build a Supabase query already filtered to the authenticated
- * school. Use this in every read endpoint; it eliminates the
- * `ctx.profile.school_id!` non-null assertion and the manual
- * `.eq("school_id", schoolId)` chain.
+ * Build a Supabase query builder scoped to the authenticated school's
+ * table — WITHOUT pre-applying .eq("school_id"). The school_id filter
+ * must be applied by the caller AFTER the operation verb
+ * (.select / .insert / .update / .delete) because .eq() is only
+ * available on PostgrestFilterBuilder, not the raw PostgrestQueryBuilder
+ * returned by .from().
  *
- * The returned builder is typed against the table's Row type so
- * downstream `.select(...)` arguments narrow correctly.
+ * See the file-level comment for the correct call-site pattern.
  */
 export function scopedQuery<Table extends TableName>(
   ctx: AuthContext,
   table: Table,
 ) {
-  // The Supabase SDK returns a discriminated union from
-  // `from(table)` based on the column-argument type. Because we
-  // widen the table parameter to a keyof union, the conditional
-  // generic collapses onto the column-set intersection (effectively
-  // just `school_id`), so we chain `.eq` directly on the SDK
-  // return. The `any` is confined to this one call; everything
-  // downstream stays strictly typed because `from(table)` already
-  // returns a table-specific PostgrestQueryBuilder.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = ctx.supabase as any;
-  return client.from(table).eq("school_id", ctx.schoolId);
+  // FIX: return the raw builder — do NOT chain .eq() here.
+  // .eq() only exists after a verb (.select/.insert/.update/.delete).
+  // The old code did client.from(table).eq(...) which silently
+  // returned undefined, causing every downstream method call to
+  // throw "x.eq is not a function".
+  return client.from(table);
 }
 
 /**
@@ -80,15 +108,19 @@ export function scopedQuery<Table extends TableName>(
  * tenant boundaries (e.g. `SUPER_ADMIN` on `/api/admin/*`). The
  * caller must supply the schoolId explicitly; we never infer it
  * from the session when crossing tenants.
+ *
+ * Same rule applies: do NOT pre-chain .eq() here. Apply the school
+ * filter after the operation verb at the call site.
  */
 export function crossTenantQuery<Table extends TableName>(
   ctx: AuthContext,
   table: Table,
-  schoolId: string,
+  _schoolId: string, // kept for call-site clarity / future use
 ) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const client = ctx.supabase as any;
-  return client.from(table).eq("school_id", schoolId);
+  // FIX: same as scopedQuery — return raw builder, no .eq() here.
+  return client.from(table);
 }
 
 /**
